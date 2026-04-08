@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
 
   let {
@@ -128,10 +129,7 @@ Current date: ${date}`;
     }
   }
 
-  // Load on mount
-  $effect(() => {
-    loadPrompt();
-  });
+  onMount(() => { loadPrompt(); });
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->

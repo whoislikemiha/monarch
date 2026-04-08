@@ -37,7 +37,6 @@ export interface Agent {
   thinkingLevel?: string;
   cwd?: string;
   isStreaming: boolean;
-  availableModels?: AvailableModel[];
   sessionStats?: SessionStats;
   stderrLines: string[];
   exitCode?: number | null;
@@ -78,13 +77,6 @@ export interface AgentConfig {
   cwd?: string;
   extensions?: string[];
   shadow?: ShadowIdentity;
-}
-
-// Model info from get_available_models
-export interface AvailableModel {
-  provider: string;
-  modelId: string;
-  label?: string;
 }
 
 // Session stats from get_session_stats

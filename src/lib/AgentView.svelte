@@ -242,13 +242,6 @@
         setActivity("");
         break;
       }
-      case "get_available_models": {
-        const data = event.data as any;
-        if (data?.models) {
-          agent.availableModels = data.models;
-        }
-        break;
-      }
       case "get_session_stats": {
         const data = event.data as any;
         if (data) {
@@ -445,7 +438,6 @@
 
     // Initial state sync
     sendPiCommand({ type: "get_state", id: "init-state" });
-    sendPiCommand({ type: "get_available_models", id: "init-models" });
   });
 
   onDestroy(() => {

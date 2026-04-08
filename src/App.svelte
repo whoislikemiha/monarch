@@ -19,6 +19,7 @@
   let savedAgents: SavedAgent[] = $state([]);
   let showRestoreBar = $state(false);
   let viewingSavedAgent: SavedAgent | null = $state(null);
+  let exitListeners: Map<string, import("@tauri-apps/api/event").UnlistenFn> = new Map();
 
   // Council needs at least 2 running agents
   let councilAgents = $derived(agents.filter((a) => a.status === "running"));
@@ -118,26 +119,21 @@
       shadow: saved.shadow,
     };
     const sessionFile = saved.activeSession?.sessionFile;
-    await createAgent(config, sessionFile);
+    const newId = await createAgent(config, sessionFile);
 
-    // After creating, carry over the session history
-    const newId = agents[agents.length - 1]?.id;
-    if (newId) {
-      // Merge: active session becomes part of history, plus all past sessions
-      const allSessions = [...saved.sessions];
-      if (saved.activeSession) {
-        // Add active session to history if not already there
-        const exists = allSessions.some(
-          (s) => s.sessionFile === saved.activeSession!.sessionFile,
-        );
-        if (!exists) {
-          allSessions.unshift(saved.activeSession);
-        }
-      }
-      agents = agents.map((a) =>
-        a.id === newId ? { ...a, sessions: allSessions } : a,
+    // Carry over session history
+    const allSessions = [...saved.sessions];
+    if (saved.activeSession) {
+      const exists = allSessions.some(
+        (s) => s.sessionFile === saved.activeSession!.sessionFile,
       );
+      if (!exists) {
+        allSessions.unshift(saved.activeSession);
+      }
     }
+    agents = agents.map((a) =>
+      a.id === newId ? { ...a, sessions: allSessions } : a,
+    );
   }
 
   function dismissRestore() {
@@ -153,7 +149,7 @@
 
   // --- Agent lifecycle ---
 
-  async function createAgent(config?: AgentConfig, restoreSessionFile?: string) {
+  async function createAgent(config?: AgentConfig, restoreSessionFile?: string): Promise<string> {
     counter++;
     const id = `agent-${Date.now()}`;
     const name = config?.shadow?.shadowName || `Agent ${counter}`;
@@ -190,7 +186,6 @@
         agents = agents.map((a) =>
           a.id === id ? { ...a, status: "running" as const } : a,
         );
-        // If restoring, fetch message history from the session
         if (restoreSessionFile) {
           invoke("send_command", {
             id,
@@ -207,11 +202,15 @@
         );
       });
 
-    listen(`agent-exit-${id}`, () => {
+    // Track exit listener for cleanup
+    const unlisten = await listen(`agent-exit-${id}`, () => {
       agents = agents.map((a) =>
         a.id === id ? { ...a, status: "stopped" as const, isStreaming: false } : a,
       );
     });
+    exitListeners.set(id, unlisten);
+
+    return id;
   }
 
   function restartAgent(id: string) {
@@ -234,6 +233,9 @@
 
   function killAgent(id: string) {
     invoke("kill_agent", { id, graceful: true });
+    // Clean up exit listener
+    const unlisten = exitListeners.get(id);
+    if (unlisten) { unlisten(); exitListeners.delete(id); }
     agents = agents.filter((a) => a.id !== id);
     if (activeId === id) {
       activeId = agents.length > 0 ? agents[agents.length - 1].id : null;

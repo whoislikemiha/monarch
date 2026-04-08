@@ -118,12 +118,25 @@ pub fn spawn_agent(
     // Auto-attach the shadow oath extension if shadow identity is provided
     let has_shadow = shadow_name.is_some() || shadow_title.is_some() || shadow_grade.is_some();
     if has_shadow {
-        // Resolve extension path: try cwd first, then fallback locations
-        let oath_path = std::env::current_dir()
-            .map(|d| d.join("extensions/shadow-oath.ts"))
+        // Resolve extension path: env var > cwd > cargo manifest dir (compile-time)
+        let oath_path = std::env::var("MONARCH_EXTENSIONS_DIR")
+            .map(|d| std::path::PathBuf::from(d).join("shadow-oath.ts"))
             .ok()
             .and_then(|p| if p.exists() { Some(p) } else { None })
-            .unwrap_or_else(|| std::path::PathBuf::from("/home/miha/pro/monarch/extensions/shadow-oath.ts"));
+            .or_else(|| {
+                std::env::current_dir()
+                    .map(|d| d.join("extensions/shadow-oath.ts"))
+                    .ok()
+                    .and_then(|p| if p.exists() { Some(p) } else { None })
+            })
+            .unwrap_or_else(|| {
+                // Last resort: relative to the compiled binary
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.join("../../extensions/shadow-oath.ts")))
+                    .and_then(|p| std::fs::canonicalize(p).ok())
+                    .unwrap_or_else(|| std::path::PathBuf::from("extensions/shadow-oath.ts"))
+            });
 
         cmd.arg("--extension").arg(&oath_path);
 
@@ -276,20 +289,22 @@ pub fn kill_agent(
     id: String,
     graceful: Option<bool>,
 ) -> Result<(), String> {
-    let agents = state.agents.lock().map_err(|e| e.to_string())?;
-    if let Some(agent) = agents.get(&id) {
-        if graceful.unwrap_or(true) {
-            // Try sending abort first
+    // Send abort with lock held briefly, then release before sleeping
+    if graceful.unwrap_or(true) {
+        let agents = state.agents.lock().map_err(|e| e.to_string())?;
+        if let Some(agent) = agents.get(&id) {
             let _ = agent.write_command(r#"{"type":"abort"}"#);
-            // Give Pi a moment to clean up
-            std::thread::sleep(std::time::Duration::from_millis(200));
         }
+        drop(agents);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    let mut agents = state.agents.lock().map_err(|e| e.to_string())?;
+    if let Some(agent) = agents.get(&id) {
         let mut child = agent.child.lock().map_err(|e| e.to_string())?;
         let _ = child.kill();
         let _ = child.wait();
     }
-    drop(agents);
-    let mut agents = state.agents.lock().map_err(|e| e.to_string())?;
     agents.remove(&id);
     Ok(())
 }
