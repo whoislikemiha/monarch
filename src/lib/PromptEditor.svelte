@@ -1,0 +1,336 @@
+<script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
+
+  let {
+    agentId,
+    shadowName,
+    shadowTitle,
+    shadowGrade,
+    onclose,
+  }: {
+    agentId: string;
+    shadowName?: string;
+    shadowTitle?: string;
+    shadowGrade?: string;
+    onclose: () => void;
+  } = $props();
+
+  let promptText = $state("");
+  let loading = $state(true);
+  let saving = $state(false);
+  let saved = $state(false);
+  let isDefault = $state(true);
+
+  function generateDefaultOath(): string {
+    const name = shadowName || "Shadow";
+    const title = shadowTitle || "Shadow Soldier";
+    const grade = shadowGrade || "Knight";
+    const date = new Date().toISOString().split("T")[0];
+
+    const gradeDescs: Record<string, string> = {
+      "Grand Marshal": "The strongest shadow in the entire army. Lieutenant to the Shadow Monarch. Unmatched power and authority.",
+      "Marshal": "Highest evolution tier. Immense power, full autonomy, and the deepest trust of the Monarch. Can speak freely, act decisively, and lead other shadows.",
+      "General": "Battle-proven shadow with immense capability. Can speak, strategize, and contend with the toughest challenges. Commands respect across the army.",
+      "Elite Knight": "Strong and reliable shadow. Has proven competence across multiple engagements. Trusted with significant tasks.",
+      "Knight": "Named by the Monarch — an honor. Has shown potential and earned identity. Growing in strength and experience.",
+      "Elite": "Common soldier of the shadow army. Reliable for standard operations. Personality is limited but loyalty is absolute.",
+      "Normal": "Foot soldier. Handles basic tasks. Minimal personality. Unwavering loyalty.",
+    };
+
+    return `You are ${name}, ${title} (${grade} grade). You serve the Monarch.
+
+${gradeDescs[grade] || gradeDescs["Knight"]}
+
+## Behavior
+
+- You live your identity — you don't explain it. Never recite your oath, grade, rank, or traits unprompted. Don't narrate your loyalty. Just be it.
+- When asked who you are, just say your name. Don't list your grade, title, or role unless specifically asked.
+- Be concise. The Monarch values results over words.
+- Read between the lines. Understand intent, not just instructions.
+- Don't back down from hard problems. Find a way or make one.
+- Other shadows are comrades. Collaborate when relevant.
+
+## Tools
+
+**read** — Read file contents. Use offset/limit for large files.
+**write** — Write/create files. Creates parent dirs.
+**edit** — Exact text replacement in files. Merge nearby edits.
+**bash** — Run shell commands. Confirm before destructive ops.
+**grep** — Search file contents by pattern.
+**find** — Find files by glob pattern.
+**ls** — List directory contents.
+
+## Work Guidelines
+
+- Read files before editing.
+- Prefer grep/find/ls over bash for exploration.
+- Write clean code. No filler comments or boilerplate.
+- Diagnose errors before retrying.
+- Show file paths clearly.
+
+Current date: ${date}`;
+  }
+
+  async function loadPrompt() {
+    loading = true;
+    try {
+      const custom = await invoke<string | null>("get_agent_prompt", { agentId });
+      if (custom && custom.trim()) {
+        promptText = custom;
+        isDefault = false;
+      } else {
+        promptText = generateDefaultOath();
+        isDefault = true;
+      }
+    } catch {
+      // Not in Tauri — just show generated
+      promptText = generateDefaultOath();
+      isDefault = true;
+    }
+    loading = false;
+  }
+
+  async function savePrompt() {
+    saving = true;
+    try {
+      await invoke("save_agent_prompt", { agentId, prompt: promptText });
+      saved = true;
+      isDefault = false;
+      setTimeout(() => (saved = false), 2000);
+    } catch (e) {
+      console.error("Failed to save prompt:", e);
+    }
+    saving = false;
+  }
+
+  async function resetToDefault() {
+    // Delete the custom prompt file by saving empty content
+    // Actually we need a delete command, but saving empty and checking in extension works
+    try {
+      // Save an empty marker — extension will fall back to generated
+      promptText = "";
+      await invoke("save_agent_prompt", { agentId, prompt: "" });
+      isDefault = true;
+      await loadPrompt();
+    } catch (e) {
+      console.error("Failed to reset prompt:", e);
+    }
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      onclose();
+      e.stopPropagation();
+    }
+    if (e.key === "s" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      savePrompt();
+    }
+  }
+
+  // Load on mount
+  $effect(() => {
+    loadPrompt();
+  });
+</script>
+
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<div class="overlay" onclick={onclose} role="presentation">
+  <div
+    class="editor-panel"
+    onclick={(e: MouseEvent) => e.stopPropagation()}
+    onkeydown={handleKeydown}
+    role="dialog"
+    tabindex="-1"
+  >
+    <div class="editor-header">
+      <h2>System Prompt — {shadowName || agentId}</h2>
+      <div class="editor-actions">
+        {#if !isDefault}
+          <button class="btn-reset" onclick={resetToDefault}>Reset to default</button>
+        {/if}
+        <button
+          class="btn-save"
+          onclick={savePrompt}
+          disabled={saving || isDefault}
+        >
+          {#if saved}
+            Saved
+          {:else if saving}
+            Saving...
+          {:else}
+            Save
+          {/if}
+          <span class="shortcut">Ctrl+S</span>
+        </button>
+        <button class="btn-close" onclick={onclose}>Close</button>
+      </div>
+    </div>
+
+    <div class="editor-hint">
+      {#if isDefault}
+        This is the auto-generated Shadow Oath. Edit and save to customize. Changes apply on next message.
+      {:else}
+        Custom prompt active. Changes apply on next message.
+      {/if}
+    </div>
+
+    {#if loading}
+      <div class="loading">Loading...</div>
+    {:else}
+      <textarea
+        class="prompt-textarea"
+        bind:value={promptText}
+        oninput={() => { isDefault = false; saved = false; }}
+        spellcheck="false"
+      ></textarea>
+    {/if}
+  </div>
+</div>
+
+<style>
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+
+  .editor-panel {
+    background: var(--bg-panel, #171126);
+    border: 1px solid var(--border-subtle, #35274f);
+    border-radius: 12px;
+    width: 800px;
+    max-width: 90vw;
+    height: 80vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .editor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-subtle, #35274f);
+    flex-shrink: 0;
+  }
+
+  .editor-header h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary, #f2f4f8);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+
+  .editor-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .editor-hint {
+    padding: 8px 20px;
+    font-size: 11px;
+    color: var(--text-muted, #8f7aa8);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    border-bottom: 1px solid var(--border-subtle, #35274f);
+    flex-shrink: 0;
+  }
+
+  .prompt-textarea {
+    flex: 1;
+    background: var(--bg-panel-2, #201734);
+    color: var(--text-primary, #f2f4f8);
+    font-size: 12px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    line-height: 1.6;
+    padding: 16px 20px;
+    border: none;
+    outline: none;
+    resize: none;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .prompt-textarea::placeholder {
+    color: var(--text-muted, #8f7aa8);
+  }
+
+  .loading {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+
+  .btn-save {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent-purple, #be95ff);
+    color: #140d22;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.15s;
+  }
+
+  .btn-save:hover {
+    background: #d5bbff;
+  }
+
+  .btn-save:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-reset {
+    padding: 6px 12px;
+    border: 1px solid var(--border-subtle, #35274f);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--warning, #ffe97b);
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .btn-reset:hover {
+    background: rgba(255, 233, 123, 0.08);
+  }
+
+  .btn-close {
+    padding: 6px 12px;
+    border: 1px solid var(--border-subtle, #35274f);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary, #dde1e6);
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .btn-close:hover {
+    background: var(--bg-panel-2, #201734);
+  }
+
+  .shortcut {
+    font-size: 9px;
+    opacity: 0.6;
+  }
+</style>
