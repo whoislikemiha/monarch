@@ -16,9 +16,10 @@
     ToolExecution,
     AssistantMessage,
     ExtensionUIRequest,
+    ContentBlock,
   } from "./types";
 
-  let { agent, onrestart, onsave }: { agent: Agent; onrestart?: (id: string) => void; onsave?: (agent: Agent) => void } = $props();
+  let { agent, onrestart }: { agent: Agent; onrestart?: (id: string) => void } = $props();
 
   let items: DisplayItem[] = $state([]);
   let toolExecutions: Map<string, ToolExecution> = $state(new Map());
@@ -27,6 +28,8 @@
   let lastUsage: import("./types").Usage | undefined = $state(undefined);
   let pendingExtensionRequest: ExtensionUIRequest | null = $state(null);
   let showStderr = $state(false);
+  // Captured on mount — used when session_ready fires to replay session ancestry
+  let pendingSourceSessionId: string | undefined = $state(undefined);
   let showPromptEditor = $state(false);
   let showHistory = $state(false);
   let currentToolGroup: { kind: "tool-group"; executions: ToolExecution[]; turnComplete: boolean } | null = $state(null);
@@ -34,7 +37,7 @@
   let unlistenEvent: UnlistenFn;
   let unlistenExit: UnlistenFn;
   let unlistenStderr: UnlistenFn;
-  let scrollContainer: HTMLDivElement;
+  let scrollContainer: HTMLDivElement | undefined = $state(undefined);
   let chatInputRef: { focus: () => void } | undefined = $state(undefined);
 
   export function focusInput() {
@@ -42,11 +45,12 @@
   }
 
   function scrollToBottom() {
-    if (scrollContainer) {
-      requestAnimationFrame(() => {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      });
-    }
+    const container = scrollContainer;
+    if (!container) return;
+
+    requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+    });
   }
 
   // Live activity status
@@ -55,6 +59,83 @@
 
   function setActivity(text: string) {
     activityStatus = text;
+  }
+
+  function normalizeUserContent(content: unknown): string {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content
+        .filter((block): block is { type: "text"; text: string } => !!block && typeof block === "object" && "type" in block && (block as any).type === "text")
+        .map((block) => block.text)
+        .join("");
+    }
+    return "";
+  }
+
+  function normalizeAssistantContent(content: unknown): ContentBlock[] {
+    if (Array.isArray(content)) return content as ContentBlock[];
+    if (typeof content === "string") {
+      return [{ type: "text", text: content }];
+    }
+    return [];
+  }
+
+  function restoreDisplayItemsFromMessages(messages: any[], statusText: string): DisplayItem[] {
+    const restored: DisplayItem[] = [];
+
+    for (const msg of messages) {
+      if (msg.role === "user") {
+        restored.push({
+          kind: "user",
+          content: normalizeUserContent(msg.content ?? msg),
+          timestamp: msg.timestamp,
+        });
+      } else if (msg.role === "assistant") {
+        restored.push({
+          kind: "assistant",
+          content: normalizeAssistantContent(msg.content ?? msg),
+          model: msg.model,
+          timestamp: msg.timestamp,
+        });
+      }
+    }
+
+    if (restored.length === 0) {
+      return [{ kind: "status", text: `${statusText} (no stored messages)` }];
+    }
+
+    return [{ kind: "status", text: statusText }, ...restored];
+  }
+
+  async function loadSessionMessages(sessionId: string, statusText: string) {
+    // Use ancestry-aware loading to include parent session messages
+    const dbMessages = await invoke<any[]>("db_get_messages_with_ancestry", { sessionId }).catch(() => []);
+
+    if (dbMessages.length > 0) {
+      items = restoreDisplayItemsFromMessages(
+        dbMessages.map((msg) => ({
+          role: msg.role,
+          content:
+            msg.role === "assistant"
+              ? (() => {
+                  try {
+                    return JSON.parse(msg.content);
+                  } catch {
+                    return msg.content;
+                  }
+                })()
+              : msg.content,
+          model: msg.model,
+        })),
+        statusText,
+      );
+    } else {
+      items = [{ kind: "status", text: `${statusText} (no stored messages)` }];
+    }
+
+    toolExecutions = new Map();
+    streamingMessage = null;
+    scrollToBottom();
   }
 
   function handleEvent(raw: string) {
@@ -67,39 +148,28 @@
 
     eventCount++;
 
-    // Save agent state to DB after any meaningful event
-    function save() { onsave?.(agent); }
-
-    // Persist message to DB
-    function saveMessage(role: string, content: any, model?: string, tokens?: number, cost?: number) {
-      if (!agent.sessionId) return;
-      invoke("db_save_message", {
-        message: {
-          id: 0,
-          sessionId: agent.sessionId,
-          role,
-          content: typeof content === "string" ? content : JSON.stringify(content),
-          model: model || agent.model || null,
-          tokens: tokens || 0,
-          cost: cost || 0,
-          timestamp: new Date().toISOString(),
-        },
-      }).catch((e) => console.error("Failed to save message:", e));
-    }
-
-    // Log event to audit trail
-    function logEvent(eventType: string, data?: any) {
-      invoke("db_log_event", {
-        agentId: agent.id,
-        sessionId: agent.sessionId || null,
-        eventType,
-        data: data ? JSON.stringify(data) : null,
-      }).catch(() => {}); // Silent — audit trail shouldn't block UI
-    }
-
-    logEvent(event.type, event);
+    // DB writes are now handled by Rust on the event handler thread
 
     switch (event.type) {
+      case "session_ready":
+        setActivity("Shadow ready");
+        items = [...items, { kind: "status", text: "Session ready" }];
+        // If restoring, replay past messages into the sidecar's LLM context
+        if (pendingSourceSessionId) {
+          const sourceSessionId = pendingSourceSessionId;
+          pendingSourceSessionId = undefined;
+          invoke("load_session_context", {
+            agentId: agent.id,
+            sourceSessionId,
+          }).then(() => {
+            items = [...items, { kind: "status", text: "Context restored from previous session" }];
+            scrollToBottom();
+          }).catch((e) => {
+            console.error("Failed to load session context:", e);
+          });
+        }
+        scrollToBottom();
+        break;
       case "agent_start":
         isStreaming = true;
         agent.isStreaming = true;
@@ -126,8 +196,6 @@
           streamingMessage = null;
         }
         items = [...items, { kind: "status", text: "Agent finished" }];
-        sendPiCommand({ type: "get_session_stats", id: "stats" });
-        save();
         scrollToBottom();
         break;
 
@@ -164,7 +232,6 @@
               timestamp: event.message.timestamp,
             },
           ];
-          saveMessage("user", content);
         } else if (event.message.role === "assistant") {
           streamingMessage = event.message as AssistantMessage;
           setActivity("Receiving response...");
@@ -196,7 +263,6 @@
             },
           ];
           if (msg.usage) lastUsage = msg.usage;
-          saveMessage("assistant", msg.content, msg.model, msg.usage?.totalTokens, msg.usage?.cost?.total);
           streamingMessage = null;
         }
         scrollToBottom();
@@ -244,8 +310,6 @@
             items = [...items];
           }
 
-          // Save tool result as a message
-          saveMessage("tool", { toolName: event.toolName, toolCallId: event.toolCallId, result: event.result, isError: event.isError });
         }
         scrollToBottom();
         break;
@@ -273,50 +337,11 @@
         handleExtensionUIRequest(event as unknown as ExtensionUIRequest);
         break;
 
-      case "response":
-        handleResponse(event);
-        break;
-    }
-  }
-
-  function handleResponse(event: PiEvent & { type: "response" }) {
-    // Surface errors visibly
-    if (!event.success) {
-      const errMsg = event.error || `Command "${event.command}" failed`;
-      items = [...items, { kind: "notification", text: errMsg, level: "error" }];
-      setActivity("");
-      scrollToBottom();
-      return;
-    }
-
-    switch (event.command) {
-      case "get_state": {
-        const state = event.data as any;
-        if (state?.model) {
-          const modelId = state.model.id || state.model.modelId || (typeof state.model === "string" ? state.model : "");
-          if (modelId) agent.model = modelId;
-          if (state.model.provider) agent.provider = state.model.provider;
-        }
-        if (state?.thinkingLevel) {
-          agent.thinkingLevel = state.thinkingLevel;
-        }
-        if (state?.sessionFile) agent.sessionFile = state.sessionFile;
-        if (state?.sessionId) agent.sessionId = state.sessionId;
+      case "sidecar_error": {
+        const errorMsg = (event as any).error || "Unknown sidecar error";
+        items = [...items, { kind: "notification", text: errorMsg, level: "error" }];
         setActivity("");
-        save();
-        break;
-      }
-      case "get_session_stats": {
-        const data = event.data as any;
-        if (data) {
-          agent.sessionStats = {
-            totalTokens: data.totalTokens || 0,
-            totalCost: data.totalCost || data.cost?.total || 0,
-            messageCount: data.messageCount || 0,
-            turnCount: data.turnCount || 0,
-          };
-          save();
-        }
+        scrollToBottom();
         break;
       }
     }
@@ -344,7 +369,9 @@
         }
         return;
       case "setTitle":
-        if (request.title) agent.name = request.title;
+        if (request.title) {
+          agent.name = request.title;
+        }
         return;
       case "setWidget":
       case "set_editor_text":
@@ -358,22 +385,21 @@
 
   function respondToExtension(value: any) {
     if (!pendingExtensionRequest) return;
-    const response = {
-      type: "extension_ui_response",
-      id: pendingExtensionRequest.id,
-      ...value,
-    };
-    sendPiCommand(response);
+    invoke("respond_extension_ui", {
+      agentId: agent.id,
+      requestId: pendingExtensionRequest.requestId,
+      value,
+    }).catch((e) => console.error("Failed to respond to extension UI:", e));
     pendingExtensionRequest = null;
   }
 
   function cancelExtensionRequest() {
     if (!pendingExtensionRequest) return;
-    sendPiCommand({
-      type: "extension_ui_response",
-      id: pendingExtensionRequest.id,
-      cancelled: true,
-    });
+    invoke("respond_extension_ui", {
+      agentId: agent.id,
+      requestId: pendingExtensionRequest.requestId,
+      value: { cancelled: true },
+    }).catch(() => {});
     pendingExtensionRequest = null;
   }
 
@@ -415,7 +441,34 @@
   }
 
   async function newSession() {
-    await sendPiCommand({ type: "new_session" });
+    const newSessionId = `session-${Date.now()}`;
+    try {
+      await invoke("new_agent_session", {
+        agentId: agent.id,
+        newSessionId,
+      });
+    } catch (e) {
+      items = [...items, { kind: "notification", text: `Failed to create new session: ${e}`, level: "error" }];
+      return;
+    }
+
+    // Update the current session's message count in history, then add the new session
+    if (agent.sessionId) {
+      const msgCount = items.filter(i => i.kind === "user" || i.kind === "assistant").length;
+      agent.sessions = agent.sessions.map(s =>
+        s.sessionId === agent.sessionId ? { ...s, messageCount: msgCount } : s
+      );
+    }
+
+    // Add new session to the front of history
+    agent.sessionId = newSessionId;
+    agent.sessions = [{
+      sessionId: newSessionId,
+      model: agent.model,
+      provider: agent.provider,
+      startedAt: new Date().toISOString(),
+      messageCount: 0,
+    }, ...agent.sessions];
     items = [];
     toolExecutions = new Map();
     streamingMessage = null;
@@ -462,38 +515,16 @@
       agent.stderrLines = [...(agent.stderrLines || []), event.payload];
     });
 
-    // Initial state sync
-    sendPiCommand({ type: "get_state", id: "init-state" });
-
     // Restore messages from DB if this is a restored agent
-    if (agent.restoreSessionId) {
+    if (agent.sourceSessionId) {
+      pendingSourceSessionId = agent.sourceSessionId;
       try {
-        const dbMessages = await invoke<any[]>("db_get_messages", { sessionId: agent.restoreSessionId });
-        if (dbMessages.length > 0) {
-          const restored: DisplayItem[] = [];
-          for (const msg of dbMessages) {
-            if (msg.role === "user") {
-              restored.push({ kind: "user", content: msg.content, timestamp: undefined });
-            } else if (msg.role === "assistant") {
-              let content;
-              try { content = JSON.parse(msg.content); } catch { content = [{ type: "text", text: msg.content }]; }
-              restored.push({ kind: "assistant", content, model: msg.model, timestamp: undefined });
-            }
-            // Skip tool messages in main view — they were part of tool groups
-          }
-          if (restored.length > 0) {
-            items = [
-              { kind: "status", text: `Restored ${restored.length} messages from previous session` },
-              ...restored,
-            ];
-            scrollToBottom();
-          }
-        }
+        await loadSessionMessages(agent.sourceSessionId, "Restored previous session");
       } catch (e) {
         console.error("Failed to restore messages from DB:", e);
       }
       // Clear the flag so we don't reload on re-render
-      agent.restoreSessionId = undefined;
+      agent.sourceSessionId = undefined;
     }
   });
 
@@ -624,12 +655,53 @@
 {#if showHistory}
   <HistoryPanel
     sessions={agent.sessions || []}
-    currentSessionFile={agent.sessionFile}
-    onload={async (sessionFile) => {
+    currentSessionId={agent.sessionId}
+    onload={async (session) => {
       showHistory = false;
-      // Switch Pi to the selected session
-      await sendPiCommand({ type: "switch_session", sessionPath: sessionFile });
-      await sendPiCommand({ type: "get_state", id: "post-switch" });
+
+      // Create a new DB session linked to the source, and reset the sidecar runtime
+      const newSessionId = `session-${Date.now()}`;
+      try {
+        await invoke("new_agent_session", {
+          agentId: agent.id,
+          newSessionId,
+          parentSessionId: session.sessionId,
+        });
+      } catch (e) {
+        items = [...items, { kind: "notification", text: `Failed to switch session: ${e}`, level: "error" }];
+        return;
+      }
+
+      // Update current session message count before switching
+      if (agent.sessionId) {
+        const msgCount = items.filter(i => i.kind === "user" || i.kind === "assistant").length;
+        agent.sessions = agent.sessions.map(s =>
+          s.sessionId === agent.sessionId ? { ...s, messageCount: msgCount } : s
+        );
+      }
+
+      // Add the new continuation session to history
+      agent.sessionId = newSessionId;
+      agent.sessions = [{
+        sessionId: newSessionId,
+        model: agent.model,
+        provider: agent.provider,
+        startedAt: new Date().toISOString(),
+        messageCount: 0,
+      }, ...agent.sessions];
+
+      // Replay old messages into the sidecar's LLM context
+      try {
+        await invoke("load_session_context", {
+          agentId: agent.id,
+          sourceSessionId: session.sessionId,
+        });
+      } catch (e) {
+        console.error("Failed to load session context:", e);
+      }
+
+      // Load messages for display
+      await loadSessionMessages(session.sessionId, `Continuing from previous session`);
     }}
     onclose={() => (showHistory = false)}
   />
@@ -682,12 +754,6 @@
     font-size: 12px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
-
-  .exit-banner.error {
-    border-color: rgba(238, 83, 150, 0.35);
-    color: var(--error);
-  }
-
   .restart-btn {
     padding: 4px 12px;
     border: 1px solid var(--border-strong);

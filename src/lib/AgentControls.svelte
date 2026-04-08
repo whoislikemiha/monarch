@@ -29,10 +29,10 @@
   }
 
   let displayTokens = $derived(
-    sessionStats?.totalTokens || lastUsage?.totalTokens
+    sessionStats?.totalTokens ?? lastUsage?.totalTokens
   );
   let displayCost = $derived(
-    sessionStats?.totalCost || lastUsage?.cost?.total
+    sessionStats?.totalCost ?? lastUsage?.cost?.total
   );
 </script>
 

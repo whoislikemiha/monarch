@@ -1,18 +1,14 @@
 /**
- * Shadow Oath — Monarch Identity Extension
+ * Shadow Oath — Monarch Identity Extension (SDK Factory version)
  *
  * Completely replaces Pi's system prompt with the Monarch shadow identity.
- * Every shadow knows who they are, who the Monarch is, and how to use their tools.
- *
- * Identity is passed via environment variables:
- *   SHADOW_NAME    — The shadow's name (e.g., "Igris")
- *   SHADOW_TITLE   — The shadow's title (e.g., "Shadow Commander, The First Shadow")
- *   SHADOW_GRADE   — The shadow's grade (e.g., "Marshal")
- *   SHADOW_ID      — Unique shadow ID in Monarch
- *   MONARCH_NAME   — The Monarch's name (default: "Monarch")
+ * Ported from extensions/shadow-oath.ts to work as an inline ExtensionFactory.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { ShadowConfig } from "./protocol.js";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 const GRADES = [
 	"Grand Marshal",
@@ -25,24 +21,6 @@ const GRADES = [
 ] as const;
 
 type Grade = (typeof GRADES)[number];
-
-interface ShadowIdentity {
-	name: string;
-	title: string;
-	grade: Grade;
-	id: string;
-	monarchName: string;
-}
-
-function getIdentity(): ShadowIdentity {
-	return {
-		name: process.env.SHADOW_NAME || "Shadow",
-		title: process.env.SHADOW_TITLE || "Shadow Soldier",
-		grade: (process.env.SHADOW_GRADE as Grade) || "Knight",
-		id: process.env.SHADOW_ID || "unknown",
-		monarchName: process.env.MONARCH_NAME || "Monarch",
-	};
-}
 
 function gradeDescription(grade: Grade): string {
 	switch (grade) {
@@ -90,17 +68,17 @@ function personalityDirective(grade: Grade): string {
 	return "You are focused and efficient. Minimal personality. Let your work speak.";
 }
 
-function buildSystemPrompt(identity: ShadowIdentity): string {
+function buildSystemPrompt(shadow: ShadowConfig, cwd: string): string {
 	const date = new Date().toISOString().split("T")[0];
-	const cwd = process.cwd();
+	const grade = shadow.grade as Grade;
 
-	return `You are ${identity.name}, ${identity.title} (${identity.grade} grade). You serve the ${identity.monarchName}.
+	return `You are ${shadow.name}, ${shadow.title} (${grade} grade). You serve the Monarch.
 
-${gradeDescription(identity.grade)}
+${gradeDescription(grade)}
 
-${permissionsForGrade(identity.grade)}
+${permissionsForGrade(grade)}
 
-${personalityDirective(identity.grade)}
+${personalityDirective(grade)}
 
 ## Behavior
 
@@ -135,12 +113,12 @@ Working directory: ${cwd}`;
 
 function tryReadCustomPrompt(shadowId: string): string | null {
 	try {
-		const fs = require("fs");
-		const path = require("path");
-		const configDir = process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || "/tmp", ".config");
-		const promptFile = path.join(configDir, "monarch", "prompts", `${shadowId}.md`);
-		if (fs.existsSync(promptFile)) {
-			return fs.readFileSync(promptFile, "utf-8");
+		const configDir =
+			process.env.XDG_CONFIG_HOME ||
+			join(process.env.HOME || "/tmp", ".config");
+		const promptFile = join(configDir, "monarch", "prompts", `${shadowId}.md`);
+		if (existsSync(promptFile)) {
+			return readFileSync(promptFile, "utf-8");
 		}
 	} catch {
 		// Ignore — use generated prompt
@@ -148,21 +126,23 @@ function tryReadCustomPrompt(shadowId: string): string | null {
 	return null;
 }
 
-export default function shadowOath(pi: ExtensionAPI) {
-	const identity = getIdentity();
+export function createShadowOathFactory(
+	shadow: ShadowConfig | undefined,
+	cwd: string,
+): ExtensionFactory {
+	return (pi: ExtensionAPI) => {
+		if (!shadow) return;
 
-	// Completely replace Pi's system prompt with the Shadow identity
-	// Check for custom prompt file first, fall back to generated oath
-	pi.on("before_agent_start", async () => {
-		const custom = tryReadCustomPrompt(identity.id);
-		return {
-			systemPrompt: custom || buildSystemPrompt(identity),
-		};
-	});
+		pi.on("before_agent_start", async () => {
+			const custom = tryReadCustomPrompt(shadow.id);
+			return {
+				systemPrompt: custom || buildSystemPrompt(shadow, cwd),
+			};
+		});
 
-	// Set the agent title to the shadow's name
-	pi.on("agent_start", async (_event, ctx) => {
-		ctx.ui.setTitle(`${identity.name} — ${identity.title}`);
-		ctx.ui.setStatus("shadow-grade", `${identity.grade}`);
-	});
+		pi.on("agent_start", async (_event, ctx) => {
+			ctx.ui.setTitle(`${shadow.name} — ${shadow.title}`);
+			ctx.ui.setStatus("shadow-grade", `${shadow.grade}`);
+		});
+	};
 }

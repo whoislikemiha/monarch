@@ -5,11 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build:sidecar": "npm run build --prefix sidecar",
+    "build:web": "vite build",
+    "build": "npm run build:sidecar && npm run build:web",
     "preview": "vite preview",
     "tauri": "tauri"
   },
   "dependencies": {
+    "@mariozechner/pi-ai": "^0.65.2",
+    "@mariozechner/pi-coding-agent": "^0.65.2",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@types/marked": "^5.0.2",

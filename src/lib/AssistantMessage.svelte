@@ -16,7 +16,11 @@
   }
 
   function renderMarkdown(text: string): string {
-    return marked.parse(text, { async: false, breaks: true }) as string;
+    const rendered = marked.parse(escapeInlineHtml(text), {
+      async: false,
+      breaks: true,
+    }) as string;
+    return sanitizeRenderedHtml(rendered);
   }
 
   let copied = $state(false);
@@ -33,6 +37,74 @@
       .filter((b): b is { type: "text"; text: string } => b.type === "text")
       .map((b) => b.text)
       .join("\n\n");
+  }
+
+  function escapeInlineHtml(text: string): string {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function sanitizeRenderedHtml(html: string): string {
+    if (typeof window === "undefined") return html;
+
+    const template = document.createElement("template");
+    template.innerHTML = html;
+
+    const blockedTags = new Set(["script", "iframe", "object", "embed", "link", "meta", "style"]);
+    const allowedUrlProtocols = new Set(["http:", "https:", "mailto:", "data:", "blob:"]);
+
+    const walk = (node: Node) => {
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        for (const child of Array.from(node.childNodes)) walk(child);
+        return;
+      }
+
+      const element = node as HTMLElement;
+      const tag = element.tagName.toLowerCase();
+
+      if (blockedTags.has(tag)) {
+        element.remove();
+        return;
+      }
+
+      for (const attr of Array.from(element.attributes)) {
+        const name = attr.name.toLowerCase();
+        const value = attr.value.trim();
+
+        if (name.startsWith("on")) {
+          element.removeAttribute(attr.name);
+          continue;
+        }
+
+        if (name === "href" || name === "src") {
+          try {
+            const url = new URL(value, window.location.href);
+            if (!allowedUrlProtocols.has(url.protocol)) {
+              element.removeAttribute(attr.name);
+            }
+          } catch {
+            element.removeAttribute(attr.name);
+          }
+          continue;
+        }
+
+        if (name !== "title" && name !== "alt") {
+          element.removeAttribute(attr.name);
+        }
+      }
+
+      if (tag === "a" && element.hasAttribute("href")) {
+        element.setAttribute("target", "_blank");
+        element.setAttribute("rel", "noopener noreferrer");
+      }
+
+      for (const child of Array.from(element.childNodes)) walk(child);
+    };
+
+    for (const child of Array.from(template.content.childNodes)) walk(child);
+    return template.innerHTML;
   }
 </script>
 
@@ -247,15 +319,5 @@
     white-space: pre-wrap;
     margin-top: 4px;
     font-style: italic;
-  }
-
-  .tool-call-inline {
-    color: var(--text-muted);
-    font-size: 12px;
-  }
-
-  .tool-name {
-    color: var(--accent-cyan);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 </style>

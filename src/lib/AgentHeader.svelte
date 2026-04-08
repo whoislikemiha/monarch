@@ -54,7 +54,7 @@
       </button>
       {#if showMenu}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <div class="menu-dropdown" onclick={(e: MouseEvent) => e.stopPropagation()} role="menu">
+        <div class="menu-dropdown" onclick={(e: MouseEvent) => e.stopPropagation()} role="menu" tabindex="-1">
           <button class="menu-item" onclick={() => handleAction(onprompt)} role="menuitem">
             System Prompt
           </button>

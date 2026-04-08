@@ -1,5 +1,14 @@
 <script lang="ts">
-  import type { Agent, SavedAgent } from "./types";
+  import type { Agent, SessionRecord, ShadowIdentity } from "./types";
+
+  interface SavedAgentInfo {
+    id: string;
+    name: string;
+    provider?: string;
+    model?: string;
+    shadow?: ShadowIdentity;
+    sessions: SessionRecord[];
+  }
 
   let {
     agents,
@@ -13,14 +22,14 @@
     onviewhistory,
   }: {
     agents: Agent[];
-    savedAgents?: SavedAgent[];
+    savedAgents?: SavedAgentInfo[];
     activeId: string | null;
     councilMode?: boolean;
     onselect: (id: string) => void;
     oncreate: () => void;
     onkill: (id: string) => void;
     oncouncil?: () => void;
-    onviewhistory?: (saved: SavedAgent) => void;
+    onviewhistory?: (saved: SavedAgentInfo) => void;
   } = $props();
 
   let runningCount = $derived(agents.filter((a) => a.status === "running").length);

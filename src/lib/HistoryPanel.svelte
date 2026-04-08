@@ -1,16 +1,16 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import type { SessionRecord, PiMessage } from "./types";
+  import type { SessionRecord } from "./types";
 
   let {
     sessions,
-    currentSessionFile,
+    currentSessionId,
     onload,
     onclose,
   }: {
     sessions: SessionRecord[];
-    currentSessionFile?: string;
-    onload: (sessionFile: string) => void;
+    currentSessionId?: string;
+    onload: (session: SessionRecord) => void;
     onclose: () => void;
   } = $props();
 
@@ -22,26 +22,11 @@
     previewSession = session;
     loadingPreview = true;
     try {
-      // Try DB first
-      if (session.sessionId) {
-        const dbMessages = await invoke<any[]>("db_get_messages", { sessionId: session.sessionId });
-        if (dbMessages.length > 0) {
-          previewMessages = dbMessages.map((m: any) => ({
-            role: m.role,
-            content: tryParseJson(m.content),
-          }));
-          loadingPreview = false;
-          return;
-        }
-      }
-      // Fallback to Pi's JSONL file
-      if (session.sessionFile) {
-        previewMessages = await invoke<any[]>("read_session_messages", {
-          sessionFile: session.sessionFile,
-        });
-      } else {
-        previewMessages = [];
-      }
+      const dbMessages = await invoke<any[]>("db_get_messages", { sessionId: session.sessionId });
+      previewMessages = dbMessages.map((m: any) => ({
+        role: m.role,
+        content: tryParseJson(m.content),
+      }));
     } catch {
       previewMessages = [];
     }
@@ -93,11 +78,11 @@
         {#if sessions.length === 0}
           <div class="empty">No past sessions</div>
         {/if}
-        {#each sessions as session (session.sessionFile)}
+        {#each sessions as session (session.sessionId || session.startedAt)}
           <button
             class="session-item"
-            class:active={previewSession?.sessionFile === session.sessionFile}
-            class:current={session.sessionFile === currentSessionFile}
+            class:active={previewSession?.sessionId === session.sessionId}
+            class:current={session.sessionId === currentSessionId}
             onclick={() => loadPreview(session)}
           >
             <div class="session-meta">
@@ -109,7 +94,7 @@
             {#if session.messageCount}
               <span class="session-msgs">{session.messageCount} msgs</span>
             {/if}
-            {#if session.sessionFile === currentSessionFile}
+            {#if session.sessionId === currentSessionId}
               <span class="current-tag">active</span>
             {/if}
           </button>
@@ -122,10 +107,12 @@
             <span>{previewSession.model || "unknown model"}</span>
             <button
               class="load-btn"
-              onclick={() => previewSession && onload(previewSession.sessionFile)}
-              disabled={previewSession.sessionFile === currentSessionFile}
+              onclick={() => previewSession && onload(previewSession)}
+              disabled={previewSession.sessionId === currentSessionId}
             >
-              {previewSession.sessionFile === currentSessionFile ? "Current" : "Load Session"}
+              {previewSession.sessionId === currentSessionId
+                ? "Current"
+                : "Continue Session"}
             </button>
           </div>
           {#if loadingPreview}

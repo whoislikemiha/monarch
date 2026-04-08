@@ -4,6 +4,10 @@ node_modules/
 # Build output
 dist/
 src-tauri/target/
+sidecar/dist/
+sidecar/node_modules/
+sidecar/dist/
+sidecar/node_modules/
 
 # IDE
 .vscode/
@@ -28,3 +32,21 @@ dist/
 
 # Claude
 .claude/
+
+# Local Codex scratch files
+.codex
+
+# Accidental TypeScript emit in source tree
+src/main.js
+src/main.js.map
+src/lib/types.js
+src/lib/types.js.map
+
+# Local Codex scratch files
+.codex
+
+# Accidental TypeScript emit in source tree
+src/main.js
+src/main.js.map
+src/lib/types.js
+src/lib/types.js.map

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import type { ExtensionUIRequest } from "./types";
 
   let {
@@ -11,8 +12,28 @@
     oncancel: () => void;
   } = $props();
 
-  let inputValue = $state(request.prefill || "");
-  let selectedOption = $state(request.options?.[0] || "");
+  let inputValue = $state("");
+  let selectedOption = $state("");
+  let initializedForRequest = $state<string | null>(null);
+  let inputEl: HTMLInputElement | undefined = $state(undefined);
+  let textareaEl: HTMLTextAreaElement | undefined = $state(undefined);
+
+  $effect(() => {
+    const requestId = request.requestId;
+    if (requestId === initializedForRequest) return;
+
+    inputValue = request.prefill || "";
+    selectedOption = request.options?.[0] || "";
+    initializedForRequest = requestId;
+
+    tick().then(() => {
+      if (request.method === "input") {
+        inputEl?.focus();
+      } else if (request.method === "editor") {
+        textareaEl?.focus();
+      }
+    });
+  });
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") oncancel();
@@ -89,9 +110,9 @@
     {:else if request.method === "input"}
       <input
         type="text"
+        bind:this={inputEl}
         bind:value={inputValue}
         placeholder={request.placeholder || ""}
-        autofocus
       />
       <div class="actions">
         <button class="btn-cancel" onclick={oncancel}>Cancel</button>
@@ -100,10 +121,10 @@
 
     {:else if request.method === "editor"}
       <textarea
+        bind:this={textareaEl}
         bind:value={inputValue}
         placeholder={request.placeholder || ""}
         rows="10"
-        autofocus
       ></textarea>
       <div class="actions">
         <button class="btn-cancel" onclick={oncancel}>Cancel</button>

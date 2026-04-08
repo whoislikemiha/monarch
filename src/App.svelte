@@ -7,7 +7,7 @@
   import CouncilView from "./lib/CouncilView.svelte";
   import SpawnDialog from "./lib/SpawnDialog.svelte";
   import HistoryPanel from "./lib/HistoryPanel.svelte";
-  import type { Agent, AgentConfig, SavedAgent, SessionRecord } from "./lib/types";
+  import type { Agent, AgentConfig, SessionRecord } from "./lib/types";
 
   let agents: Agent[] = $state([]);
   let activeId: string | null = $state(null);
@@ -16,42 +16,30 @@
   let councilMode = $state(false);
   let counter = 0;
   let agentViewRef: AgentView | undefined = $state(undefined);
-  let savedAgents: SavedAgent[] = $state([]);
   let showRestoreBar = $state(false);
-  let viewingSavedAgent: SavedAgent | null = $state(null);
   let exitListeners: Map<string, import("@tauri-apps/api/event").UnlistenFn> = new Map();
+
+  // Saved agents loaded from SQLite for restore
+  interface SavedAgentInfo {
+    id: string;
+    name: string;
+    provider?: string;
+    model?: string;
+    thinkingLevel?: string;
+    cwd?: string;
+    shadow?: { shadowName: string; shadowTitle: string; shadowGrade: string };
+    sessions: SessionRecord[];
+  }
+  let savedAgents: SavedAgentInfo[] = $state([]);
+
+  // Viewing history for a saved agent
+  let viewingSavedAgent: SavedAgentInfo | null = $state(null);
 
   // Council needs at least 2 running agents
   let councilAgents = $derived(agents.filter((a) => a.status === "running"));
 
-  // --- Persistence ---
+  // --- DB row types matching Rust ---
 
-  function agentToSaved(agent: Agent): SavedAgent {
-    const activeSession: SessionRecord | undefined = agent.sessionFile
-      ? {
-          sessionFile: agent.sessionFile,
-          sessionId: agent.sessionId,
-          model: agent.model,
-          provider: agent.provider,
-          startedAt: new Date().toISOString(),
-          messageCount: agent.sessionStats?.messageCount,
-        }
-      : undefined;
-
-    return {
-      id: agent.id,
-      name: agent.name,
-      provider: agent.provider,
-      model: agent.model,
-      thinkingLevel: agent.thinkingLevel,
-      cwd: agent.cwd,
-      shadow: agent.shadow,
-      activeSession,
-      sessions: agent.sessions || [],
-    };
-  }
-
-  // DB row type matching Rust's AgentRow
   interface AgentDbRow {
     id: string;
     name: string;
@@ -70,7 +58,6 @@
   interface SessionDbRow {
     id: string;
     agentId: string;
-    piSessionFile?: string | null;
     model?: string | null;
     provider?: string | null;
     startedAt: string;
@@ -78,9 +65,128 @@
     messageCount: number;
     totalTokens: number;
     totalCost: number;
+    parentSessionId?: string | null;
   }
 
-  async function persistAgent(agent: Agent) {
+  // --- Load saved agents from SQLite ---
+
+  async function loadSavedAgents() {
+    try {
+      const dbAgents = await invoke<AgentDbRow[]>("db_get_agents");
+      if (dbAgents.length > 0) {
+        const loaded: SavedAgentInfo[] = [];
+        for (const row of dbAgents) {
+          const sessions = await invoke<SessionDbRow[]>("db_get_sessions", { agentId: row.id });
+          loaded.push({
+            id: row.id,
+            name: row.name,
+            provider: row.provider || undefined,
+            model: row.model || undefined,
+            thinkingLevel: row.thinkingLevel || undefined,
+            cwd: row.cwd || undefined,
+            shadow: row.shadowName
+              ? { shadowName: row.shadowName, shadowTitle: row.shadowTitle || "", shadowGrade: (row.shadowGrade as any) || "Knight" }
+              : undefined,
+            sessions: sessions.map((s) => ({
+              sessionId: s.id,
+              model: s.model || undefined,
+              provider: s.provider || undefined,
+              startedAt: s.startedAt,
+              messageCount: s.messageCount,
+            })),
+          });
+        }
+        savedAgents = loaded;
+        if (savedAgents.length > 0) {
+          showRestoreBar = true;
+        }
+      }
+    } catch {
+      // No saved state
+    }
+  }
+
+  async function restoreAllAgents() {
+    showRestoreBar = false;
+    for (const saved of savedAgents) {
+      await restoreAgent(saved);
+    }
+    savedAgents = [];
+  }
+
+  async function restoreAgent(saved: SavedAgentInfo) {
+    const config: AgentConfig = {
+      provider: saved.provider,
+      model: saved.model,
+      thinkingLevel: saved.thinkingLevel,
+      cwd: saved.cwd,
+      shadow: saved.shadow as any,
+    };
+    const latestSession = saved.sessions[0];
+    const sourceSessionId = latestSession?.sessionId;
+    const newId = await createAgent(config, sourceSessionId, sourceSessionId);
+
+    // Merge archived sessions with the freshly-created current session
+    agents = agents.map((a) => {
+      if (a.id !== newId) return a;
+      // Current session is already sessions[0] from createAgent; append old ones after it
+      const currentSession = a.sessions[0];
+      const archivedSessions = saved.sessions.filter(
+        (s) => s.sessionId !== currentSession?.sessionId,
+      );
+      return { ...a, sessions: [currentSession, ...archivedSessions].filter(Boolean) };
+    });
+  }
+
+  async function dismissRestore() {
+    showRestoreBar = false;
+    const agentsToDelete = [...savedAgents];
+    savedAgents = [];
+    await Promise.all(
+      agentsToDelete.map((saved) =>
+        invoke("db_delete_agent", { agentId: saved.id }).catch(() => {}),
+      ),
+    );
+  }
+
+  onMount(() => {
+    loadSavedAgents();
+  });
+
+  // --- Agent lifecycle ---
+
+  async function createAgent(config?: AgentConfig, sourceSessionId?: string, parentSessionId?: string): Promise<string> {
+    counter++;
+    const id = `agent-${Date.now()}-${counter}`;
+    const name = config?.shadow?.shadowName || `Agent ${counter}`;
+    const cwd = config?.cwd || "/home/miha";
+    // Always create a fresh live session. `sourceSessionId` is replayed from SQLite.
+    const sessionId = `session-${Date.now()}-${counter}`;
+    const agent: Agent = {
+      id,
+      name,
+      status: "running",
+      provider: config?.provider,
+      model: config?.model,
+      thinkingLevel: config?.thinkingLevel || "off",
+      cwd,
+      isStreaming: false,
+      stderrLines: [],
+      shadow: config?.shadow,
+      sessionId,
+      sessions: [{
+        sessionId,
+        model: config?.model,
+        provider: config?.provider,
+        startedAt: new Date().toISOString(),
+        messageCount: 0,
+      }],
+      sourceSessionId: sourceSessionId || undefined,
+    };
+    agents = [...agents, agent];
+    activeId = id;
+
+    // Save agent and session to DB immediately
     try {
       const row: AgentDbRow = {
         id: agent.id,
@@ -98,176 +204,34 @@
       };
       await invoke("db_upsert_agent", { agent: row });
 
-      // Save active session if we have one
-      if (agent.sessionFile && agent.sessionId) {
-        const session: SessionDbRow = {
-          id: agent.sessionId,
-          agentId: agent.id,
-          piSessionFile: agent.sessionFile,
-          model: agent.model || null,
-          provider: agent.provider || null,
-          startedAt: new Date().toISOString(),
-          endedAt: null,
-          messageCount: agent.sessionStats?.messageCount || 0,
-          totalTokens: agent.sessionStats?.totalTokens || 0,
-          totalCost: agent.sessionStats?.totalCost || 0,
-        };
-        await invoke("db_create_session", { session });
-      }
+      // Create session row — link to parent if restoring from a previous session
+      const session: SessionDbRow = {
+        id: sessionId,
+        agentId: agent.id,
+        model: agent.model || null,
+        provider: agent.provider || null,
+        startedAt: new Date().toISOString(),
+        endedAt: null,
+        messageCount: 0,
+        totalTokens: 0,
+        totalCost: 0,
+        parentSessionId: parentSessionId || null,
+      };
+      await invoke("db_create_session", { session });
     } catch (e) {
       console.error("Failed to persist agent:", e);
     }
-  }
-
-  async function persistAllAgents() {
-    for (const agent of agents) {
-      if (agent.status !== "error") {
-        await persistAgent(agent);
-      }
-    }
-  }
-
-  // Save on window close as final fallback
-  if (typeof window !== "undefined") {
-    window.addEventListener("beforeunload", () => {
-      persistAllAgents();
-    });
-  }
-
-  async function loadSavedAgents() {
-    try {
-      // Try SQLite first
-      const dbAgents = await invoke<AgentDbRow[]>("db_get_agents");
-      if (dbAgents.length > 0) {
-        // Convert DB rows to SavedAgent format
-        const loaded: SavedAgent[] = [];
-        for (const row of dbAgents) {
-          const sessions = await invoke<SessionDbRow[]>("db_get_sessions", { agentId: row.id });
-          loaded.push({
-            id: row.id,
-            name: row.name,
-            provider: row.provider || undefined,
-            model: row.model || undefined,
-            thinkingLevel: row.thinkingLevel || undefined,
-            cwd: row.cwd || undefined,
-            shadow: row.shadowName
-              ? { shadowName: row.shadowName, shadowTitle: row.shadowTitle || "", shadowGrade: (row.shadowGrade as any) || "Knight" }
-              : undefined,
-            activeSession: sessions[0]
-              ? { sessionFile: sessions[0].piSessionFile || "", sessionId: sessions[0].id, model: sessions[0].model || undefined, provider: sessions[0].provider || undefined, startedAt: sessions[0].startedAt, messageCount: sessions[0].messageCount }
-              : undefined,
-            sessions: sessions.map((s) => ({
-              sessionFile: s.piSessionFile || "",
-              sessionId: s.id,
-              model: s.model || undefined,
-              provider: s.provider || undefined,
-              startedAt: s.startedAt,
-              messageCount: s.messageCount,
-            })),
-          });
-        }
-        savedAgents = loaded;
-        if (savedAgents.length > 0) {
-          showRestoreBar = true;
-        }
-        return;
-      }
-
-      // Fallback: try legacy JSON
-      const jsonAgents = await invoke<SavedAgent[]>("load_agents");
-      savedAgents = jsonAgents.map((a) => ({ ...a, sessions: a.sessions || [] }));
-      if (savedAgents.length > 0) {
-        showRestoreBar = true;
-      }
-    } catch {
-      // No saved state or not in Tauri
-    }
-  }
-
-  async function restoreAllAgents() {
-    showRestoreBar = false;
-    for (const saved of savedAgents) {
-      await restoreAgent(saved);
-    }
-    savedAgents = [];
-  }
-
-  async function restoreAgent(saved: SavedAgent) {
-    const config: AgentConfig = {
-      provider: saved.provider,
-      model: saved.model,
-      thinkingLevel: saved.thinkingLevel,
-      cwd: saved.cwd,
-      shadow: saved.shadow,
-    };
-    const sessionFile = saved.activeSession?.sessionFile;
-    const sessionId = saved.activeSession?.sessionId;
-    const newId = await createAgent(config, sessionFile, sessionId);
-
-    // Carry over session history
-    const allSessions = [...saved.sessions];
-    if (saved.activeSession) {
-      const exists = allSessions.some(
-        (s) => s.sessionFile === saved.activeSession!.sessionFile,
-      );
-      if (!exists) {
-        allSessions.unshift(saved.activeSession);
-      }
-    }
-    agents = agents.map((a) =>
-      a.id === newId ? { ...a, sessions: allSessions } : a,
-    );
-  }
-
-  function dismissRestore() {
-    showRestoreBar = false;
-    savedAgents = [];
-    // Clear saved state
-    invoke("save_agents", { agents: [] }).catch(() => {});
-  }
-
-  onMount(() => {
-    loadSavedAgents();
-  });
-
-  // --- Agent lifecycle ---
-
-  async function createAgent(config?: AgentConfig, restoreSessionFile?: string, restoreSessionId?: string): Promise<string> {
-    counter++;
-    const id = `agent-${Date.now()}`;
-    const name = config?.shadow?.shadowName || `Agent ${counter}`;
-    const cwd = config?.cwd || "/home/miha";
-    const agent: Agent = {
-      id,
-      name,
-      status: "running",
-      provider: config?.provider,
-      model: config?.model,
-      thinkingLevel: config?.thinkingLevel || "off",
-      cwd,
-      isStreaming: false,
-      stderrLines: [],
-      shadow: config?.shadow,
-      sessions: [],
-      restoreSessionId: restoreSessionId || undefined,
-    };
-    agents = [...agents, agent];
-    activeId = id;
-
-    // Save to DB immediately
-    persistAgent(agent);
 
     invoke("spawn_agent", {
       id,
+      sessionId: sessionId,
       provider: config?.provider || null,
       model: config?.model || null,
       thinkingLevel: config?.thinkingLevel || null,
       cwd,
-      extensions: config?.extensions || null,
       shadowName: config?.shadow?.shadowName || null,
       shadowTitle: config?.shadow?.shadowTitle || null,
       shadowGrade: config?.shadow?.shadowGrade || null,
-      sessionFile: restoreSessionFile || null,
     })
       .then(() => {
         agents = agents.map((a) =>
@@ -297,7 +261,6 @@
   function restartAgent(id: string) {
     const agent = agents.find((a) => a.id === id);
     if (!agent) return;
-    const sessionFile = agent.sessionFile;
     killAgent(id);
     createAgent({
       provider: agent.provider,
@@ -305,7 +268,7 @@
       thinkingLevel: agent.thinkingLevel,
       cwd: agent.cwd,
       shadow: agent.shadow,
-    }, sessionFile);
+    });
   }
 
   function selectAgent(id: string) {
@@ -405,7 +368,16 @@
   {#if showSidebar}
     <Sidebar
       {agents}
-      {savedAgents}
+      savedAgents={savedAgents.map(s => ({
+        id: s.id,
+        name: s.name,
+        provider: s.provider,
+        model: s.model,
+        thinkingLevel: s.thinkingLevel,
+        cwd: s.cwd,
+        shadow: s.shadow as any,
+        sessions: s.sessions,
+      }))}
       {activeId}
       {councilMode}
       onselect={selectAgent}
@@ -415,7 +387,7 @@
         if (councilAgents.length >= 2) councilMode = !councilMode;
       }}
       onviewhistory={(saved) => {
-        viewingSavedAgent = saved;
+        viewingSavedAgent = savedAgents.find(s => s.id === saved.id) || null;
       }}
     />
   {/if}
@@ -430,7 +402,6 @@
         <AgentView
           agent={activeAgent}
           onrestart={restartAgent}
-          onsave={persistAgent}
           bind:this={agentViewRef}
         />
       {/key}
@@ -474,11 +445,16 @@
 {#if viewingSavedAgent}
   <HistoryPanel
     sessions={viewingSavedAgent.sessions}
-    onload={(sessionFile) => {
+    onload={(session) => {
       // Restore this agent with the selected session
       const saved = viewingSavedAgent;
       viewingSavedAgent = null;
-      if (saved) restoreAgent({ ...saved, activeSession: { sessionFile, startedAt: new Date().toISOString() }, sessions: saved.sessions });
+      if (saved) {
+        restoreAgent({
+          ...saved,
+          sessions: saved.sessions,
+        });
+      }
     }}
     onclose={() => (viewingSavedAgent = null)}
   />

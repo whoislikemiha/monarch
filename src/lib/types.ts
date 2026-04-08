@@ -41,33 +41,18 @@ export interface Agent {
   stderrLines: string[];
   exitCode?: number | null;
   shadow?: ShadowIdentity;
-  sessionFile?: string;
   sessionId?: string;
   sessions: SessionRecord[];
-  restoreSessionId?: string; // Set on restore — AgentView loads messages from DB
+  sourceSessionId?: string; // Session ancestry to replay when restoring/continuing
 }
 
 // A session record — one conversation
 export interface SessionRecord {
-  sessionFile: string;
-  sessionId?: string;
+  sessionId: string;
   model?: string;
   provider?: string;
   startedAt: string;
   messageCount?: number;
-}
-
-// Serializable agent config for persistence
-export interface SavedAgent {
-  id: string;
-  name: string;
-  provider?: string;
-  model?: string;
-  thinkingLevel?: string;
-  cwd?: string;
-  shadow?: ShadowIdentity;
-  activeSession?: SessionRecord;
-  sessions: SessionRecord[];
 }
 
 // Agent spawn config
@@ -76,7 +61,6 @@ export interface AgentConfig {
   model?: string;
   thinkingLevel?: string;
   cwd?: string;
-  extensions?: string[];
   shadow?: ShadowIdentity;
 }
 
@@ -90,7 +74,7 @@ export interface SessionStats {
 
 // Extension UI request types
 export interface ExtensionUIRequest {
-  id: string;
+  requestId: string;
   method: "select" | "confirm" | "input" | "editor" | "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text";
   title?: string;
   message?: string;
@@ -205,8 +189,9 @@ export interface ToolExecution {
   status: "running" | "done" | "error";
 }
 
-// Pi RPC events
+// Pi SDK events (via sidecar)
 export type PiEvent =
+  | { type: "session_ready"; agentId: string }
   | { type: "agent_start" }
   | { type: "agent_end"; messages: PiMessage[] }
   | { type: "turn_start" }
@@ -238,14 +223,6 @@ export type PiEvent =
       result: any;
       isError: boolean;
     }
-  | {
-      type: "response";
-      id?: string;
-      command: string;
-      success: boolean;
-      data?: any;
-      error?: string;
-    }
   | { type: "queue_update"; steering: string[]; followUp: string[] }
   | { type: "compaction_start"; reason: string }
   | { type: "compaction_end"; reason: string; aborted: boolean }
@@ -253,10 +230,12 @@ export type PiEvent =
   | { type: "auto_retry_end"; attempt: number }
   | {
       type: "extension_ui_request";
-      id: string;
+      agentId?: string;
+      requestId: string;
       method: string;
       [key: string]: any;
-    };
+    }
+  | { type: "sidecar_error"; error: string };
 
 // Council — parallel prompt to multiple shadows
 export interface CouncilSession {
