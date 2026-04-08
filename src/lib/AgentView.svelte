@@ -18,7 +18,7 @@
     ExtensionUIRequest,
   } from "./types";
 
-  let { agent, onrestart }: { agent: Agent; onrestart?: (id: string) => void } = $props();
+  let { agent, onrestart, onsave }: { agent: Agent; onrestart?: (id: string) => void; onsave?: (agent: Agent) => void } = $props();
 
   let items: DisplayItem[] = $state([]);
   let toolExecutions: Map<string, ToolExecution> = $state(new Map());
@@ -67,6 +67,38 @@
 
     eventCount++;
 
+    // Save agent state to DB after any meaningful event
+    function save() { onsave?.(agent); }
+
+    // Persist message to DB
+    function saveMessage(role: string, content: any, model?: string, tokens?: number, cost?: number) {
+      if (!agent.sessionId) return;
+      invoke("db_save_message", {
+        message: {
+          id: 0,
+          sessionId: agent.sessionId,
+          role,
+          content: typeof content === "string" ? content : JSON.stringify(content),
+          model: model || agent.model || null,
+          tokens: tokens || 0,
+          cost: cost || 0,
+          timestamp: new Date().toISOString(),
+        },
+      }).catch((e) => console.error("Failed to save message:", e));
+    }
+
+    // Log event to audit trail
+    function logEvent(eventType: string, data?: any) {
+      invoke("db_log_event", {
+        agentId: agent.id,
+        sessionId: agent.sessionId || null,
+        eventType,
+        data: data ? JSON.stringify(data) : null,
+      }).catch(() => {}); // Silent — audit trail shouldn't block UI
+    }
+
+    logEvent(event.type, event);
+
     switch (event.type) {
       case "agent_start":
         isStreaming = true;
@@ -94,8 +126,8 @@
           streamingMessage = null;
         }
         items = [...items, { kind: "status", text: "Agent finished" }];
-        // Refresh session stats after each run
         sendPiCommand({ type: "get_session_stats", id: "stats" });
+        save();
         scrollToBottom();
         break;
 
@@ -132,6 +164,7 @@
               timestamp: event.message.timestamp,
             },
           ];
+          saveMessage("user", content);
         } else if (event.message.role === "assistant") {
           streamingMessage = event.message as AssistantMessage;
           setActivity("Receiving response...");
@@ -163,6 +196,7 @@
             },
           ];
           if (msg.usage) lastUsage = msg.usage;
+          saveMessage("assistant", msg.content, msg.model, msg.usage?.totalTokens, msg.usage?.cost?.total);
           streamingMessage = null;
         }
         scrollToBottom();
@@ -209,6 +243,9 @@
             );
             items = [...items];
           }
+
+          // Save tool result as a message
+          saveMessage("tool", { toolName: event.toolName, toolCallId: event.toolCallId, result: event.result, isError: event.isError });
         }
         scrollToBottom();
         break;
@@ -266,6 +303,7 @@
         if (state?.sessionFile) agent.sessionFile = state.sessionFile;
         if (state?.sessionId) agent.sessionId = state.sessionId;
         setActivity("");
+        save();
         break;
       }
       case "get_session_stats": {
@@ -277,6 +315,7 @@
             messageCount: data.messageCount || 0,
             turnCount: data.turnCount || 0,
           };
+          save();
         }
         break;
       }

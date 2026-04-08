@@ -127,26 +127,7 @@
     }
   }
 
-  // Auto-save: on agent list changes + periodic + on close
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
-  $effect(() => {
-    void agents.length;
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(persistAllAgents, 2000);
-  });
-
-  // Periodic save every 30s to catch deep mutations (sessionFile, stats, etc.)
-  let periodicSave: ReturnType<typeof setInterval> | null = null;
-  $effect(() => {
-    if (agents.length > 0 && !periodicSave) {
-      periodicSave = setInterval(persistAllAgents, 30000);
-    }
-    if (agents.length === 0 && periodicSave) {
-      clearInterval(periodicSave);
-      periodicSave = null;
-    }
-  });
-
+  // Save on window close as final fallback
   if (typeof window !== "undefined") {
     window.addEventListener("beforeunload", () => {
       persistAllAgents();
@@ -270,6 +251,9 @@
     };
     agents = [...agents, agent];
     activeId = id;
+
+    // Save to DB immediately
+    persistAgent(agent);
 
     invoke("spawn_agent", {
       id,
@@ -450,6 +434,7 @@
         <AgentView
           agent={activeAgent}
           onrestart={restartAgent}
+          onsave={persistAgent}
           bind:this={agentViewRef}
         />
       {/key}

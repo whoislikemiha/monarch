@@ -22,13 +22,34 @@
     previewSession = session;
     loadingPreview = true;
     try {
-      previewMessages = await invoke<any[]>("read_session_messages", {
-        sessionFile: session.sessionFile,
-      });
+      // Try DB first
+      if (session.sessionId) {
+        const dbMessages = await invoke<any[]>("db_get_messages", { sessionId: session.sessionId });
+        if (dbMessages.length > 0) {
+          previewMessages = dbMessages.map((m: any) => ({
+            role: m.role,
+            content: tryParseJson(m.content),
+          }));
+          loadingPreview = false;
+          return;
+        }
+      }
+      // Fallback to Pi's JSONL file
+      if (session.sessionFile) {
+        previewMessages = await invoke<any[]>("read_session_messages", {
+          sessionFile: session.sessionFile,
+        });
+      } else {
+        previewMessages = [];
+      }
     } catch {
       previewMessages = [];
     }
     loadingPreview = false;
+  }
+
+  function tryParseJson(s: string): any {
+    try { return JSON.parse(s); } catch { return s; }
   }
 
   function formatDate(iso: string): string {
