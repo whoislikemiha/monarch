@@ -20,6 +20,7 @@ tauri-plugin-dialog = "2"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 dirs = "6"
+rusqlite = { version = "0.33", features = ["bundled"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

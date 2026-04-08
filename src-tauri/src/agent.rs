@@ -118,26 +118,23 @@ pub fn spawn_agent(
     // Auto-attach the shadow oath extension if shadow identity is provided
     let has_shadow = shadow_name.is_some() || shadow_title.is_some() || shadow_grade.is_some();
     if has_shadow {
-        // Resolve extension path: env var > cwd > cargo manifest dir (compile-time)
-        let oath_path = std::env::var("MONARCH_EXTENSIONS_DIR")
-            .map(|d| std::path::PathBuf::from(d).join("shadow-oath.ts"))
-            .ok()
-            .and_then(|p| if p.exists() { Some(p) } else { None })
-            .or_else(|| {
-                std::env::current_dir()
-                    .map(|d| d.join("extensions/shadow-oath.ts"))
-                    .ok()
-                    .and_then(|p| if p.exists() { Some(p) } else { None })
-            })
-            .unwrap_or_else(|| {
-                // Last resort: relative to the compiled binary
-                std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.join("../../extensions/shadow-oath.ts")))
-                    .and_then(|p| std::fs::canonicalize(p).ok())
-                    .unwrap_or_else(|| std::path::PathBuf::from("extensions/shadow-oath.ts"))
-            });
-
+        // Resolve extension path — canonicalize to absolute so Pi can find it regardless of its cwd
+        let oath_path = [
+            // Env var override
+            std::env::var("MONARCH_EXTENSIONS_DIR").ok().map(|d| std::path::PathBuf::from(d).join("shadow-oath.ts")),
+            // Relative to cwd (project root)
+            std::env::current_dir().ok().map(|d| d.join("extensions/shadow-oath.ts")),
+            // cwd might be src-tauri/, go up one
+            std::env::current_dir().ok().map(|d| d.join("../extensions/shadow-oath.ts")),
+            // Relative to binary (target/debug/monarch -> ../../extensions/)
+            std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("../../extensions/shadow-oath.ts"))),
+            // Binary might be deeper (target/debug/ -> ../../../extensions/)
+            std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("../../../extensions/shadow-oath.ts"))),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|p| std::fs::canonicalize(&p).ok())
+        .unwrap_or_else(|| std::path::PathBuf::from("extensions/shadow-oath.ts"));
         cmd.arg("--extension").arg(&oath_path);
 
         // Pass shadow identity as environment variables

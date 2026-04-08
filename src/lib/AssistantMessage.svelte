@@ -65,9 +65,7 @@
         {/if}
       </div>
     {:else if block.type === "toolCall"}
-      <div class="tool-call-inline">
-        Using <span class="tool-name">{block.name}</span>
-      </div>
+      <!-- Tool calls rendered in ToolGroup, skip inline display -->
     {/if}
   {/each}
 </div>

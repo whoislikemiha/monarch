@@ -1,6 +1,6 @@
 <script lang="ts">
   import AssistantMessageComp from "./AssistantMessage.svelte";
-  import ToolCallCard from "./ToolCallCard.svelte";
+  import ToolGroup from "./ToolGroup.svelte";
   import type { DisplayItem, AssistantMessage } from "./types";
 
   let {
@@ -34,8 +34,8 @@
         </div>
         <AssistantMessageComp content={item.content} />
       </div>
-    {:else if item.kind === "tool"}
-      <ToolCallCard execution={item.execution} />
+    {:else if item.kind === "tool-group"}
+      <ToolGroup executions={item.executions} turnComplete={item.turnComplete} />
     {:else if item.kind === "status"}
       <div class="status-message">{item.text}</div>
     {:else if item.kind === "notification"}
@@ -47,12 +47,21 @@
   {/each}
 
   {#if streamingMessage}
+    {@const textContent = streamingMessage.content
+      .filter((b): b is { type: "text"; text: string } => b.type === "text")
+      .map((b) => b.text)
+      .join("")}
+    {@const isThinking = streamingMessage.content.some((b) => b.type === "thinking")}
     <div class="message assistant-message streaming">
       <div class="message-label">
         Assistant
         <span class="streaming-indicator"></span>
       </div>
-      <AssistantMessageComp content={streamingMessage.content} />
+      {#if isThinking && !textContent}
+        <div class="streaming-content streaming-thinking">thinking...</div>
+      {:else if textContent}
+        <div class="streaming-content">{textContent}</div>
+      {/if}
     </div>
   {/if}
 
@@ -155,6 +164,24 @@
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     margin-bottom: 12px;
     color: var(--accent-purple);
+  }
+
+  .streaming-content {
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .streaming-thinking {
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .streaming-tool {
+    color: var(--accent-cyan);
+    font-size: 12px;
   }
 
   .empty p {

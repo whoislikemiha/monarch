@@ -289,6 +289,6 @@ export type DisplayItem =
       model?: string;
       timestamp?: number;
     }
-  | { kind: "tool"; execution: ToolExecution }
+  | { kind: "tool-group"; executions: ToolExecution[]; turnComplete: boolean }
   | { kind: "status"; text: string }
   | { kind: "notification"; text: string; level: "info" | "warning" | "error" };

@@ -51,14 +51,79 @@
     };
   }
 
-  async function persistAgents() {
+  // DB row type matching Rust's AgentRow
+  interface AgentDbRow {
+    id: string;
+    name: string;
+    shadowName?: string | null;
+    shadowTitle?: string | null;
+    shadowGrade?: string | null;
+    provider?: string | null;
+    model?: string | null;
+    thinkingLevel?: string | null;
+    cwd?: string | null;
+    customPrompt?: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }
+
+  interface SessionDbRow {
+    id: string;
+    agentId: string;
+    piSessionFile?: string | null;
+    model?: string | null;
+    provider?: string | null;
+    startedAt: string;
+    endedAt?: string | null;
+    messageCount: number;
+    totalTokens: number;
+    totalCost: number;
+  }
+
+  async function persistAgent(agent: Agent) {
     try {
-      const toSave = agents
-        .filter((a) => a.status !== "error")
-        .map(agentToSaved);
-      await invoke("save_agents", { agents: toSave });
+      const row: AgentDbRow = {
+        id: agent.id,
+        name: agent.name,
+        shadowName: agent.shadow?.shadowName || null,
+        shadowTitle: agent.shadow?.shadowTitle || null,
+        shadowGrade: agent.shadow?.shadowGrade || null,
+        provider: agent.provider || null,
+        model: agent.model || null,
+        thinkingLevel: agent.thinkingLevel || null,
+        cwd: agent.cwd || null,
+        customPrompt: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await invoke("db_upsert_agent", { agent: row });
+
+      // Save active session if we have one
+      if (agent.sessionFile && agent.sessionId) {
+        const session: SessionDbRow = {
+          id: agent.sessionId,
+          agentId: agent.id,
+          piSessionFile: agent.sessionFile,
+          model: agent.model || null,
+          provider: agent.provider || null,
+          startedAt: new Date().toISOString(),
+          endedAt: null,
+          messageCount: agent.sessionStats?.messageCount || 0,
+          totalTokens: agent.sessionStats?.totalTokens || 0,
+          totalCost: agent.sessionStats?.totalCost || 0,
+        };
+        await invoke("db_create_session", { session });
+      }
     } catch (e) {
-      console.error("Failed to persist agents:", e);
+      console.error("Failed to persist agent:", e);
+    }
+  }
+
+  async function persistAllAgents() {
+    for (const agent of agents) {
+      if (agent.status !== "error") {
+        await persistAgent(agent);
+      }
     }
   }
 
@@ -67,14 +132,14 @@
   $effect(() => {
     void agents.length;
     if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(persistAgents, 1000);
+    saveTimer = setTimeout(persistAllAgents, 2000);
   });
 
-  // Periodic save every 10s to catch deep mutations (sessionFile, etc.)
+  // Periodic save every 30s to catch deep mutations (sessionFile, stats, etc.)
   let periodicSave: ReturnType<typeof setInterval> | null = null;
   $effect(() => {
     if (agents.length > 0 && !periodicSave) {
-      periodicSave = setInterval(persistAgents, 10000);
+      periodicSave = setInterval(persistAllAgents, 30000);
     }
     if (agents.length === 0 && periodicSave) {
       clearInterval(periodicSave);
@@ -82,18 +147,54 @@
     }
   });
 
-  // Save on window close
   if (typeof window !== "undefined") {
     window.addEventListener("beforeunload", () => {
-      persistAgents();
+      persistAllAgents();
     });
   }
 
   async function loadSavedAgents() {
     try {
-      const loaded = await invoke<SavedAgent[]>("load_agents");
-      // Ensure sessions array exists on all
-      savedAgents = loaded.map((a) => ({ ...a, sessions: a.sessions || [] }));
+      // Try SQLite first
+      const dbAgents = await invoke<AgentDbRow[]>("db_get_agents");
+      if (dbAgents.length > 0) {
+        // Convert DB rows to SavedAgent format
+        const loaded: SavedAgent[] = [];
+        for (const row of dbAgents) {
+          const sessions = await invoke<SessionDbRow[]>("db_get_sessions", { agentId: row.id });
+          loaded.push({
+            id: row.id,
+            name: row.name,
+            provider: row.provider || undefined,
+            model: row.model || undefined,
+            thinkingLevel: row.thinkingLevel || undefined,
+            cwd: row.cwd || undefined,
+            shadow: row.shadowName
+              ? { shadowName: row.shadowName, shadowTitle: row.shadowTitle || "", shadowGrade: (row.shadowGrade as any) || "Knight" }
+              : undefined,
+            activeSession: sessions[0]
+              ? { sessionFile: sessions[0].piSessionFile || "", sessionId: sessions[0].id, model: sessions[0].model || undefined, provider: sessions[0].provider || undefined, startedAt: sessions[0].startedAt, messageCount: sessions[0].messageCount }
+              : undefined,
+            sessions: sessions.map((s) => ({
+              sessionFile: s.piSessionFile || "",
+              sessionId: s.id,
+              model: s.model || undefined,
+              provider: s.provider || undefined,
+              startedAt: s.startedAt,
+              messageCount: s.messageCount,
+            })),
+          });
+        }
+        savedAgents = loaded;
+        if (savedAgents.length > 0) {
+          showRestoreBar = true;
+        }
+        return;
+      }
+
+      // Fallback: try legacy JSON
+      const jsonAgents = await invoke<SavedAgent[]>("load_agents");
+      savedAgents = jsonAgents.map((a) => ({ ...a, sessions: a.sessions || [] }));
       if (savedAgents.length > 0) {
         showRestoreBar = true;
       }

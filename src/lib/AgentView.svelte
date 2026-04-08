@@ -29,6 +29,7 @@
   let showStderr = $state(false);
   let showPromptEditor = $state(false);
   let showHistory = $state(false);
+  let currentToolGroup: { kind: "tool-group"; executions: ToolExecution[]; turnComplete: boolean } | null = $state(null);
 
   let unlistenEvent: UnlistenFn;
   let unlistenExit: UnlistenFn;
@@ -100,12 +101,18 @@
 
       case "turn_start":
         setActivity("LLM call in progress...");
-        items = [...items, { kind: "status", text: "Calling LLM..." }];
-        scrollToBottom();
+        // Start a new tool group for this turn
+        currentToolGroup = null;
         break;
 
       case "turn_end":
         setActivity("Processing response...");
+        // Mark current tool group as complete
+        if (currentToolGroup) {
+          currentToolGroup.turnComplete = true;
+          items = [...items];
+        }
+        currentToolGroup = null;
         break;
 
       case "message_start":
@@ -170,7 +177,15 @@
           status: "running",
         };
         toolExecutions.set(event.toolCallId, exec);
-        items = [...items, { kind: "tool", execution: exec }];
+
+        // Add to current tool group, or create one
+        if (!currentToolGroup) {
+          currentToolGroup = { kind: "tool-group", executions: [exec], turnComplete: false };
+          items = [...items, currentToolGroup];
+        } else {
+          currentToolGroup.executions = [...currentToolGroup.executions, exec];
+          items = [...items]; // trigger reactivity
+        }
         scrollToBottom();
         break;
       }
@@ -179,10 +194,21 @@
         setActivity("");
         const existing = toolExecutions.get(event.toolCallId);
         if (existing) {
-          existing.result = event.result;
-          existing.isError = event.isError;
-          existing.status = event.isError ? "error" : "done";
-          items = [...items]; // trigger reactivity
+          const updated = {
+            ...existing,
+            result: event.result,
+            isError: event.isError,
+            status: (event.isError ? "error" : "done") as ToolExecution["status"],
+          };
+          toolExecutions.set(event.toolCallId, updated);
+
+          // Update within the tool group
+          if (currentToolGroup) {
+            currentToolGroup.executions = currentToolGroup.executions.map((e) =>
+              e.toolCallId === event.toolCallId ? updated : e,
+            );
+            items = [...items];
+          }
         }
         scrollToBottom();
         break;
