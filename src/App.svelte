@@ -201,7 +201,8 @@
       shadow: saved.shadow,
     };
     const sessionFile = saved.activeSession?.sessionFile;
-    const newId = await createAgent(config, sessionFile);
+    const sessionId = saved.activeSession?.sessionId;
+    const newId = await createAgent(config, sessionFile, sessionId);
 
     // Carry over session history
     const allSessions = [...saved.sessions];
@@ -231,7 +232,7 @@
 
   // --- Agent lifecycle ---
 
-  async function createAgent(config?: AgentConfig, restoreSessionFile?: string): Promise<string> {
+  async function createAgent(config?: AgentConfig, restoreSessionFile?: string, restoreSessionId?: string): Promise<string> {
     counter++;
     const id = `agent-${Date.now()}`;
     const name = config?.shadow?.shadowName || `Agent ${counter}`;
@@ -248,6 +249,7 @@
       stderrLines: [],
       shadow: config?.shadow,
       sessions: [],
+      restoreSessionId: restoreSessionId || undefined,
     };
     agents = [...agents, agent];
     activeId = id;
@@ -271,12 +273,6 @@
         agents = agents.map((a) =>
           a.id === id ? { ...a, status: "running" as const } : a,
         );
-        if (restoreSessionFile) {
-          invoke("send_command", {
-            id,
-            commandJson: JSON.stringify({ type: "get_messages", id: "restore-messages" }),
-          });
-        }
       })
       .catch((err) => {
         console.error("Failed to spawn agent:", err);

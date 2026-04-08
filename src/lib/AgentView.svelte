@@ -319,45 +319,6 @@
         }
         break;
       }
-      case "get_messages": {
-        // Restore messages from a previous session
-        const data = event.data as any;
-        const messages = data?.messages || data;
-        if (Array.isArray(messages) && messages.length > 0) {
-          // Clear existing items and rebuild from history
-          const restored: DisplayItem[] = [];
-          for (const msg of messages) {
-            if (msg.role === "user") {
-              const content =
-                typeof msg.content === "string"
-                  ? msg.content
-                  : (msg.content || [])
-                      .filter((b: any) => b.type === "text")
-                      .map((b: any) => b.text)
-                      .join("");
-              if (content) {
-                restored.push({ kind: "user", content, timestamp: msg.timestamp });
-              }
-            } else if (msg.role === "assistant") {
-              restored.push({
-                kind: "assistant",
-                content: msg.content || [],
-                usage: msg.usage,
-                model: msg.model,
-                timestamp: msg.timestamp,
-              });
-            }
-          }
-          if (restored.length > 0) {
-            items = [
-              { kind: "status", text: `Restored ${restored.length} messages from previous session` },
-              ...restored,
-            ];
-            scrollToBottom();
-          }
-        }
-        break;
-      }
     }
   }
 
@@ -503,6 +464,37 @@
 
     // Initial state sync
     sendPiCommand({ type: "get_state", id: "init-state" });
+
+    // Restore messages from DB if this is a restored agent
+    if (agent.restoreSessionId) {
+      try {
+        const dbMessages = await invoke<any[]>("db_get_messages", { sessionId: agent.restoreSessionId });
+        if (dbMessages.length > 0) {
+          const restored: DisplayItem[] = [];
+          for (const msg of dbMessages) {
+            if (msg.role === "user") {
+              restored.push({ kind: "user", content: msg.content, timestamp: undefined });
+            } else if (msg.role === "assistant") {
+              let content;
+              try { content = JSON.parse(msg.content); } catch { content = [{ type: "text", text: msg.content }]; }
+              restored.push({ kind: "assistant", content, model: msg.model, timestamp: undefined });
+            }
+            // Skip tool messages in main view — they were part of tool groups
+          }
+          if (restored.length > 0) {
+            items = [
+              { kind: "status", text: `Restored ${restored.length} messages from previous session` },
+              ...restored,
+            ];
+            scrollToBottom();
+          }
+        }
+      } catch (e) {
+        console.error("Failed to restore messages from DB:", e);
+      }
+      // Clear the flag so we don't reload on re-render
+      agent.restoreSessionId = undefined;
+    }
   });
 
   onDestroy(() => {
@@ -635,9 +627,8 @@
     currentSessionFile={agent.sessionFile}
     onload={async (sessionFile) => {
       showHistory = false;
-      // Switch to the selected session
+      // Switch Pi to the selected session
       await sendPiCommand({ type: "switch_session", sessionPath: sessionFile });
-      await sendPiCommand({ type: "get_messages", id: "load-history" });
       await sendPiCommand({ type: "get_state", id: "post-switch" });
     }}
     onclose={() => (showHistory = false)}

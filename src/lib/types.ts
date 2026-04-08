@@ -44,6 +44,7 @@ export interface Agent {
   sessionFile?: string;
   sessionId?: string;
   sessions: SessionRecord[];
+  restoreSessionId?: string; // Set on restore — AgentView loads messages from DB
 }
 
 // A session record — one conversation
