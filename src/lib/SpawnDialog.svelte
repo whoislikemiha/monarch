@@ -25,7 +25,7 @@
 
   const providers = [
     { label: "Anthropic", value: "anthropic" },
-    { label: "OpenAI", value: "openai" },
+    { label: "OpenAI Codex", value: "openai-codex" },
     { label: "OpenRouter", value: "openrouter" },
   ];
 
@@ -38,11 +38,22 @@
     provider: string;
   }
 
+  interface ProviderAuthStatus {
+    provider: string;
+    checked: boolean;
+    configured: boolean;
+    source?: string | null;
+    message: string;
+  }
+
   let allModels: ModelInfo[] = $state([]);
   let modelsLoading = $state(false);
+  let authLoading = $state(false);
+  let authStatus: ProviderAuthStatus | null = $state(null);
   let showDropdown = $state(false);
   let highlightedIndex = $state(-1);
   let modelInputEl: HTMLInputElement | undefined = $state(undefined);
+  let fixedModelId = $derived(selectedProvider === "openai-codex" ? "gpt-5.4" : "");
 
   // Fuzzy filtered models — each space-separated term must match somewhere
   let filteredModels = $derived(() => {
@@ -64,12 +75,8 @@
       { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic" },
       { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
     ],
-    openai: [
-      { id: "gpt-4.1", name: "GPT-4.1", provider: "openai" },
-      { id: "gpt-4.1-mini", name: "GPT-4.1 Mini", provider: "openai" },
-      { id: "o3", name: "o3", provider: "openai" },
-      { id: "o4-mini", name: "o4 Mini", provider: "openai" },
-      { id: "gpt-4o", name: "GPT-4o", provider: "openai" },
+    "openai-codex": [
+      { id: "gpt-5.4", name: "GPT-5.4", provider: "openai-codex" },
     ],
   };
 
@@ -94,10 +101,23 @@
     modelsLoading = false;
   }
 
+  async function fetchAuthStatus(provider: string) {
+    authLoading = true;
+    try {
+      authStatus = await invoke<ProviderAuthStatus>("get_provider_auth_status", { provider });
+    } catch {
+      authStatus = null;
+    }
+    authLoading = false;
+  }
+
   // Fetch models when provider changes
   $effect(() => {
     fetchModels(selectedProvider);
-    modelInput = "";
+    fetchAuthStatus(selectedProvider);
+    modelInput = fixedModelId || "";
+    showDropdown = false;
+    highlightedIndex = -1;
   });
 
   function selectModel(model: ModelInfo) {
@@ -107,6 +127,10 @@
   }
 
   function handleModelKeydown(e: KeyboardEvent) {
+    if (fixedModelId) {
+      return;
+    }
+
     const models = filteredModels();
     if (!showDropdown || models.length === 0) {
       if (e.key === "ArrowDown" && allModels.length > 0) {
@@ -143,7 +167,7 @@
   function handleSpawn() {
     const trimmed = modelInput.trim();
     const provider = selectedProvider;
-    const model = trimmed || undefined;
+    const model = fixedModelId || trimmed || undefined;
 
     const config: AgentConfig = {
       provider,
@@ -210,6 +234,30 @@
       </div>
     </div>
 
+    {#if authLoading || authStatus}
+      <div
+        class="auth-status"
+        class:ok={!!authStatus?.checked && !!authStatus?.configured}
+        class:warn={!!authStatus?.checked && !authStatus?.configured}
+        class:neutral={!authStatus?.checked}
+      >
+        <span class="auth-status-label">
+          {#if authLoading}
+            Checking auth...
+          {:else if authStatus?.checked && authStatus?.configured}
+            Auth ready
+          {:else if authStatus?.checked}
+            Auth missing
+          {:else}
+            Auth not checked
+          {/if}
+        </span>
+        {#if !authLoading && authStatus}
+          <span class="auth-status-text">{authStatus.message}</span>
+        {/if}
+      </div>
+    {/if}
+
     <div class="field model-field">
       <label class="label" for="model-input">Model</label>
       <div class="model-input-wrap">
@@ -218,18 +266,24 @@
           type="text"
           bind:this={modelInputEl}
           bind:value={modelInput}
-          placeholder={modelsLoading ? "Loading models..." : "Search models..."}
-          onfocus={() => (showDropdown = true)}
+          placeholder={fixedModelId ? "Uses your Pi Codex login" : modelsLoading ? "Loading models..." : "Search models..."}
+          readonly={!!fixedModelId}
+          onfocus={() => { if (!fixedModelId) showDropdown = true; }}
           onblur={() => setTimeout(() => (showDropdown = false), 200)}
           onkeydown={handleModelKeydown}
-          oninput={() => { showDropdown = true; highlightedIndex = 0; }}
+          oninput={() => { if (!fixedModelId) { showDropdown = true; highlightedIndex = 0; } }}
           autocomplete="off"
         />
         {#if modelsLoading}
           <span class="loading-indicator"></span>
         {/if}
       </div>
-      {#if showDropdown && filteredModels().length > 0}
+      {#if fixedModelId}
+        <div class="field-hint">
+          Uses Pi's existing `openai-codex` auth and locks this provider to GPT-5.4.
+        </div>
+      {/if}
+      {#if !fixedModelId && showDropdown && filteredModels().length > 0}
         <div class="model-dropdown">
           {#each filteredModels() as model, i (model.id)}
             <button
@@ -384,6 +438,51 @@
   .preset-btn.active {
     border-color: var(--accent-purple, #be95ff);
     color: var(--accent-purple, #be95ff);
+  }
+
+  .field-hint {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-muted, #8f7aa8);
+    line-height: 1.5;
+  }
+
+  .auth-status {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle, #35274f);
+    background: var(--bg-panel-2, #201734);
+  }
+
+  .auth-status.ok {
+    border-color: rgba(61, 214, 140, 0.4);
+    background: rgba(18, 53, 39, 0.45);
+  }
+
+  .auth-status.warn {
+    border-color: rgba(255, 176, 32, 0.35);
+    background: rgba(64, 42, 12, 0.4);
+  }
+
+  .auth-status.neutral {
+    border-color: var(--border-subtle, #35274f);
+  }
+
+  .auth-status-label {
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-primary, #f2f4f8);
+  }
+
+  .auth-status-text {
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-secondary, #dde1e6);
   }
 
   .model-field {

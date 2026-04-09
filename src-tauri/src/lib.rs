@@ -30,6 +30,7 @@ pub fn run() {
             agent::respond_extension_ui,
             // Models
             models::get_models,
+            models::get_provider_auth_status,
             // Prompt file management
             persistence::get_agent_prompt,
             persistence::save_agent_prompt,

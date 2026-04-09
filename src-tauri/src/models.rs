@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -7,6 +10,15 @@ pub struct ModelInfo {
     pub id: String,
     pub name: String,
     pub provider: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderAuthStatus {
+    pub provider: String,
+    pub checked: bool,
+    pub configured: bool,
+    pub source: Option<String>,
+    pub message: String,
 }
 
 // Cache for fetched models
@@ -22,6 +34,31 @@ impl ModelCache {
             openrouter: Mutex::new(None),
         }
     }
+}
+
+fn pi_auth_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(".pi").join("agent").join("auth.json"))
+}
+
+fn pi_auth_entry_exists(provider: &str) -> Result<bool, String> {
+    let path = match pi_auth_path() {
+        Some(path) => path,
+        None => return Ok(false),
+    };
+
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    let parsed: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
+
+    Ok(parsed
+        .as_object()
+        .and_then(|obj| obj.get(provider))
+        .is_some())
 }
 
 // Known Anthropic models
@@ -40,23 +77,14 @@ fn anthropic_models() -> Vec<ModelInfo> {
     .collect()
 }
 
-// Known OpenAI models
-fn openai_models() -> Vec<ModelInfo> {
-    [
-        ("gpt-4.1", "GPT-4.1"),
-        ("gpt-4.1-mini", "GPT-4.1 Mini"),
-        ("gpt-4.1-nano", "GPT-4.1 Nano"),
-        ("o3", "o3"),
-        ("o3-mini", "o3 Mini"),
-        ("o4-mini", "o4 Mini"),
-        ("gpt-4o", "GPT-4o"),
-        ("gpt-4o-mini", "GPT-4o Mini"),
-    ]
+// Subscription-backed OpenAI Codex models via Pi auth
+fn openai_codex_models() -> Vec<ModelInfo> {
+    [("gpt-5.4", "GPT-5.4")]
     .into_iter()
     .map(|(id, name)| ModelInfo {
         id: id.to_string(),
         name: name.to_string(),
-        provider: "openai".to_string(),
+        provider: "openai-codex".to_string(),
     })
     .collect()
 }
@@ -105,7 +133,7 @@ pub async fn get_models(
 ) -> Result<Vec<ModelInfo>, String> {
     match provider.as_str() {
         "anthropic" => Ok(anthropic_models()),
-        "openai" => Ok(openai_models()),
+        "openai-codex" => Ok(openai_codex_models()),
         "openrouter" => {
             // Check cache
             {
@@ -129,5 +157,54 @@ pub async fn get_models(
             Ok(models)
         }
         _ => Ok(vec![]),
+    }
+}
+
+#[tauri::command]
+pub fn get_provider_auth_status(provider: String) -> Result<ProviderAuthStatus, String> {
+    match provider.as_str() {
+        "anthropic" => {
+            let configured = pi_auth_entry_exists("anthropic")?;
+            Ok(ProviderAuthStatus {
+                provider,
+                checked: true,
+                configured,
+                source: if configured {
+                    Some("~/.pi/agent/auth.json".to_string())
+                } else {
+                    None
+                },
+                message: if configured {
+                    "Pi Claude auth found.".to_string()
+                } else {
+                    "No Pi Claude auth found. Anthropic can still work via ANTHROPIC_API_KEY.".to_string()
+                },
+            })
+        }
+        "openai-codex" => {
+            let configured = pi_auth_entry_exists("openai-codex")?;
+            Ok(ProviderAuthStatus {
+                provider,
+                checked: true,
+                configured,
+                source: if configured {
+                    Some("~/.pi/agent/auth.json".to_string())
+                } else {
+                    None
+                },
+                message: if configured {
+                    "Pi Codex auth found.".to_string()
+                } else {
+                    "No Pi Codex auth found. Run Pi login for OpenAI Codex first.".to_string()
+                },
+            })
+        }
+        _ => Ok(ProviderAuthStatus {
+            provider,
+            checked: false,
+            configured: false,
+            source: None,
+            message: "This provider does not use Pi subscription auth checks.".to_string(),
+        }),
     }
 }
