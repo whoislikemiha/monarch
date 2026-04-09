@@ -26,6 +26,7 @@ pub fn run() {
             agent::kill_agent,
             agent::load_session_context,
             agent::new_agent_session,
+            agent::switch_agent_session,
             agent::respond_extension_ui,
             // Models
             models::get_models,

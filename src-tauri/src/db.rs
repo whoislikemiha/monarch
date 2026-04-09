@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub struct Database {
     conn: Mutex<Connection>,
@@ -180,6 +180,54 @@ pub struct MemoryRow {
 // ---- Internal methods (called from Rust event handler thread) ----
 
 impl Database {
+    pub fn session_exists_internal(&self, session_id: &str) -> Result<bool, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let exists: i64 = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
+                params![session_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(exists != 0)
+    }
+
+    pub fn ensure_agent_exists_internal(&self, agent: &AgentRow) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO agents (id, name, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(id) DO NOTHING",
+            params![
+                agent.id, agent.name, agent.shadow_name, agent.shadow_title, agent.shadow_grade,
+                agent.provider, agent.model, agent.thinking_level, agent.cwd, agent.custom_prompt,
+                agent.created_at, agent.updated_at,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn upsert_agent_internal(&self, agent: &AgentRow) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO agents (id, name, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(id) DO UPDATE SET
+               name=excluded.name, shadow_name=excluded.shadow_name, shadow_title=excluded.shadow_title,
+               shadow_grade=excluded.shadow_grade, provider=excluded.provider, model=excluded.model,
+               thinking_level=excluded.thinking_level, cwd=excluded.cwd, custom_prompt=excluded.custom_prompt,
+               updated_at=datetime('now')",
+            params![
+                agent.id, agent.name, agent.shadow_name, agent.shadow_title, agent.shadow_grade,
+                agent.provider, agent.model, agent.thinking_level, agent.cwd, agent.custom_prompt,
+                agent.created_at, agent.updated_at,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub fn save_message_internal(&self, message: &MessageRow) -> Result<i64, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
@@ -338,28 +386,12 @@ impl Database {
 // ---- Tauri Commands: Agents ----
 
 #[tauri::command]
-pub fn db_upsert_agent(db: tauri::State<'_, Database>, agent: AgentRow) -> Result<(), String> {
-    let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "INSERT INTO agents (id, name, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-         ON CONFLICT(id) DO UPDATE SET
-           name=excluded.name, shadow_name=excluded.shadow_name, shadow_title=excluded.shadow_title,
-           shadow_grade=excluded.shadow_grade, provider=excluded.provider, model=excluded.model,
-           thinking_level=excluded.thinking_level, cwd=excluded.cwd, custom_prompt=excluded.custom_prompt,
-           updated_at=datetime('now')",
-        params![
-            agent.id, agent.name, agent.shadow_name, agent.shadow_title, agent.shadow_grade,
-            agent.provider, agent.model, agent.thinking_level, agent.cwd, agent.custom_prompt,
-            agent.created_at, agent.updated_at,
-        ],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
+pub fn db_upsert_agent(db: tauri::State<'_, Arc<Database>>, agent: AgentRow) -> Result<(), String> {
+    db.upsert_agent_internal(&agent)
 }
 
 #[tauri::command]
-pub fn db_get_agents(db: tauri::State<'_, Database>) -> Result<Vec<AgentRow>, String> {
+pub fn db_get_agents(db: tauri::State<'_, Arc<Database>>) -> Result<Vec<AgentRow>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT id, name, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at FROM agents ORDER BY updated_at DESC")
@@ -386,7 +418,7 @@ pub fn db_get_agents(db: tauri::State<'_, Database>) -> Result<Vec<AgentRow>, St
 }
 
 #[tauri::command]
-pub fn db_delete_agent(db: tauri::State<'_, Database>, agent_id: String) -> Result<(), String> {
+pub fn db_delete_agent(db: tauri::State<'_, Arc<Database>>, agent_id: String) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM agents WHERE id = ?1", params![agent_id])
         .map_err(|e| e.to_string())?;
@@ -396,7 +428,7 @@ pub fn db_delete_agent(db: tauri::State<'_, Database>, agent_id: String) -> Resu
 // ---- Tauri Commands: Sessions ----
 
 #[tauri::command]
-pub fn db_create_session(db: tauri::State<'_, Database>, session: SessionRow) -> Result<(), String> {
+pub fn db_create_session(db: tauri::State<'_, Arc<Database>>, session: SessionRow) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO sessions (id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id)
@@ -422,7 +454,7 @@ pub fn db_create_session(db: tauri::State<'_, Database>, session: SessionRow) ->
 }
 
 #[tauri::command]
-pub fn db_get_sessions(db: tauri::State<'_, Database>, agent_id: String) -> Result<Vec<SessionRow>, String> {
+pub fn db_get_sessions(db: tauri::State<'_, Arc<Database>>, agent_id: String) -> Result<Vec<SessionRow>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id FROM sessions WHERE agent_id = ?1 ORDER BY started_at DESC")
@@ -450,7 +482,7 @@ pub fn db_get_sessions(db: tauri::State<'_, Database>, agent_id: String) -> Resu
 // ---- Tauri Commands: Messages ----
 
 #[tauri::command]
-pub fn db_save_message(db: tauri::State<'_, Database>, message: MessageRow) -> Result<i64, String> {
+pub fn db_save_message(db: tauri::State<'_, Arc<Database>>, message: MessageRow) -> Result<i64, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO messages (session_id, role, content, model, tokens, cost, timestamp)
@@ -465,7 +497,7 @@ pub fn db_save_message(db: tauri::State<'_, Database>, message: MessageRow) -> R
 }
 
 #[tauri::command]
-pub fn db_get_messages(db: tauri::State<'_, Database>, session_id: String) -> Result<Vec<MessageRow>, String> {
+pub fn db_get_messages(db: tauri::State<'_, Arc<Database>>, session_id: String) -> Result<Vec<MessageRow>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT id, session_id, role, content, model, tokens, cost, timestamp FROM messages WHERE session_id = ?1 ORDER BY id ASC")
@@ -490,7 +522,7 @@ pub fn db_get_messages(db: tauri::State<'_, Database>, session_id: String) -> Re
 /// Get messages for a session, including all ancestor sessions (for continued sessions)
 #[tauri::command]
 pub fn db_get_messages_with_ancestry(
-    db: tauri::State<'_, Database>,
+    db: tauri::State<'_, Arc<Database>>,
     session_id: String,
 ) -> Result<Vec<MessageRow>, String> {
     db.get_messages_with_ancestry(&session_id)
@@ -499,7 +531,7 @@ pub fn db_get_messages_with_ancestry(
 // ---- Tauri Commands: Memories ----
 
 #[tauri::command]
-pub fn db_save_memory(db: tauri::State<'_, Database>, memory: MemoryRow) -> Result<i64, String> {
+pub fn db_save_memory(db: tauri::State<'_, Arc<Database>>, memory: MemoryRow) -> Result<i64, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO memories (agent_id, layer, category, content, relevance, created_at)
@@ -515,7 +547,7 @@ pub fn db_save_memory(db: tauri::State<'_, Database>, memory: MemoryRow) -> Resu
 
 #[tauri::command]
 pub fn db_get_memories(
-    db: tauri::State<'_, Database>,
+    db: tauri::State<'_, Arc<Database>>,
     agent_id: Option<String>,
     layer: Option<String>,
 ) -> Result<Vec<MemoryRow>, String> {
@@ -555,7 +587,7 @@ fn map_memory(row: &rusqlite::Row) -> rusqlite::Result<MemoryRow> {
 
 #[tauri::command]
 pub fn db_log_event(
-    db: tauri::State<'_, Database>,
+    db: tauri::State<'_, Arc<Database>>,
     agent_id: Option<String>,
     session_id: Option<String>,
     event_type: String,

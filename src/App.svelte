@@ -19,6 +19,10 @@
   let showRestoreBar = $state(false);
   let exitListeners: Map<string, import("@tauri-apps/api/event").UnlistenFn> = new Map();
 
+  function createViewKey(agentId: string): string {
+    return `${agentId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+  }
+
   // Saved agents loaded from SQLite for restore
   interface SavedAgentInfo {
     id: string;
@@ -114,7 +118,7 @@
     savedAgents = [];
   }
 
-  async function restoreAgent(saved: SavedAgentInfo) {
+  async function restoreAgent(saved: SavedAgentInfo, selectedSessionId?: string) {
     const config: AgentConfig = {
       provider: saved.provider,
       model: saved.model,
@@ -122,9 +126,13 @@
       cwd: saved.cwd,
       shadow: saved.shadow as any,
     };
-    const latestSession = saved.sessions[0];
-    const sourceSessionId = latestSession?.sessionId;
-    const newId = await createAgent(config, sourceSessionId, sourceSessionId);
+    const sourceSessionId = selectedSessionId || saved.sessions[0]?.sessionId;
+    const newId = await createAgent(config, {
+      agentId: saved.id,
+      sessionId: sourceSessionId,
+      sourceSessionId,
+      reuseExistingSession: true,
+    });
 
     // Merge archived sessions with the freshly-created current session
     agents = agents.map((a) => {
@@ -155,15 +163,24 @@
 
   // --- Agent lifecycle ---
 
-  async function createAgent(config?: AgentConfig, sourceSessionId?: string, parentSessionId?: string): Promise<string> {
+  async function createAgent(
+    config?: AgentConfig,
+    options?: {
+      agentId?: string;
+      sessionId?: string;
+      sourceSessionId?: string;
+      parentSessionId?: string;
+      reuseExistingSession?: boolean;
+    },
+  ): Promise<string> {
     counter++;
-    const id = `agent-${Date.now()}-${counter}`;
+    const id = options?.agentId || `agent-${Date.now()}-${counter}`;
     const name = config?.shadow?.shadowName || `Agent ${counter}`;
     const cwd = config?.cwd || "/home/miha";
-    // Always create a fresh live session. `sourceSessionId` is replayed from SQLite.
-    const sessionId = `session-${Date.now()}-${counter}`;
+    const sessionId = options?.sessionId || `session-${Date.now()}-${counter}`;
     const agent: Agent = {
       id,
+      viewKey: createViewKey(id),
       name,
       status: "running",
       provider: config?.provider,
@@ -181,7 +198,7 @@
         startedAt: new Date().toISOString(),
         messageCount: 0,
       }],
-      sourceSessionId: sourceSessionId || undefined,
+      sourceSessionId: options?.sourceSessionId || undefined,
     };
     agents = [...agents, agent];
     activeId = id;
@@ -204,20 +221,22 @@
       };
       await invoke("db_upsert_agent", { agent: row });
 
-      // Create session row — link to parent if restoring from a previous session
-      const session: SessionDbRow = {
-        id: sessionId,
-        agentId: agent.id,
-        model: agent.model || null,
-        provider: agent.provider || null,
-        startedAt: new Date().toISOString(),
-        endedAt: null,
-        messageCount: 0,
-        totalTokens: 0,
-        totalCost: 0,
-        parentSessionId: parentSessionId || null,
-      };
-      await invoke("db_create_session", { session });
+      if (!options?.reuseExistingSession) {
+        // Create session row — link to parent if restoring from a previous session
+        const session: SessionDbRow = {
+          id: sessionId,
+          agentId: agent.id,
+          model: agent.model || null,
+          provider: agent.provider || null,
+          startedAt: new Date().toISOString(),
+          endedAt: null,
+          messageCount: 0,
+          totalTokens: 0,
+          totalCost: 0,
+          parentSessionId: options?.parentSessionId || null,
+        };
+        await invoke("db_create_session", { session });
+      }
     } catch (e) {
       console.error("Failed to persist agent:", e);
     }
@@ -268,6 +287,11 @@
       thinkingLevel: agent.thinkingLevel,
       cwd: agent.cwd,
       shadow: agent.shadow,
+    }, {
+      agentId: agent.id,
+      sessionId: agent.sessionId,
+      sourceSessionId: agent.sessionId,
+      reuseExistingSession: true,
     });
   }
 
@@ -398,7 +422,7 @@
         onback={() => (councilMode = false)}
       />
     {:else if activeAgent}
-      {#key activeAgent.id}
+      {#key activeAgent.viewKey}
         <AgentView
           agent={activeAgent}
           onrestart={restartAgent}
@@ -444,6 +468,7 @@
 
 {#if viewingSavedAgent}
   <HistoryPanel
+    agentId={viewingSavedAgent.id}
     sessions={viewingSavedAgent.sessions}
     onload={(session) => {
       // Restore this agent with the selected session
@@ -453,7 +478,7 @@
         restoreAgent({
           ...saved,
           sessions: saved.sessions,
-        });
+        }, session.sessionId);
       }
     }}
     onclose={() => (viewingSavedAgent = null)}

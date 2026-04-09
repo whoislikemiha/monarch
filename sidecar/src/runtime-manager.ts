@@ -10,7 +10,7 @@ import {
 	type AgentSession,
 	type AgentSessionEventListener,
 } from "@mariozechner/pi-coding-agent";
-import type { ThinkingLevel } from "@mariozechner/pi-ai";
+import type { Api, Model, ThinkingLevel } from "@mariozechner/pi-ai";
 import { createShadowOathFactory } from "./shadow-oath.js";
 import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
 import type { CreateSessionCommand, LoadSessionCommand } from "./protocol.js";
@@ -19,6 +19,90 @@ interface ManagedSession {
 	session: AgentSession;
 	unsubscribe: () => void;
 	uiResolvers: UIResolvers;
+}
+
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const EMPTY_USAGE = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		total: 0,
+	},
+} as const;
+
+function tryParseStoredContent(content: string): unknown {
+	const trimmed = content.trim();
+	if (!trimmed) return content;
+
+	const looksSerialized =
+		trimmed.startsWith("[") ||
+		trimmed.startsWith("{") ||
+		trimmed.startsWith("\"");
+	if (!looksSerialized) return content;
+
+	try {
+		return JSON.parse(content);
+	} catch {
+		return content;
+	}
+}
+
+function normalizeStoredUserContent(content: string): string | Array<Record<string, unknown>> {
+	const parsed = tryParseStoredContent(content);
+	if (typeof parsed === "string" || Array.isArray(parsed)) {
+		return parsed as string | Array<Record<string, unknown>>;
+	}
+	return String(parsed ?? "");
+}
+
+function normalizeStoredAssistantContent(content: string): Array<Record<string, unknown>> {
+	const parsed = tryParseStoredContent(content);
+	if (Array.isArray(parsed)) {
+		return parsed as Array<Record<string, unknown>>;
+	}
+	if (typeof parsed === "string") {
+		return [{ type: "text", text: parsed }];
+	}
+	return [{ type: "text", text: JSON.stringify(parsed) }];
+}
+
+function buildDynamicModel(provider: string, modelId: string): Model<Api> | undefined {
+	if (provider !== "openrouter") {
+		return undefined;
+	}
+
+	return {
+		id: modelId,
+		name: modelId,
+		api: "openai-completions",
+		provider,
+		baseUrl: OPENROUTER_BASE_URL,
+		reasoning: false,
+		input: ["text"],
+		cost: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+		},
+		contextWindow: 128000,
+		maxTokens: 16384,
+	};
+}
+
+function resolveModel(
+	session: AgentSession,
+	provider: string,
+	modelId: string,
+): Model<Api> | undefined {
+	return session.modelRegistry.find(provider, modelId) ?? buildDynamicModel(provider, modelId);
 }
 
 export class RuntimeManager {
@@ -50,7 +134,7 @@ export class RuntimeManager {
 		});
 
 		// Resolve model from registry (supports known + custom models)
-		const model = session.modelRegistry.find(cmd.provider, cmd.model);
+		const model = resolveModel(session, cmd.provider, cmd.model);
 		if (model) {
 			try {
 				await session.setModel(model);
@@ -165,7 +249,7 @@ export class RuntimeManager {
 		const managed = this.getSession(agentId);
 		if (!managed) return;
 
-		const model = managed.session.modelRegistry.find(provider, modelId);
+		const model = resolveModel(managed.session, provider, modelId);
 		if (!model) {
 			this.emit({
 				type: "error",
@@ -211,19 +295,17 @@ export class RuntimeManager {
 			if (msg.role === "user") {
 				agentMessages.push({
 					role: "user",
-					content: msg.content,
+					content: normalizeStoredUserContent(msg.content),
+					timestamp: Date.now(),
 				});
 			} else if (msg.role === "assistant") {
-				let content;
-				try {
-					content = JSON.parse(msg.content);
-				} catch {
-					content = [{ type: "text", text: msg.content }];
-				}
 				agentMessages.push({
 					role: "assistant",
-					content,
+					content: normalizeStoredAssistantContent(msg.content),
 					model: msg.model,
+					usage: { ...EMPTY_USAGE, cost: { ...EMPTY_USAGE.cost } },
+					stopReason: "stop",
+					timestamp: Date.now(),
 				});
 			} else if (msg.role === "toolResult") {
 				// Reconstruct ToolResultMessage from DB content

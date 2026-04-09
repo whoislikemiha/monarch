@@ -4,31 +4,72 @@
 
   let {
     sessions,
+    agentId,
     currentSessionId,
     onload,
     onclose,
   }: {
     sessions: SessionRecord[];
+    agentId?: string;
     currentSessionId?: string;
     onload: (session: SessionRecord) => void;
     onclose: () => void;
   } = $props();
 
+  let localSessions: SessionRecord[] = $state([]);
   let previewSession: SessionRecord | null = $state(null);
   let previewMessages: any[] = $state([]);
   let loadingPreview = $state(false);
+  let loadingSessions = $state(false);
+  let previewError = $state("");
+
+  async function refreshSessions() {
+    if (!agentId) {
+      localSessions = sessions;
+      return;
+    }
+
+    loadingSessions = true;
+    try {
+      const dbSessions = await invoke<any[]>("db_get_sessions", { agentId });
+      localSessions = dbSessions.map((s: any) => ({
+        sessionId: s.id,
+        model: s.model || undefined,
+        provider: s.provider || undefined,
+        startedAt: s.startedAt,
+        messageCount: s.messageCount,
+      }));
+    } catch {
+      localSessions = sessions;
+    }
+    loadingSessions = false;
+  }
+
+  $effect(() => {
+    localSessions = sessions;
+    refreshSessions();
+  });
 
   async function loadPreview(session: SessionRecord) {
     previewSession = session;
     loadingPreview = true;
+    previewError = "";
     try {
-      const dbMessages = await invoke<any[]>("db_get_messages", { sessionId: session.sessionId });
+      let dbMessages: any[] = [];
+
+      try {
+        dbMessages = await invoke<any[]>("db_get_messages_with_ancestry", { sessionId: session.sessionId });
+      } catch {
+        dbMessages = await invoke<any[]>("db_get_messages", { sessionId: session.sessionId });
+      }
+
       previewMessages = dbMessages.map((m: any) => ({
         role: m.role,
         content: tryParseJson(m.content),
       }));
-    } catch {
+    } catch (e) {
       previewMessages = [];
+      previewError = String(e);
     }
     loadingPreview = false;
   }
@@ -69,16 +110,18 @@
   >
     <div class="history-header">
       <h2>Session History</h2>
-      <span class="session-count">{sessions.length} session{sessions.length !== 1 ? "s" : ""}</span>
+      <span class="session-count">{localSessions.length} session{localSessions.length !== 1 ? "s" : ""}</span>
       <button class="btn-close" onclick={onclose}>Close</button>
     </div>
 
     <div class="history-body">
       <div class="session-list">
-        {#if sessions.length === 0}
+        {#if loadingSessions}
+          <div class="empty">Loading sessions...</div>
+        {:else if localSessions.length === 0}
           <div class="empty">No past sessions</div>
         {/if}
-        {#each sessions as session (session.sessionId || session.startedAt)}
+        {#each localSessions as session (session.sessionId || session.startedAt)}
           <button
             class="session-item"
             class:active={previewSession?.sessionId === session.sessionId}
@@ -117,6 +160,8 @@
           </div>
           {#if loadingPreview}
             <div class="preview-loading">Loading messages...</div>
+          {:else if previewError}
+            <div class="preview-loading">Failed to load messages: {previewError}</div>
           {:else if previewMessages.length === 0}
             <div class="preview-loading">No messages in this session</div>
           {:else}

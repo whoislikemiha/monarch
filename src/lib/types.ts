@@ -30,6 +30,7 @@ export type AgentStatus = "running" | "idle" | "stopped" | "error";
 
 export interface Agent {
   id: string;
+  viewKey: string;
   name: string;
   status: AgentStatus;
   provider?: string;

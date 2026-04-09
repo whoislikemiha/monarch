@@ -61,10 +61,28 @@
     activityStatus = text;
   }
 
+  function tryParseStoredContent(content: unknown): unknown {
+    if (typeof content !== "string") return content;
+
+    const trimmed = content.trim();
+    if (!trimmed) return content;
+
+    const looksSerialized = trimmed.startsWith("[") || trimmed.startsWith("{") || trimmed.startsWith("\"");
+    if (!looksSerialized) return content;
+
+    try {
+      return JSON.parse(content);
+    } catch {
+      return content;
+    }
+  }
+
   function normalizeUserContent(content: unknown): string {
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      return content
+    const resolved = tryParseStoredContent(content);
+
+    if (typeof resolved === "string") return resolved;
+    if (Array.isArray(resolved)) {
+      return resolved
         .filter((block): block is { type: "text"; text: string } => !!block && typeof block === "object" && "type" in block && (block as any).type === "text")
         .map((block) => block.text)
         .join("");
@@ -73,9 +91,11 @@
   }
 
   function normalizeAssistantContent(content: unknown): ContentBlock[] {
-    if (Array.isArray(content)) return content as ContentBlock[];
-    if (typeof content === "string") {
-      return [{ type: "text", text: content }];
+    const resolved = tryParseStoredContent(content);
+
+    if (Array.isArray(resolved)) return resolved as ContentBlock[];
+    if (typeof resolved === "string") {
+      return [{ type: "text", text: resolved }];
     }
     return [];
   }
@@ -107,29 +127,59 @@
     return [{ kind: "status", text: statusText }, ...restored];
   }
 
+  async function refreshSessionsFromDb() {
+    try {
+      const dbSessions = await invoke<any[]>("db_get_sessions", { agentId: agent.id });
+      agent.sessions = dbSessions.map((s: any) => ({
+        sessionId: s.id,
+        model: s.model || undefined,
+        provider: s.provider || undefined,
+        startedAt: s.startedAt,
+        messageCount: s.messageCount,
+      }));
+    } catch (e) {
+      console.error("Failed to refresh sessions from DB:", e);
+    }
+  }
+
+  async function fetchStoredMessages(sessionId: string) {
+    let lastError: unknown;
+
+    try {
+      const ancestry = await invoke<any[]>("db_get_messages_with_ancestry", { sessionId });
+      if (ancestry.length > 0) return ancestry;
+    } catch (e) {
+      lastError = e;
+    }
+
+    try {
+      const direct = await invoke<any[]>("db_get_messages", { sessionId });
+      if (direct.length > 0) return direct;
+    } catch (e) {
+      lastError = e;
+    }
+
+    if (lastError) throw lastError;
+    return [];
+  }
+
   async function loadSessionMessages(sessionId: string, statusText: string) {
-    // Use ancestry-aware loading to include parent session messages
-    const dbMessages = await invoke<any[]>("db_get_messages_with_ancestry", { sessionId }).catch(() => []);
+    const dbMessages = await fetchStoredMessages(sessionId);
 
     if (dbMessages.length > 0) {
       items = restoreDisplayItemsFromMessages(
         dbMessages.map((msg) => ({
           role: msg.role,
-          content:
-            msg.role === "assistant"
-              ? (() => {
-                  try {
-                    return JSON.parse(msg.content);
-                  } catch {
-                    return msg.content;
-                  }
-                })()
-              : msg.content,
+          content: msg.content,
           model: msg.model,
         })),
         statusText,
       );
     } else {
+      const knownSession = agent.sessions.find((s) => s.sessionId === sessionId);
+      if ((knownSession?.messageCount || 0) > 0) {
+        items = [...items, { kind: "notification", text: `Session ${sessionId} has persisted messages but none could be loaded`, level: "error" }];
+      }
       items = [{ kind: "status", text: `${statusText} (no stored messages)` }];
     }
 
@@ -196,6 +246,7 @@
           streamingMessage = null;
         }
         items = [...items, { kind: "status", text: "Agent finished" }];
+        refreshSessionsFromDb();
         scrollToBottom();
         break;
 
@@ -474,9 +525,12 @@
     streamingMessage = null;
     lastUsage = undefined;
     items = [...items, { kind: "status", text: "New session started" }];
+    refreshSessionsFromDb();
   }
 
   onMount(async () => {
+    await refreshSessionsFromDb();
+
     // Show that we're connected
     setActivity("Shadow connected — waiting for Pi process...");
     items = [...items, { kind: "status", text: `Spawning ${agent.shadow?.shadowName || agent.name}...` }];
@@ -522,6 +576,7 @@
         await loadSessionMessages(agent.sourceSessionId, "Restored previous session");
       } catch (e) {
         console.error("Failed to restore messages from DB:", e);
+        items = [...items, { kind: "notification", text: `Failed to restore stored messages: ${e}`, level: "error" }];
       }
       // Clear the flag so we don't reload on re-render
       agent.sourceSessionId = undefined;
@@ -654,18 +709,18 @@
 
 {#if showHistory}
   <HistoryPanel
+    agentId={agent.id}
     sessions={agent.sessions || []}
     currentSessionId={agent.sessionId}
     onload={async (session) => {
       showHistory = false;
 
-      // Create a new DB session linked to the source, and reset the sidecar runtime
-      const newSessionId = `session-${Date.now()}`;
+      // Switch the live agent to the selected persisted session instead of
+      // creating a new continuation row every time.
       try {
-        await invoke("new_agent_session", {
+        await invoke("switch_agent_session", {
           agentId: agent.id,
-          newSessionId,
-          parentSessionId: session.sessionId,
+          sessionId: session.sessionId,
         });
       } catch (e) {
         items = [...items, { kind: "notification", text: `Failed to switch session: ${e}`, level: "error" }];
@@ -680,15 +735,13 @@
         );
       }
 
-      // Add the new continuation session to history
-      agent.sessionId = newSessionId;
-      agent.sessions = [{
-        sessionId: newSessionId,
-        model: agent.model,
-        provider: agent.provider,
-        startedAt: new Date().toISOString(),
-        messageCount: 0,
-      }, ...agent.sessions];
+      // Re-focus the selected session in history instead of adding a new row.
+      agent.sessionId = session.sessionId;
+      agent.sessions = [
+        session,
+        ...agent.sessions.filter((s) => s.sessionId !== session.sessionId),
+      ];
+      await refreshSessionsFromDb();
 
       // Replay old messages into the sidecar's LLM context
       try {
@@ -701,7 +754,11 @@
       }
 
       // Load messages for display
-      await loadSessionMessages(session.sessionId, `Continuing from previous session`);
+      try {
+        await loadSessionMessages(session.sessionId, `Continuing from previous session`);
+      } catch (e) {
+        items = [...items, { kind: "notification", text: `Failed to load stored session messages: ${e}`, level: "error" }];
+      }
     }}
     onclose={() => (showHistory = false)}
   />

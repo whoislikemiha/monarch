@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{AppHandle, Emitter};
 
-use crate::db::{Database, MessageRow};
+use crate::db::{AgentRow, Database, MessageRow};
 
 // ---- Agent state tracking ----
 
@@ -456,6 +456,47 @@ pub fn spawn_agent(
     // Ensure sidecar is running
     state.ensure_sidecar(&app, &db)?;
 
+    let now = chrono_now();
+    let provider_value = provider.clone();
+    let model_value = model.clone();
+    let thinking_value = thinking_level.clone();
+
+    // Persist the agent/session on the backend as the source of truth for FK-safe
+    // message logging, even if the frontend-side write was skipped or failed.
+    db.upsert_agent_internal(&AgentRow {
+        id: id.clone(),
+        name: shadow_name
+            .clone()
+            .or_else(|| shadow_title.clone())
+            .unwrap_or_else(|| id.clone()),
+        shadow_name: shadow_name.clone(),
+        shadow_title: shadow_title.clone(),
+        shadow_grade: shadow_grade.clone(),
+        provider: provider_value.clone(),
+        model: model_value.clone(),
+        thinking_level: thinking_value.clone(),
+        cwd: cwd.clone(),
+        custom_prompt: None,
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    })?;
+
+    if !db.session_exists_internal(&session_id)? {
+        db.create_session_internal(&crate::db::SessionRow {
+            id: session_id.clone(),
+            agent_id: id.clone(),
+            pi_session_file: None,
+            model: model_value.clone(),
+            provider: provider_value.clone(),
+            started_at: now.clone(),
+            ended_at: None,
+            message_count: 0,
+            total_tokens: 0,
+            total_cost: 0.0,
+            parent_session_id: None,
+        })?;
+    }
+
     // Register the agent→session mapping so the reader thread can persist events
     {
         let mut map = state.session_map.lock().map_err(|e| e.to_string())?;
@@ -647,6 +688,28 @@ pub fn new_agent_session(
         .map(|s| (s.model.clone(), s.provider.clone()))
         .unwrap_or((None, None));
 
+    // Recreate a minimal agent row if the DB entry was pruned or never persisted.
+    // This prevents the new session insert from tripping the sessions.agent_id FK.
+    db.ensure_agent_exists_internal(&AgentRow {
+        id: agent_id.clone(),
+        name: agent_id.clone(),
+        shadow_name: None,
+        shadow_title: None,
+        shadow_grade: None,
+        provider: provider.clone(),
+        model: model.clone(),
+        thinking_level: None,
+        cwd: None,
+        custom_prompt: None,
+        created_at: chrono_now(),
+        updated_at: chrono_now(),
+    })?;
+
+    let valid_parent_session_id = match parent_session_id {
+        Some(parent_id) if db.session_exists_internal(&parent_id)? => Some(parent_id),
+        _ => None,
+    };
+
     db.create_session_internal(&crate::db::SessionRow {
         id: new_session_id.clone(),
         agent_id: agent_id.clone(),
@@ -658,7 +721,7 @@ pub fn new_agent_session(
         message_count: 0,
         total_tokens: 0,
         total_cost: 0.0,
-        parent_session_id,
+        parent_session_id: valid_parent_session_id,
     })?;
 
     // Update the agent→session mapping
@@ -668,6 +731,52 @@ pub fn new_agent_session(
     }
 
     // Tell the sidecar to reset its in-memory session
+    let cmd = serde_json::json!({
+        "type": "new_session",
+        "agentId": agent_id,
+    });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    state.send_with_recovery(&app, &db, &json)
+}
+
+/// Switch an agent to an existing persisted session instead of creating a new one.
+/// Resets the sidecar's in-memory conversation and updates DB/session routing so
+/// subsequent messages are appended to the selected session.
+#[tauri::command]
+pub fn switch_agent_session(
+    app: AppHandle,
+    state: tauri::State<'_, AgentManager>,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_id: String,
+    session_id: String,
+) -> Result<(), String> {
+    if !db.session_exists_internal(&session_id)? {
+        return Err(format!("Session not found: {}", session_id));
+    }
+
+    let old_session_id = {
+        let map = state.session_map.lock().map_err(|e| e.to_string())?;
+        map.get(&agent_id).cloned()
+    };
+
+    if let Some(old_sid) = &old_session_id {
+        if old_sid != &session_id {
+            let _ = db.update_session_internal(old_sid, None, None, None, Some(&chrono_now()));
+        }
+    }
+
+    {
+        let mut map = state.session_map.lock().map_err(|e| e.to_string())?;
+        map.insert(agent_id.clone(), session_id.clone());
+    }
+
+    {
+        let mut agents = state.agents.lock().map_err(|e| e.to_string())?;
+        if let Some(agent) = agents.get_mut(&agent_id) {
+            agent.session_id = session_id.clone();
+        }
+    }
+
     let cmd = serde_json::json!({
         "type": "new_session",
         "agentId": agent_id,

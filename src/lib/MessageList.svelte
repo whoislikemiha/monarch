@@ -26,7 +26,7 @@
           {#if item.model}
             <span class="model-tag">{item.model}</span>
           {/if}
-          {#if item.usage}
+          {#if item.usage?.totalTokens != null}
             <span class="token-tag"
               >{item.usage.totalTokens.toLocaleString()} tokens</span
             >
