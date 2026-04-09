@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onDestroy } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import MessageList from "./MessageList.svelte";
@@ -11,6 +11,7 @@
   import HistoryPanel from "./HistoryPanel.svelte";
   import type {
     Agent,
+    AgentViewState,
     PiEvent,
     DisplayItem,
     ToolExecution,
@@ -19,7 +20,19 @@
     ContentBlock,
   } from "./types";
 
-  let { agent, onrestart }: { agent: Agent; onrestart?: (id: string) => void } = $props();
+  let {
+    agent,
+    onrestart,
+    onagentchange,
+    getcachedstate,
+    onviewstatechange,
+  }: {
+    agent: Agent;
+    onrestart?: (id: string) => void;
+    onagentchange?: (agentId: string, updater: (agent: Agent) => Agent) => void;
+    getcachedstate?: (agentId: string) => AgentViewState | undefined;
+    onviewstatechange?: (agentId: string, state: AgentViewState | null) => void;
+  } = $props();
 
   let items: DisplayItem[] = $state([]);
   let toolExecutions: Map<string, ToolExecution> = $state(new Map());
@@ -34,14 +47,75 @@
   let showHistory = $state(false);
   let currentToolGroup: { kind: "tool-group"; executions: ToolExecution[]; turnComplete: boolean } | null = $state(null);
 
-  let unlistenEvent: UnlistenFn;
-  let unlistenExit: UnlistenFn;
-  let unlistenStderr: UnlistenFn;
+  let unlistenEvent: UnlistenFn | undefined;
+  let unlistenExit: UnlistenFn | undefined;
+  let unlistenStderr: UnlistenFn | undefined;
   let scrollContainer: HTMLDivElement | undefined = $state(undefined);
   let chatInputRef: { focus: () => void } | undefined = $state(undefined);
+  let boundAgentId = $state("");
+  let boundSessionId: string | undefined = $state(undefined);
+  let activationVersion = 0;
 
   export function focusInput() {
     chatInputRef?.focus();
+  }
+
+  function updateAgent(updater: (agent: Agent) => Agent, agentId: string = agent.id) {
+    onagentchange?.(agentId, updater);
+  }
+
+  function countPersistedMessages(list: DisplayItem[]): number {
+    return list.filter((item) => item.kind === "user" || item.kind === "assistant").length;
+  }
+
+  function snapshotViewState(sessionId: string | undefined = boundSessionId): AgentViewState {
+    return {
+      sessionId,
+      messageCount: countPersistedMessages(items),
+      items: [...items],
+      toolExecutions: [...toolExecutions.values()],
+      streamingMessage,
+      wasStreaming: isStreaming,
+      lastUsage,
+      showStderr,
+      activityStatus,
+      eventCount,
+      currentToolGroup: currentToolGroup
+        ? {
+            kind: "tool-group",
+            executions: [...currentToolGroup.executions],
+            turnComplete: currentToolGroup.turnComplete,
+          }
+        : null,
+    };
+  }
+
+  function persistCurrentViewState(
+    agentId: string | undefined = boundAgentId,
+    sessionId: string | undefined = boundSessionId,
+  ) {
+    if (!agentId) return;
+    onviewstatechange?.(agentId, snapshotViewState(sessionId));
+  }
+
+  // Restores items + tool state from a cached snapshot. Intentionally does NOT restore
+  // `isStreaming` — that is authoritative from the live agent (target.isStreaming), not
+  // the cache, which could be stale if the agent finished streaming in the background.
+  function restoreCachedViewState(state: AgentViewState) {
+    items = [...state.items];
+    toolExecutions = new Map(state.toolExecutions.map((execution) => [execution.toolCallId, execution]));
+    streamingMessage = state.streamingMessage;
+    lastUsage = state.lastUsage;
+    showStderr = state.showStderr;
+    activityStatus = state.activityStatus;
+    eventCount = state.eventCount;
+    currentToolGroup = state.currentToolGroup
+      ? {
+          kind: "tool-group",
+          executions: [...state.currentToolGroup.executions],
+          turnComplete: state.currentToolGroup.turnComplete,
+        }
+      : null;
   }
 
   function scrollToBottom() {
@@ -127,18 +201,21 @@
     return [{ kind: "status", text: statusText }, ...restored];
   }
 
-  async function refreshSessionsFromDb() {
+  async function refreshSessionsFromDb(agentId: string = agent.id) {
     try {
-      const dbSessions = await invoke<any[]>("db_get_sessions", { agentId: agent.id });
-      agent.sessions = dbSessions.map((s: any) => ({
+      const dbSessions = await invoke<any[]>("db_get_sessions", { agentId });
+      const sessions = dbSessions.map((s: any) => ({
         sessionId: s.id,
         model: s.model || undefined,
         provider: s.provider || undefined,
         startedAt: s.startedAt,
         messageCount: s.messageCount,
       }));
+      updateAgent((current) => ({ ...current, sessions }), agentId);
+      return sessions;
     } catch (e) {
       console.error("Failed to refresh sessions from DB:", e);
+      return [];
     }
   }
 
@@ -188,7 +265,7 @@
     scrollToBottom();
   }
 
-  function handleEvent(raw: string) {
+  function handleEvent(raw: string, targetAgentId: string) {
     let event: PiEvent;
     try {
       event = JSON.parse(raw);
@@ -209,7 +286,7 @@
           const sourceSessionId = pendingSourceSessionId;
           pendingSourceSessionId = undefined;
           invoke("load_session_context", {
-            agentId: agent.id,
+            agentId: targetAgentId,
             sourceSessionId,
           }).then(() => {
             items = [...items, { kind: "status", text: "Context restored from previous session" }];
@@ -222,7 +299,7 @@
         break;
       case "agent_start":
         isStreaming = true;
-        agent.isStreaming = true;
+        updateAgent((current) => ({ ...current, isStreaming: true }), targetAgentId);
         setActivity("Agent processing...");
         items = [...items, { kind: "status", text: "Agent started" }];
         scrollToBottom();
@@ -230,7 +307,7 @@
 
       case "agent_end":
         isStreaming = false;
-        agent.isStreaming = false;
+        updateAgent((current) => ({ ...current, isStreaming: false }), targetAgentId);
         setActivity("");
         if (streamingMessage) {
           items = [
@@ -246,7 +323,7 @@
           streamingMessage = null;
         }
         items = [...items, { kind: "status", text: "Agent finished" }];
-        refreshSessionsFromDb();
+        refreshSessionsFromDb(targetAgentId);
         scrollToBottom();
         break;
 
@@ -421,7 +498,7 @@
         return;
       case "setTitle":
         if (request.title) {
-          agent.name = request.title;
+          updateAgent((current) => ({ ...current, name: request.title! }));
         }
         return;
       case "setWidget":
@@ -480,7 +557,7 @@
 
   async function setThinkingLevel(level: string) {
     await sendPiCommand({ type: "set_thinking_level", level });
-    agent.thinkingLevel = level;
+    updateAgent((current) => ({ ...current, thinkingLevel: level }));
   }
 
   async function setModel(provider: string, modelId: string) {
@@ -504,22 +581,28 @@
     }
 
     // Update the current session's message count in history, then add the new session
+    let nextSessions = agent.sessions;
     if (agent.sessionId) {
-      const msgCount = items.filter(i => i.kind === "user" || i.kind === "assistant").length;
-      agent.sessions = agent.sessions.map(s =>
+      const msgCount = countPersistedMessages(items);
+      nextSessions = nextSessions.map(s =>
         s.sessionId === agent.sessionId ? { ...s, messageCount: msgCount } : s
       );
     }
 
     // Add new session to the front of history
-    agent.sessionId = newSessionId;
-    agent.sessions = [{
+    nextSessions = [{
       sessionId: newSessionId,
       model: agent.model,
       provider: agent.provider,
       startedAt: new Date().toISOString(),
       messageCount: 0,
-    }, ...agent.sessions];
+    }, ...nextSessions];
+    updateAgent((current) => ({
+      ...current,
+      sessionId: newSessionId,
+      sessions: nextSessions,
+    }));
+    boundSessionId = newSessionId;
     items = [];
     toolExecutions = new Map();
     streamingMessage = null;
@@ -528,65 +611,146 @@
     refreshSessionsFromDb();
   }
 
-  onMount(async () => {
-    await refreshSessionsFromDb();
+  function resetViewState() {
+    items = [];
+    toolExecutions = new Map();
+    streamingMessage = null;
+    isStreaming = false;
+    lastUsage = undefined;
+    pendingExtensionRequest = null;
+    showStderr = false;
+    pendingSourceSessionId = undefined;
+    showPromptEditor = false;
+    showHistory = false;
+    currentToolGroup = null;
+    activityStatus = "";
+    eventCount = 0;
+  }
 
-    // Show that we're connected
+  function clearListeners() {
+    unlistenEvent?.();
+    unlistenExit?.();
+    unlistenStderr?.();
+    unlistenEvent = undefined;
+    unlistenExit = undefined;
+    unlistenStderr = undefined;
+  }
+
+  async function bindAgent(target: Agent) {
+    const version = ++activationVersion;
+    if (boundAgentId && boundAgentId !== target.id) {
+      persistCurrentViewState(boundAgentId, boundSessionId);
+    }
+    boundAgentId = target.id;
+    boundSessionId = target.sessionId;
+    clearListeners();
+    resetViewState();
+    isStreaming = target.isStreaming;
+
+    // Optimistically restore the cache for instant render IFF it's plausibly fresh.
+    // We always reconcile against the DB below — the cache is strictly a UX shortcut,
+    // never authoritative.
+    const cachedState = getcachedstate?.(target.id);
+    const sessionMatches = !!cachedState && cachedState.sessionId === target.sessionId;
+    const mayBeStreamingStale = !!cachedState && (cachedState.wasStreaming || target.isStreaming);
+    const optimisticRestore = !!cachedState && sessionMatches && !mayBeStreamingStale;
+    if (cachedState && optimisticRestore) {
+      restoreCachedViewState(cachedState);
+    }
+
+    const sessions = await refreshSessionsFromDb(target.id);
+    if (version !== activationVersion) return;
+
+    const currentSession = target.sessionId
+      ? sessions.find((session) => session.sessionId === target.sessionId)
+      : undefined;
+
+    // Cache is fresh iff: session matches, wasn't mid-stream at capture, agent isn't
+    // streaming now, and messageCount hasn't drifted from what the DB reports.
+    const dbMessageCount = currentSession?.messageCount || 0;
+    const cacheIsFresh =
+      !!cachedState &&
+      sessionMatches &&
+      !mayBeStreamingStale &&
+      (cachedState.messageCount ?? 0) === dbMessageCount;
+
+    if (target.sourceSessionId) {
+      pendingSourceSessionId = target.sourceSessionId;
+      try {
+        await loadSessionMessages(target.sourceSessionId, "Restored previous session");
+      } catch (e) {
+        console.error("Failed to restore messages from DB:", e);
+        items = [...items, { kind: "notification", text: `Failed to restore stored messages: ${e}`, level: "error" }];
+      }
+      updateAgent((current) => ({ ...current, sourceSessionId: undefined }), target.id);
+    } else if (!cacheIsFresh && target.sessionId && dbMessageCount > 0) {
+      // Cache was missing, stale, or captured mid-stream — reload from SQLite so the
+      // UI reflects everything that happened while this agent was in the background.
+      try {
+        await loadSessionMessages(target.sessionId, "Reopened current session");
+      } catch (e) {
+        console.error("Failed to load current session messages from DB:", e);
+        items = [...items, { kind: "notification", text: `Failed to load current session messages: ${e}`, level: "error" }];
+      }
+    } else if (!cacheIsFresh && !optimisticRestore) {
+      items = [{ kind: "status", text: `Viewing ${target.shadow?.shadowName || target.name}` }];
+    }
+
+    if (version !== activationVersion) return;
+
     setActivity("Shadow connected — waiting for Pi process...");
-    items = [...items, { kind: "status", text: `Spawning ${agent.shadow?.shadowName || agent.name}...` }];
 
     unlistenEvent = await listen<string>(
-      `agent-event-${agent.id}`,
+      `agent-event-${target.id}`,
       (event) => {
-        // First event means Pi is alive
+        if (version !== activationVersion) return;
         if (eventCount === 0) {
           items = [...items, { kind: "status", text: "Pi process started — receiving events" }];
           scrollToBottom();
         }
-        handleEvent(event.payload);
+        handleEvent(event.payload, target.id);
       },
     );
 
-    unlistenExit = await listen<number | null>(`agent-exit-${agent.id}`, (event) => {
+    unlistenExit = await listen<number | null>(`agent-exit-${target.id}`, (event) => {
+      if (version !== activationVersion) return;
       isStreaming = false;
-      agent.isStreaming = false;
-      agent.status = "stopped";
-      agent.exitCode = event.payload;
+      updateAgent((current) => ({
+        ...current,
+        isStreaming: false,
+        status: "stopped",
+        exitCode: event.payload,
+      }), target.id);
       setActivity("");
       const code = event.payload;
       const msg = code != null && code !== 0
         ? `Agent process exited with code ${code}`
         : "Agent process exited";
       items = [...items, { kind: "status", text: msg }];
-      // Auto-show stderr if process died with error
-      if (code != null && code !== 0 && agent.stderrLines.length > 0) {
+      if (code != null && code !== 0) {
         showStderr = true;
       }
       scrollToBottom();
     });
 
-    unlistenStderr = await listen<string>(`agent-stderr-${agent.id}`, (event) => {
-      agent.stderrLines = [...(agent.stderrLines || []), event.payload];
+    unlistenStderr = await listen<string>(`agent-stderr-${target.id}`, (event) => {
+      if (version !== activationVersion) return;
+      updateAgent((current) => ({
+        ...current,
+        stderrLines: [...(current.stderrLines || []), event.payload],
+      }), target.id);
     });
+  }
 
-    // Restore messages from DB if this is a restored agent
-    if (agent.sourceSessionId) {
-      pendingSourceSessionId = agent.sourceSessionId;
-      try {
-        await loadSessionMessages(agent.sourceSessionId, "Restored previous session");
-      } catch (e) {
-        console.error("Failed to restore messages from DB:", e);
-        items = [...items, { kind: "notification", text: `Failed to restore stored messages: ${e}`, level: "error" }];
-      }
-      // Clear the flag so we don't reload on re-render
-      agent.sourceSessionId = undefined;
-    }
+  $effect(() => {
+    if (agent.id === boundAgentId) return;
+    void bindAgent(agent);
   });
 
   onDestroy(() => {
-    unlistenEvent?.();
-    unlistenExit?.();
-    unlistenStderr?.();
+    persistCurrentViewState();
+    activationVersion++;
+    clearListeners();
   });
 </script>
 
@@ -728,19 +892,25 @@
       }
 
       // Update current session message count before switching
+      let nextSessions = agent.sessions;
       if (agent.sessionId) {
-        const msgCount = items.filter(i => i.kind === "user" || i.kind === "assistant").length;
-        agent.sessions = agent.sessions.map(s =>
+        const msgCount = countPersistedMessages(items);
+        nextSessions = nextSessions.map(s =>
           s.sessionId === agent.sessionId ? { ...s, messageCount: msgCount } : s
         );
       }
 
       // Re-focus the selected session in history instead of adding a new row.
-      agent.sessionId = session.sessionId;
-      agent.sessions = [
+      nextSessions = [
         session,
-        ...agent.sessions.filter((s) => s.sessionId !== session.sessionId),
+        ...nextSessions.filter((s) => s.sessionId !== session.sessionId),
       ];
+      updateAgent((current) => ({
+        ...current,
+        sessionId: session.sessionId,
+        sessions: nextSessions,
+      }));
+      boundSessionId = session.sessionId;
       await refreshSessionsFromDb();
 
       // Replay old messages into the sidecar's LLM context

@@ -260,6 +260,22 @@ export interface CouncilResponse {
   votes: number;
 }
 
+export interface AgentViewState {
+  sessionId?: string;
+  /** Count of user+assistant items at snapshot time — compared against DB to detect background updates. */
+  messageCount: number;
+  items: DisplayItem[];
+  toolExecutions: ToolExecution[];
+  streamingMessage: AssistantMessage | null;
+  /** True if the agent was mid-stream when this snapshot was captured. Used to invalidate the cache. */
+  wasStreaming: boolean;
+  lastUsage?: Usage;
+  showStderr: boolean;
+  activityStatus: string;
+  eventCount: number;
+  currentToolGroup: { kind: "tool-group"; executions: ToolExecution[]; turnComplete: boolean } | null;
+}
+
 // Display item — what we render in the message list
 export type DisplayItem =
   | { kind: "user"; content: string; timestamp?: number }

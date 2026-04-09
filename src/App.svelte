@@ -7,7 +7,7 @@
   import CouncilView from "./lib/CouncilView.svelte";
   import SpawnDialog from "./lib/SpawnDialog.svelte";
   import HistoryPanel from "./lib/HistoryPanel.svelte";
-  import type { Agent, AgentConfig, SessionRecord } from "./lib/types";
+  import type { Agent, AgentConfig, AgentViewState, SessionRecord } from "./lib/types";
 
   let agents: Agent[] = $state([]);
   let activeId: string | null = $state(null);
@@ -18,6 +18,7 @@
   let agentViewRef: AgentView | undefined = $state(undefined);
   let showRestoreBar = $state(false);
   let exitListeners: Map<string, import("@tauri-apps/api/event").UnlistenFn> = new Map();
+  let agentViewStates: Map<string, AgentViewState> = $state(new Map());
 
   function createViewKey(agentId: string): string {
     return `${agentId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
@@ -299,6 +300,24 @@
     activeId = id;
   }
 
+  function updateAgent(id: string, updater: (agent: Agent) => Agent) {
+    agents = agents.map((agent) => (agent.id === id ? updater(agent) : agent));
+  }
+
+  function getAgentViewState(agentId: string): AgentViewState | undefined {
+    return agentViewStates.get(agentId);
+  }
+
+  function updateAgentViewState(agentId: string, state: AgentViewState | null) {
+    const next = new Map(agentViewStates);
+    if (state) {
+      next.set(agentId, state);
+    } else {
+      next.delete(agentId);
+    }
+    agentViewStates = next;
+  }
+
   function killAgent(id: string) {
     invoke("kill_agent", { id, graceful: true });
     // Clean up exit listener
@@ -422,13 +441,14 @@
         onback={() => (councilMode = false)}
       />
     {:else if activeAgent}
-      {#key activeAgent.viewKey}
-        <AgentView
-          agent={activeAgent}
-          onrestart={restartAgent}
-          bind:this={agentViewRef}
-        />
-      {/key}
+      <AgentView
+        agent={activeAgent}
+        onrestart={restartAgent}
+        onagentchange={(agentId, updater) => updateAgent(agentId, updater)}
+        getcachedstate={getAgentViewState}
+        onviewstatechange={updateAgentViewState}
+        bind:this={agentViewRef}
+      />
     {:else}
       <div class="empty-state">
         {#if showRestoreBar && savedAgents.length > 0}

@@ -30,6 +30,7 @@
 
   // Per-agent streaming state
   let streamingMessages: Map<string, AssistantMessage | null> = $state(new Map());
+  let agentActivity: Map<string, string> = $state(new Map());
   let unlisteners: UnlistenFn[] = [];
 
   // Track which agents have finished
@@ -45,6 +46,30 @@
     }
   });
 
+  function setAgentActivity(agentId: string, text: string) {
+    agentActivity.set(agentId, text);
+    agentActivity = new Map(agentActivity);
+  }
+
+  function clearAgentActivity(agentId: string) {
+    agentActivity.delete(agentId);
+    agentActivity = new Map(agentActivity);
+  }
+
+  function updateResponse(agentId: string, updater: (response: CouncilResponse) => CouncilResponse) {
+    const existing = responses.get(agentId);
+    if (!existing) return;
+    responses.set(agentId, updater(existing));
+    responses = new Map(responses);
+  }
+
+  function markAgentFinished(agentId: string) {
+    finishedAgents.add(agentId);
+    finishedAgents = new Set(finishedAgents);
+    updateResponse(agentId, (response) => ({ ...response, isStreaming: false }));
+    clearAgentActivity(agentId);
+  }
+
   function handleAgentEvent(agentId: string, raw: string) {
     let event: PiEvent;
     try {
@@ -54,8 +79,17 @@
     }
 
     switch (event.type) {
+      case "agent_start":
+        setAgentActivity(agentId, "Thinking...");
+        break;
+
+      case "turn_start":
+        setAgentActivity(agentId, "Calling model...");
+        break;
+
       case "message_start":
         if (event.message.role === "assistant") {
+          setAgentActivity(agentId, "Responding...");
           streamingMessages.set(agentId, event.message as AssistantMessage);
           streamingMessages = new Map(streamingMessages);
         }
@@ -63,46 +97,74 @@
 
       case "message_update":
         if (event.message.role === "assistant") {
+          setAgentActivity(agentId, "Streaming response...");
           streamingMessages.set(agentId, event.message as AssistantMessage);
           streamingMessages = new Map(streamingMessages);
 
           // Update the response content live
           const msg = event.message as AssistantMessage;
-          const existing = responses.get(agentId);
-          if (existing) {
-            existing.content = msg.content;
-            existing.isStreaming = true;
-            if (msg.usage) existing.usage = msg.usage;
-            if (msg.model) existing.model = msg.model;
-            responses = new Map(responses);
-          }
+          updateResponse(agentId, (response) => ({
+            ...response,
+            content: msg.content,
+            isStreaming: true,
+            usage: msg.usage || response.usage,
+            model: msg.model || response.model,
+          }));
         }
         break;
 
       case "message_end":
         if (event.message.role === "assistant") {
           const msg = event.message as AssistantMessage;
-          const existing = responses.get(agentId);
-          if (existing) {
-            existing.content = msg.content;
-            existing.isStreaming = false;
-            if (msg.usage) existing.usage = msg.usage;
-            if (msg.model) existing.model = msg.model;
-            responses = new Map(responses);
-          }
+          updateResponse(agentId, (response) => ({
+            ...response,
+            content: msg.content,
+            isStreaming: false,
+            usage: msg.usage || response.usage,
+            model: msg.model || response.model,
+          }));
           streamingMessages.delete(agentId);
           streamingMessages = new Map(streamingMessages);
+          setAgentActivity(agentId, "Finalizing...");
         }
         break;
 
-      case "agent_end":
-        finishedAgents.add(agentId);
-        finishedAgents = new Set(finishedAgents);
-        const resp = responses.get(agentId);
-        if (resp) {
-          resp.isStreaming = false;
-          responses = new Map(responses);
+      case "tool_execution_start":
+        setAgentActivity(agentId, `Running ${event.toolName}...`);
+        break;
+
+      case "tool_execution_end":
+        setAgentActivity(agentId, "Processing tool results...");
+        break;
+
+      case "turn_end":
+        if (event.message.role === "assistant") {
+          const msg = event.message as AssistantMessage;
+          updateResponse(agentId, (response) => ({
+            ...response,
+            content: msg.content,
+            isStreaming: false,
+            usage: msg.usage || response.usage,
+            model: msg.model || response.model,
+          }));
         }
+        markAgentFinished(agentId);
+        break;
+
+      case "agent_end":
+        markAgentFinished(agentId);
+        break;
+
+      case "sidecar_error":
+        setAgentActivity(agentId, "Error");
+        updateResponse(agentId, (response) => ({
+          ...response,
+          isStreaming: false,
+          content: response.content.length > 0
+            ? response.content
+            : [{ type: "text", text: `Error: ${event.error}` }],
+        }));
+        markAgentFinished(agentId);
         break;
     }
   }
@@ -112,6 +174,7 @@
     hasPrompted = true;
     councilStatus = "streaming";
     finishedAgents = new Set();
+    agentActivity = new Map();
 
     // Initialize response slots
     const newResponses = new Map<string, CouncilResponse>();
@@ -124,8 +187,10 @@
         isStreaming: true,
         votes: 0,
       });
+      agentActivity.set(agent.id, "Awaiting response...");
     }
     responses = newResponses;
+    agentActivity = new Map(agentActivity);
 
     // Broadcast to all agents
     const agentIds = agents.map((a) => a.id);
@@ -226,7 +291,7 @@
           {#if response && response.content.length > 0}
             <AssistantMessageComp content={response.content} />
           {:else if hasPrompted}
-            <div class="waiting">Awaiting response...</div>
+            <div class="waiting">{agentActivity.get(agent.id) || "Awaiting response..."}</div>
           {:else}
             <div class="waiting">Ready</div>
           {/if}
