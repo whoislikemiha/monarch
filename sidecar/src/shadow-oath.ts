@@ -1,14 +1,12 @@
 /**
- * Shadow Oath — Monarch Identity Extension (SDK Factory version)
+ * Shadow Oath — Monarch Identity System Prompt
  *
- * Completely replaces Pi's system prompt with the Monarch shadow identity.
- * Ported from extensions/shadow-oath.ts to work as an inline ExtensionFactory.
+ * Builds the Monarch system prompt (shadow identity, grade, permissions, personality).
+ * Fed into Pi via DefaultResourceLoader's systemPromptOverride in runtime-manager.ts,
+ * which makes it Pi's _baseSystemPrompt — owning the prompt end-to-end.
  */
 
-import type { ExtensionAPI, ExtensionFactory } from "@mariozechner/pi-coding-agent";
 import type { ShadowConfig } from "./protocol.js";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
 
 const GRADES = [
 	"Grand Marshal",
@@ -68,7 +66,7 @@ function personalityDirective(grade: Grade): string {
 	return "You are focused and efficient. Minimal personality. Let your work speak.";
 }
 
-function buildSystemPrompt(shadow: ShadowConfig, cwd: string): string {
+export function buildSystemPrompt(shadow: ShadowConfig, cwd: string): string {
 	const date = new Date().toISOString().split("T")[0];
 	const grade = shadow.grade as Grade;
 
@@ -109,40 +107,4 @@ ${personalityDirective(grade)}
 
 Current date: ${date}
 Working directory: ${cwd}`;
-}
-
-function tryReadCustomPrompt(shadowId: string): string | null {
-	try {
-		const configDir =
-			process.env.XDG_CONFIG_HOME ||
-			join(process.env.HOME || "/tmp", ".config");
-		const promptFile = join(configDir, "monarch", "prompts", `${shadowId}.md`);
-		if (existsSync(promptFile)) {
-			return readFileSync(promptFile, "utf-8");
-		}
-	} catch {
-		// Ignore — use generated prompt
-	}
-	return null;
-}
-
-export function createShadowOathFactory(
-	shadow: ShadowConfig | undefined,
-	cwd: string,
-): ExtensionFactory {
-	return (pi: ExtensionAPI) => {
-		if (!shadow) return;
-
-		pi.on("before_agent_start", async () => {
-			const custom = tryReadCustomPrompt(shadow.id);
-			return {
-				systemPrompt: custom || buildSystemPrompt(shadow, cwd),
-			};
-		});
-
-		pi.on("agent_start", async (_event, ctx) => {
-			ctx.ui.setTitle(`${shadow.name} — ${shadow.title}`);
-			ctx.ui.setStatus("shadow-grade", `${shadow.grade}`);
-		});
-	};
 }

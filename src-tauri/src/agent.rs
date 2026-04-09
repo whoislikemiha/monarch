@@ -7,6 +7,7 @@ use std::thread;
 use tauri::{AppHandle, Emitter};
 
 use crate::db::{AgentRow, Database, MessageRow};
+use crate::persistence::read_agent_prompt_file;
 
 // ---- Agent state tracking ----
 
@@ -523,6 +524,8 @@ pub fn spawn_agent(
         "model": model.as_deref().unwrap_or("claude-sonnet-4-5"),
         "thinkingLevel": thinking_level.as_deref().unwrap_or("medium"),
         "shadow": shadow,
+        "customPrompt": read_agent_prompt_file(&id)?
+            .filter(|prompt| !prompt.trim().is_empty()),
     });
 
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;

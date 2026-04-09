@@ -11,7 +11,7 @@ import {
 	type AgentSessionEventListener,
 } from "@mariozechner/pi-coding-agent";
 import type { Api, Model, ThinkingLevel } from "@mariozechner/pi-ai";
-import { createShadowOathFactory } from "./shadow-oath.js";
+import { buildSystemPrompt } from "./shadow-oath.js";
 import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
 import type { CreateSessionCommand, LoadSessionCommand } from "./protocol.js";
 
@@ -19,6 +19,10 @@ interface ManagedSession {
 	session: AgentSession;
 	unsubscribe: () => void;
 	uiResolvers: UIResolvers;
+	shadow?: CreateSessionCommand["shadow"];
+	cwd: string;
+	/** Live system prompt. Mutated by setCustomPrompt; the loader override closes over this ref. */
+	promptRef: { current: string };
 }
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -118,11 +122,26 @@ export class RuntimeManager {
 			await this.destroySession(cmd.agentId);
 		}
 
+		// Monarch owns the system prompt. We feed it through the resource loader's
+		// systemPromptOverride so Pi's _baseSystemPrompt IS our prompt from the first
+		// byte — survives every tool/extension rebuild and any before_agent_start reset.
+		const initialPrompt =
+			cmd.customPrompt?.trim() ||
+			(cmd.shadow ? buildSystemPrompt(cmd.shadow, cmd.cwd) : "");
+		const promptRef = { current: initialPrompt };
+
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: cmd.cwd,
-			extensionFactories: [createShadowOathFactory(cmd.shadow, cmd.cwd)],
+			systemPromptOverride: () => promptRef.current,
 			noExtensions: true,
+			noSkills: true,
+			noPromptTemplates: true,
+			noThemes: true,
 		});
+		// Required: DefaultResourceLoader only materializes systemPromptOverride
+		// (and extension factories) inside reload(). createAgentSession skips its
+		// own reload when a loader is provided.
+		await resourceLoader.reload();
 
 		// Create session without model first, then set model via registry
 		// This handles arbitrary provider/model combos (including OpenRouter)
@@ -199,7 +218,14 @@ export class RuntimeManager {
 
 		const unsubscribe = session.subscribe(listener);
 
-		this.sessions.set(cmd.agentId, { session, unsubscribe, uiResolvers });
+		this.sessions.set(cmd.agentId, {
+			session,
+			unsubscribe,
+			uiResolvers,
+			shadow: cmd.shadow,
+			cwd: cmd.cwd,
+			promptRef,
+		});
 
 		this.emit({ type: "session_ready", agentId: cmd.agentId });
 	}
@@ -350,6 +376,23 @@ export class RuntimeManager {
 		if (resolver) {
 			resolver(value);
 		}
+	}
+
+	setCustomPrompt(agentId: string, prompt?: string | null): void {
+		const managed = this.sessions.get(agentId);
+		if (!managed) return;
+
+		const next =
+			prompt?.trim() ||
+			(managed.shadow ? buildSystemPrompt(managed.shadow, managed.cwd) : "");
+		if (!next) return;
+
+		// Update the ref so any future _rebuildSystemPrompt (tool changes, etc.)
+		// pulls the new prompt from the loader override.
+		managed.promptRef.current = next;
+		// Also patch the live state so the current/next turn uses the new prompt
+		// without waiting for a rebuild.
+		managed.session.agent.state.systemPrompt = next;
 	}
 
 	async disposeAll(): Promise<void> {

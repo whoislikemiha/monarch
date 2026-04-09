@@ -76,6 +76,9 @@ async function handleCommand(cmd: SidecarCommand): Promise<void> {
 		case "extension_ui_response":
 			manager.handleUIResponse(cmd.agentId, cmd.requestId, cmd.value);
 			break;
+		case "set_custom_prompt":
+			manager.setCustomPrompt(cmd.agentId, cmd.prompt);
+			break;
 		default:
 			process.stderr.write(
 				`[sidecar] Unknown command type: ${(cmd as any).type}\n`,

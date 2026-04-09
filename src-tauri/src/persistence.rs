@@ -14,8 +14,7 @@ fn prompts_dir() -> PathBuf {
     dir
 }
 
-#[tauri::command]
-pub fn get_agent_prompt(agent_id: String) -> Result<Option<String>, String> {
+pub fn read_agent_prompt_file(agent_id: &str) -> Result<Option<String>, String> {
     let path = prompts_dir().join(format!("{}.md", agent_id));
     if path.exists() {
         std::fs::read_to_string(&path)
@@ -24,6 +23,11 @@ pub fn get_agent_prompt(agent_id: String) -> Result<Option<String>, String> {
     } else {
         Ok(None)
     }
+}
+
+#[tauri::command]
+pub fn get_agent_prompt(agent_id: String) -> Result<Option<String>, String> {
+    read_agent_prompt_file(&agent_id)
 }
 
 #[tauri::command]

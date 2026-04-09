@@ -95,6 +95,13 @@ Current date: ${date}`;
     saving = true;
     try {
       await invoke("save_agent_prompt", { agentId, prompt: promptText });
+      await invoke("send_command", {
+        id: agentId,
+        commandJson: JSON.stringify({
+          type: "set_custom_prompt",
+          prompt: promptText.trim() ? promptText : null,
+        }),
+      });
       saved = true;
       isDefault = false;
       setTimeout(() => (saved = false), 2000);
@@ -111,6 +118,13 @@ Current date: ${date}`;
       // Save an empty marker — extension will fall back to generated
       promptText = "";
       await invoke("save_agent_prompt", { agentId, prompt: "" });
+      await invoke("send_command", {
+        id: agentId,
+        commandJson: JSON.stringify({
+          type: "set_custom_prompt",
+          prompt: null,
+        }),
+      });
       isDefault = true;
       await loadPrompt();
     } catch (e) {

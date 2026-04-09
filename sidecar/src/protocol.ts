@@ -20,6 +20,7 @@ export interface CreateSessionCommand {
   model: string;
   thinkingLevel: string;
   shadow?: ShadowConfig;
+  customPrompt?: string | null;
 }
 
 export interface DestroySessionCommand {
@@ -78,6 +79,12 @@ export interface ExtensionUIResponseCommand {
   value: Record<string, unknown>;
 }
 
+export interface SetCustomPromptCommand {
+  type: "set_custom_prompt";
+  agentId: string;
+  prompt?: string | null;
+}
+
 export type SidecarCommand =
   | CreateSessionCommand
   | DestroySessionCommand
@@ -88,7 +95,8 @@ export type SidecarCommand =
   | NewSessionCommand
   | CompactCommand
   | LoadSessionCommand
-  | ExtensionUIResponseCommand;
+  | ExtensionUIResponseCommand
+  | SetCustomPromptCommand;
 
 // ── Events (Sidecar → Rust via stdout) ──
 
