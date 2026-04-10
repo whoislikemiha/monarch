@@ -23,6 +23,7 @@
   let {
     agent,
     projectName,
+    projectInstructions,
     onrestart,
     onagentchange,
     getcachedstate,
@@ -31,6 +32,7 @@
   }: {
     agent: Agent;
     projectName?: string;
+    projectInstructions?: string | null;
     onrestart?: (id: string) => void;
     onagentchange?: (agentId: string, updater: (agent: Agent) => Agent) => void;
     getcachedstate?: (agentId: string) => AgentViewState | undefined;
@@ -44,6 +46,7 @@
   let isStreaming = $state(false);
   let lastUsage: import("./types").Usage | undefined = $state(undefined);
   let pendingExtensionRequest: ExtensionUIRequest | null = $state(null);
+  let customPrompt: string | null = $state(null);
   let showStderr = $state(false);
   // Captured on mount — used when session_ready fires to replay session ancestry
   let pendingSourceSessionId: string | undefined = $state(undefined);
@@ -179,25 +182,118 @@
     return [];
   }
 
+  function parseStoredToolResult(content: unknown, fallbackId: string): ToolExecution | null {
+    const resolved = tryParseStoredContent(content);
+
+    if (!resolved || Array.isArray(resolved) || typeof resolved !== "object") return null;
+
+    const payload = resolved as {
+      toolCallId?: string;
+      toolName?: string;
+      result?: unknown;
+      isError?: boolean;
+    };
+
+    if (!payload.toolCallId && !payload.toolName && payload.result == null) return null;
+
+    return {
+      toolCallId: payload.toolCallId || fallbackId,
+      toolName: payload.toolName || "tool",
+      args: undefined,
+      result: tryParseStoredContent(payload.result),
+      isError: !!payload.isError,
+      status: payload.isError ? "error" : "done",
+    };
+  }
+
+  function hasVisibleAssistantContent(blocks: ContentBlock[]): boolean {
+    return blocks.some((block) => {
+      if (block.type === "text") return block.text.trim().length > 0;
+      if (block.type === "thinking") return block.thinking.trim().length > 0;
+      if (block.type === "image") return true;
+      return false;
+    });
+  }
+
   function restoreDisplayItemsFromMessages(messages: any[], statusText: string): DisplayItem[] {
     const restored: DisplayItem[] = [];
+    let pendingToolResults: ToolExecution[] = [];
 
-    for (const msg of messages) {
+    function flushPendingToolResults() {
+      if (pendingToolResults.length === 0) return;
+      restored.push({
+        kind: "tool-group",
+        executions: pendingToolResults,
+        turnComplete: true,
+      });
+      pendingToolResults = [];
+    }
+
+    for (const [index, msg] of messages.entries()) {
       if (msg.role === "user") {
+        flushPendingToolResults();
         restored.push({
           kind: "user",
           content: normalizeUserContent(msg.content ?? msg),
           timestamp: msg.timestamp,
         });
+      } else if (msg.role === "toolResult") {
+        const parsed = parseStoredToolResult(msg.content ?? msg, `restored-tool-${index}`);
+        if (parsed) {
+          pendingToolResults = [...pendingToolResults, parsed];
+        }
       } else if (msg.role === "assistant") {
+        const content = normalizeAssistantContent(msg.content ?? msg);
+        const toolCalls = content.filter((block): block is Extract<ContentBlock, { type: "toolCall" }> => block.type === "toolCall");
+
+        if (toolCalls.length > 0 || pendingToolResults.length > 0) {
+          const pendingById = new Map(
+            pendingToolResults.map((execution) => [execution.toolCallId, execution]),
+          );
+          const mergedExecutions: ToolExecution[] = toolCalls.map((block) => {
+            const result = pendingById.get(block.id);
+            return {
+              toolCallId: block.id,
+              toolName: block.name,
+              args: block.arguments,
+              result: result?.result,
+              isError: result?.isError,
+              status: result?.status ?? "done",
+            };
+          });
+
+          const handledIds = new Set(toolCalls.map((block) => block.id));
+          for (const execution of pendingToolResults) {
+            if (!handledIds.has(execution.toolCallId)) {
+              mergedExecutions.push(execution);
+            }
+          }
+
+          if (mergedExecutions.length > 0) {
+            restored.push({
+              kind: "tool-group",
+              executions: mergedExecutions,
+              turnComplete: true,
+            });
+          }
+
+          pendingToolResults = [];
+        }
+
+        if (!hasVisibleAssistantContent(content)) {
+          continue;
+        }
+
         restored.push({
           kind: "assistant",
-          content: normalizeAssistantContent(msg.content ?? msg),
+          content,
           model: msg.model,
           timestamp: msg.timestamp,
         });
       }
     }
+
+    flushPendingToolResults();
 
     if (restored.length === 0) {
       return [{ kind: "status", text: `${statusText} (no stored messages)` }];
@@ -288,6 +384,7 @@
     lastUsage = undefined;
     currentToolGroup = null;
     pendingExtensionRequest = null;
+    customPrompt = null;
     showStderr = false;
     activityStatus = "";
     eventCount = 0;
@@ -696,6 +793,11 @@
     }
 
     const sessions = await refreshSessionsFromDb(target.id);
+    const promptPromise = invoke<string | null>("get_agent_prompt", { agentId: target.id })
+      .catch(() => null);
+    if (version !== activationVersion) return;
+
+    customPrompt = await promptPromise;
     if (version !== activationVersion) return;
 
     const currentSession = target.sessionId
@@ -887,6 +989,7 @@
     <div class="input-area">
       <AgentControls
         {isStreaming}
+        {items}
         {lastUsage}
         contextWindow={agent.contextWindow}
         thinkingLevel={agent.thinkingLevel}
@@ -911,6 +1014,9 @@
     {lastUsage}
     contextWindow={agent.contextWindow}
     sessionStats={agent.sessionStats}
+    customPrompt={customPrompt}
+    {projectInstructions}
+    shadow={agent.shadow}
     onclose={() => (showContextInspector = false)}
   />
 {/if}

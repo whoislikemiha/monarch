@@ -34,6 +34,7 @@
     model?: string;
     thinkingLevel?: string;
     cwd?: string;
+    contextWindow?: number;
     shadow?: { shadowName: string; shadowTitle: string; shadowGrade: string };
     sessions: SessionRecord[];
   }
@@ -54,6 +55,7 @@
     id: string;
     name: string;
     rootPath: string;
+    instructions?: string | null;
     createdAt: string;
     updatedAt: string;
   }
@@ -70,6 +72,7 @@
     thinkingLevel?: string | null;
     cwd?: string | null;
     customPrompt?: string | null;
+    contextWindow?: number | null;
     createdAt: string;
     updatedAt: string;
   }
@@ -113,6 +116,7 @@
             model: row.model || undefined,
             thinkingLevel: row.thinkingLevel || undefined,
             cwd: row.cwd || undefined,
+            contextWindow: row.contextWindow || undefined,
             shadow: row.shadowName
               ? { shadowName: row.shadowName, shadowTitle: row.shadowTitle || "", shadowGrade: (row.shadowGrade as any) || "Knight" }
               : undefined,
@@ -149,6 +153,7 @@
       model: saved.model,
       thinkingLevel: saved.thinkingLevel,
       cwd: saved.cwd,
+      contextWindow: saved.contextWindow,
       shadow: saved.shadow as any,
     };
     const sourceSessionId = selectedSessionId || saved.sessions[0]?.sessionId;
@@ -248,6 +253,7 @@
         thinkingLevel: agent.thinkingLevel || null,
         cwd: agent.cwd || null,
         customPrompt: null,
+        contextWindow: agent.contextWindow || null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -516,6 +522,7 @@
         <AgentView
           agent={activeAgent}
           projectName={activeProject?.name}
+          projectInstructions={activeProject?.instructions}
           onrestart={restartAgent}
           onagentchange={(agentId, updater) => updateAgent(agentId, updater)}
           getcachedstate={getAgentViewState}

@@ -1,22 +1,58 @@
 <script lang="ts">
-  import type { DisplayItem, ToolExecution, Usage, ContentBlock } from "./types";
+  import type { DisplayItem, Usage, ShadowIdentity } from "./types";
 
   let {
     items,
     lastUsage,
     contextWindow,
     sessionStats,
+    customPrompt,
+    projectInstructions,
+    shadow,
     onclose,
   }: {
     items: DisplayItem[];
     lastUsage?: Usage;
     contextWindow?: number;
     sessionStats?: { totalTokens: number; totalCost: number; messageCount: number; turnCount: number };
+    customPrompt?: string | null;
+    projectInstructions?: string | null;
+    shadow?: ShadowIdentity;
     onclose: () => void;
   } = $props();
 
-  // ~4 chars per token is a rough but reasonable heuristic for English text
   const CHARS_PER_TOKEN = 4;
+
+  interface ContextEntry {
+    id: string;
+    label: string;
+    tokens: number;
+    preview: string;
+    fullText: string;
+    meta?: string;
+  }
+
+  interface ContextCategory {
+    id: string;
+    label: string;
+    tokens: number;
+    entries: ContextEntry[];
+  }
+
+  let expandedCategories: Record<string, boolean> = $state({
+    setup: true,
+    "tool-calls": true,
+    "tool-results": true,
+  });
+  let expandedEntries: Record<string, boolean> = $state({});
+
+  function toggleCategory(id: string) {
+    expandedCategories = { ...expandedCategories, [id]: !expandedCategories[id] };
+  }
+
+  function toggleEntry(id: string) {
+    expandedEntries = { ...expandedEntries, [id]: !expandedEntries[id] };
+  }
 
   function estimateTokens(text: string): number {
     return Math.ceil(text.length / CHARS_PER_TOKEN);
@@ -28,167 +64,239 @@
     return n.toString();
   }
 
-  function contentBlockText(block: ContentBlock): string {
-    switch (block.type) {
-      case "text": return block.text;
-      case "thinking": return block.thinking;
-      case "toolCall": return JSON.stringify(block.arguments);
-      case "image": return "[image]";
-      default: return "";
-    }
-  }
-
   function truncate(text: string, max: number): string {
     if (text.length <= max) return text;
     return text.slice(0, max) + "...";
   }
 
-  interface ContextCategory {
-    id: string;
-    label: string;
-    tokens: number;
-    entries: { label: string; tokens: number; preview: string }[];
+  function firstMeaningfulLine(text: string): string {
+    const line = text
+      .split("\n")
+      .map((part) => part.trim())
+      .find(Boolean);
+    return line || text.trim();
   }
 
-  let expanded: Record<string, boolean> = $state({});
+  function textPartsSummary(text: string, fallback: string): { label: string; preview: string } {
+    const trimmed = text.trim();
+    if (!trimmed) return { label: fallback, preview: "" };
+    const firstLine = firstMeaningfulLine(trimmed);
+    return {
+      label: truncate(firstLine, 56),
+      preview: truncate(trimmed, 240),
+    };
+  }
 
-  function toggle(id: string) {
-    expanded = { ...expanded, [id]: !expanded[id] };
+  function stringifyToolResult(result: unknown): string {
+    if (result == null) return "";
+    if (typeof result === "string") return result;
+    if (typeof result === "object" && result && "content" in result && Array.isArray((result as any).content)) {
+      return (result as any).content
+        .map((part: any) => (part?.type === "text" ? part.text : `[${part?.type || "content"}]`))
+        .join("\n");
+    }
+    return JSON.stringify(result, null, 2);
+  }
+
+  function summarizeToolCall(toolName: string, args: unknown): string {
+    const typedArgs = (args && typeof args === "object" ? args : {}) as Record<string, any>;
+    switch (toolName) {
+      case "bash":
+        return typedArgs.command || "";
+      case "read":
+      case "write":
+      case "edit":
+        return typedArgs.file_path || typedArgs.path || "";
+      case "grep":
+        return [typedArgs.pattern, typedArgs.path].filter(Boolean).join(" ");
+      case "find":
+        return [typedArgs.pattern || typedArgs.glob, typedArgs.path].filter(Boolean).join(" ");
+      case "ls":
+        return typedArgs.path || ".";
+      default:
+        return JSON.stringify(args ?? {});
+    }
   }
 
   let categories = $derived.by(() => {
-    const cats: ContextCategory[] = [];
+    const next: ContextCategory[] = [];
 
-    // --- Conversation (user messages) ---
-    const userEntries: ContextCategory["entries"] = [];
-    let userIdx = 0;
+    const setupEntries: ContextEntry[] = [];
+    if (customPrompt?.trim()) {
+      const text = customPrompt.trim();
+      setupEntries.push({
+        id: "setup-custom-prompt",
+        label: "Custom prompt",
+        tokens: estimateTokens(text),
+        preview: truncate(text, 240),
+        fullText: text,
+      });
+    }
+    if (projectInstructions?.trim()) {
+      const text = projectInstructions.trim();
+      setupEntries.push({
+        id: "setup-project-instructions",
+        label: "Project instructions",
+        tokens: estimateTokens(text),
+        preview: truncate(text, 240),
+        fullText: text,
+      });
+    }
+    if (shadow) {
+      const text = `${shadow.shadowName} · ${shadow.shadowTitle} · ${shadow.shadowGrade}`;
+      setupEntries.push({
+        id: "setup-shadow",
+        label: "Shadow identity",
+        tokens: estimateTokens(text),
+        preview: text,
+        fullText: text,
+      });
+    }
+    if (setupEntries.length > 0) {
+      next.push({
+        id: "setup",
+        label: "Setup",
+        tokens: setupEntries.reduce((sum, entry) => sum + entry.tokens, 0),
+        entries: setupEntries,
+      });
+    }
+
+    const userEntries: ContextEntry[] = [];
+    let userIndex = 0;
     for (const item of items) {
-      if (item.kind === "user") {
-        userIdx++;
-        const text = item.content;
-        userEntries.push({
-          label: `User #${userIdx}`,
-          tokens: estimateTokens(text),
-          preview: truncate(text, 120),
-        });
-      }
+      if (item.kind !== "user") continue;
+      const text = item.content.trim();
+      if (!text) continue;
+      userIndex++;
+      const summary = textPartsSummary(text, `User ${userIndex}`);
+      userEntries.push({
+        id: `user-${userIndex}`,
+        label: summary.label,
+        tokens: estimateTokens(text),
+        preview: summary.preview,
+        fullText: text,
+      });
     }
     if (userEntries.length > 0) {
-      cats.push({
+      next.push({
         id: "user-messages",
-        label: "User Messages",
-        tokens: userEntries.reduce((s, e) => s + e.tokens, 0),
+        label: "User messages",
+        tokens: userEntries.reduce((sum, entry) => sum + entry.tokens, 0),
         entries: userEntries,
       });
     }
 
-    // --- Assistant responses ---
-    const assistantEntries: ContextCategory["entries"] = [];
-    let assistantIdx = 0;
+    const assistantEntries: ContextEntry[] = [];
+    const thinkingEntries: ContextEntry[] = [];
+    let assistantIndex = 0;
+    let thinkingIndex = 0;
     for (const item of items) {
-      if (item.kind === "assistant") {
-        assistantIdx++;
-        const textParts = item.content
-          .filter((b): b is { type: "text"; text: string } => b.type === "text")
-          .map((b) => b.text);
-        const fullText = textParts.join("");
+      if (item.kind !== "assistant") continue;
+
+      const assistantText = item.content
+        .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text" && block.text.trim().length > 0)
+        .map((block) => block.text)
+        .join("\n\n")
+        .trim();
+
+      if (assistantText) {
+        assistantIndex++;
+        const summary = textPartsSummary(assistantText, `Assistant ${assistantIndex}`);
         assistantEntries.push({
-          label: `Assistant #${assistantIdx}${item.model ? ` (${item.model})` : ""}`,
-          tokens: estimateTokens(fullText),
-          preview: truncate(fullText, 120),
+          id: `assistant-${assistantIndex}`,
+          label: summary.label,
+          tokens: estimateTokens(assistantText),
+          preview: summary.preview,
+          fullText: assistantText,
+          meta: item.model,
+        });
+      }
+
+      for (const block of item.content) {
+        if (block.type !== "thinking" || !block.thinking.trim()) continue;
+        thinkingIndex++;
+        const summary = textPartsSummary(block.thinking, `Thinking ${thinkingIndex}`);
+        thinkingEntries.push({
+          id: `thinking-${thinkingIndex}`,
+          label: summary.label,
+          tokens: estimateTokens(block.thinking),
+          preview: summary.preview,
+          fullText: block.thinking,
+          meta: block.redacted ? "redacted" : undefined,
         });
       }
     }
     if (assistantEntries.length > 0) {
-      cats.push({
+      next.push({
         id: "assistant-messages",
-        label: "Assistant Messages",
-        tokens: assistantEntries.reduce((s, e) => s + e.tokens, 0),
+        label: "Assistant messages",
+        tokens: assistantEntries.reduce((sum, entry) => sum + entry.tokens, 0),
         entries: assistantEntries,
       });
     }
-
-    // --- Thinking blocks ---
-    const thinkingEntries: ContextCategory["entries"] = [];
-    let thinkIdx = 0;
-    for (const item of items) {
-      if (item.kind === "assistant") {
-        for (const block of item.content) {
-          if (block.type === "thinking") {
-            thinkIdx++;
-            thinkingEntries.push({
-              label: `Thinking #${thinkIdx}`,
-              tokens: estimateTokens(block.thinking),
-              preview: truncate(block.thinking, 120),
-            });
-          }
-        }
-      }
-    }
     if (thinkingEntries.length > 0) {
-      cats.push({
+      next.push({
         id: "thinking",
         label: "Thinking",
-        tokens: thinkingEntries.reduce((s, e) => s + e.tokens, 0),
+        tokens: thinkingEntries.reduce((sum, entry) => sum + entry.tokens, 0),
         entries: thinkingEntries,
       });
     }
 
-    // --- Tool calls (arguments sent to tools) ---
-    const toolCallEntries: ContextCategory["entries"] = [];
+    const toolCallEntries: ContextEntry[] = [];
+    const toolResultEntries: ContextEntry[] = [];
+    let toolIndex = 0;
     for (const item of items) {
-      if (item.kind === "tool-group") {
-        for (const exec of item.executions) {
-          const argsText = JSON.stringify(exec.args ?? {});
+      if (item.kind !== "tool-group") continue;
+      for (const execution of item.executions) {
+        toolIndex++;
+        const callText = summarizeToolCall(execution.toolName, execution.args).trim() || JSON.stringify(execution.args ?? {});
+        if (callText.trim()) {
           toolCallEntries.push({
-            label: exec.toolName,
-            tokens: estimateTokens(argsText),
-            preview: truncate(argsText, 120),
+            id: `tool-call-${toolIndex}`,
+            label: `${execution.toolName} · ${truncate(firstMeaningfulLine(callText), 56)}`,
+            tokens: estimateTokens(callText),
+            preview: truncate(callText, 240),
+            fullText: callText,
+            meta: execution.isError ? "error" : undefined,
+          });
+        }
+
+        const resultText = stringifyToolResult(execution.result).trim();
+        if (resultText) {
+          toolResultEntries.push({
+            id: `tool-result-${toolIndex}`,
+            label: `${execution.toolName} result`,
+            tokens: estimateTokens(resultText),
+            preview: truncate(resultText, 240),
+            fullText: resultText,
+            meta: execution.isError ? "error" : undefined,
           });
         }
       }
     }
     if (toolCallEntries.length > 0) {
-      cats.push({
+      next.push({
         id: "tool-calls",
-        label: "Tool Calls",
-        tokens: toolCallEntries.reduce((s, e) => s + e.tokens, 0),
+        label: "Tool calls",
+        tokens: toolCallEntries.reduce((sum, entry) => sum + entry.tokens, 0),
         entries: toolCallEntries,
       });
     }
-
-    // --- Tool outputs (results from tools) ---
-    const toolOutputEntries: ContextCategory["entries"] = [];
-    for (const item of items) {
-      if (item.kind === "tool-group") {
-        for (const exec of item.executions) {
-          if (exec.result != null) {
-            const resultText = typeof exec.result === "string" ? exec.result : JSON.stringify(exec.result);
-            toolOutputEntries.push({
-              label: `${exec.toolName} result`,
-              tokens: estimateTokens(resultText),
-              preview: truncate(resultText, 120),
-            });
-          }
-        }
-      }
-    }
-    if (toolOutputEntries.length > 0) {
-      cats.push({
-        id: "tool-outputs",
-        label: "Tool Outputs",
-        tokens: toolOutputEntries.reduce((s, e) => s + e.tokens, 0),
-        entries: toolOutputEntries,
+    if (toolResultEntries.length > 0) {
+      next.push({
+        id: "tool-results",
+        label: "Tool results",
+        tokens: toolResultEntries.reduce((sum, entry) => sum + entry.tokens, 0),
+        entries: toolResultEntries,
       });
     }
 
-    return cats;
+    return next;
   });
 
-  let estimatedTotal = $derived(categories.reduce((s, c) => s + c.tokens, 0));
+  let estimatedTotal = $derived(categories.reduce((sum, category) => sum + category.tokens, 0));
 
-  // Live context occupancy — mirrors AgentControls logic: input + cached tokens
-  // from the most recent message, NOT cumulative session billing.
   let liveContextTokens = $derived.by(() => {
     if (!lastUsage) return estimatedTotal;
     const cached = (lastUsage.cacheRead ?? 0) + (lastUsage.cacheWrite ?? 0);
@@ -200,9 +308,14 @@
     return estimatedTotal;
   });
 
-  let billingTotal = $derived(sessionStats?.totalTokens ?? 0);
   let resolvedWindow = $derived(contextWindow ?? 128000);
   let usedRatio = $derived(liveContextTokens > 0 ? Math.min(liveContextTokens / resolvedWindow, 1) : 0);
+  let freeTokens = $derived(Math.max(resolvedWindow - liveContextTokens, 0));
+  let freePct = $derived(Math.max(100 - Math.round(usedRatio * 100), 0));
+  let healthState = $derived(
+    usedRatio >= 0.9 ? "critical" : usedRatio >= 0.7 ? "warning" : "healthy"
+  );
+  let usageSource = $derived(lastUsage ? "Live telemetry" : "Estimated from restored content");
 </script>
 
 <div class="inspector">
@@ -213,16 +326,24 @@
 
   <div class="inspector-summary">
     <div class="summary-row">
-      <span class="summary-label">Context Occupancy</span>
+      <span class="summary-label">Context Snapshot</span>
       <span class="summary-value">{formatTokens(liveContextTokens)} / {formatTokens(resolvedWindow)}</span>
     </div>
-    <div class="summary-bar">
-      <div class="summary-fill" style:width={`${Math.min(usedRatio * 100, 100)}%`}></div>
+    <div class="summary-row sub">
+      <span class="summary-label">Headroom</span>
+      <span class="summary-value">{formatTokens(freeTokens)} free ({freePct}%)</span>
     </div>
-    {#if billingTotal > 0}
+    <div class="summary-row sub">
+      <span class="summary-label">Source</span>
+      <span class="summary-value">{usageSource}</span>
+    </div>
+    <div class="health-track" class:warning={healthState === "warning"} class:critical={healthState === "critical"}>
+      <div class="health-fill" style:width={`${Math.max((1 - usedRatio) * 100, 0)}%`}></div>
+    </div>
+    {#if sessionStats && sessionStats.totalTokens > 0}
       <div class="summary-row sub">
         <span class="summary-label">Billing Total</span>
-        <span class="summary-value">{formatTokens(billingTotal)}</span>
+        <span class="summary-value">{formatTokens(sessionStats.totalTokens)} · ${sessionStats.totalCost.toFixed(4)}</span>
       </div>
     {/if}
     {#if sessionStats}
@@ -235,38 +356,45 @@
         <span class="summary-value">{sessionStats.messageCount}</span>
       </div>
     {/if}
-    {#if lastUsage}
+    {#if lastUsage && (lastUsage.cacheRead ?? 0) > 0}
       <div class="summary-row sub">
         <span class="summary-label">Cache Read</span>
-        <span class="summary-value">{formatTokens(lastUsage.cacheRead)}</span>
+        <span class="summary-value">{formatTokens(lastUsage.cacheRead ?? 0)}</span>
       </div>
+    {/if}
+    {#if lastUsage && (lastUsage.cacheWrite ?? 0) > 0}
       <div class="summary-row sub">
         <span class="summary-label">Cache Write</span>
-        <span class="summary-value">{formatTokens(lastUsage.cacheWrite)}</span>
+        <span class="summary-value">{formatTokens(lastUsage.cacheWrite ?? 0)}</span>
       </div>
     {/if}
   </div>
 
   <div class="inspector-categories">
-    {#each categories as cat (cat.id)}
+    {#each categories as category (category.id)}
       <div class="category">
-        <button class="category-header" onclick={() => toggle(cat.id)}>
-          <span class="category-chevron">{expanded[cat.id] ? "▾" : "▸"}</span>
-          <span class="category-label">{cat.label}</span>
-          <span class="category-count">{cat.entries.length}</span>
-          <span class="category-tokens">{formatTokens(cat.tokens)}</span>
+        <button class="category-header" onclick={() => toggleCategory(category.id)}>
+          <span class="category-chevron">{expandedCategories[category.id] ? "▾" : "▸"}</span>
+          <span class="category-label">{category.label}</span>
+          <span class="category-count">{category.entries.length}</span>
+          <span class="category-tokens">{formatTokens(category.tokens)}</span>
         </button>
 
-        {#if expanded[cat.id]}
+        {#if expandedCategories[category.id]}
           <div class="category-entries">
-            {#each cat.entries as entry}
-              <div class="entry">
+            {#each category.entries as entry (entry.id)}
+              <button class="entry" onclick={() => toggleEntry(entry.id)}>
                 <div class="entry-header">
                   <span class="entry-label">{entry.label}</span>
-                  <span class="entry-tokens">{formatTokens(entry.tokens)}</span>
+                  <div class="entry-meta">
+                    {#if entry.meta}
+                      <span class="entry-badge">{entry.meta}</span>
+                    {/if}
+                    <span class="entry-tokens">{formatTokens(entry.tokens)}</span>
+                  </div>
                 </div>
-                <div class="entry-preview">{entry.preview}</div>
-              </div>
+                <div class="entry-preview">{expandedEntries[entry.id] ? entry.fullText : entry.preview}</div>
+              </button>
             {/each}
           </div>
         {/if}
@@ -274,12 +402,14 @@
     {/each}
 
     {#if categories.length === 0}
-      <div class="empty">No context data yet</div>
+      <div class="empty">No useful context has been captured yet.</div>
     {/if}
   </div>
 
   <div class="inspector-footer">
-    <span class="footer-note">Estimated ~{formatTokens(estimatedTotal)} from content</span>
+    <span class="footer-note">
+      Category sizes are estimated from visible content so you can compare what is actually taking up space.
+    </span>
   </div>
 </div>
 
@@ -363,19 +493,31 @@
     font-size: 9px;
   }
 
-  .summary-bar {
+  .health-track {
+    position: relative;
     height: 4px;
     border-radius: 2px;
+    overflow: hidden;
     background: rgba(255, 255, 255, 0.06);
     margin-bottom: 8px;
-    overflow: hidden;
   }
 
-  .summary-fill {
+  .health-fill {
     height: 100%;
     border-radius: 2px;
-    background: var(--accent-purple, #be95ff);
-    transition: width 0.25s ease;
+    background:
+      linear-gradient(90deg, color-mix(in srgb, var(--success) 76%, white 10%), var(--success));
+    transition: width 0.25s ease, background 0.2s ease;
+  }
+
+  .health-track.warning .health-fill {
+    background:
+      linear-gradient(90deg, color-mix(in srgb, var(--warning) 88%, white 10%), var(--warning));
+  }
+
+  .health-track.critical .health-fill {
+    background:
+      linear-gradient(90deg, color-mix(in srgb, var(--error) 78%, white 8%), var(--error));
   }
 
   .inspector-categories {
@@ -401,7 +543,7 @@
     font-size: 11px;
     cursor: pointer;
     text-align: left;
-    transition: background 0.1s;
+    transition: background 0.12s ease;
   }
 
   .category-header:hover {
@@ -418,9 +560,6 @@
   .category-label {
     flex: 1;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .category-count {
@@ -434,7 +573,7 @@
 
   .category-tokens {
     font-size: 10px;
-    color: var(--accent-purple, #be95ff);
+    color: color-mix(in srgb, var(--success) 72%, white 12%);
     flex-shrink: 0;
     min-width: 40px;
     text-align: right;
@@ -442,11 +581,29 @@
 
   .category-entries {
     padding: 0 14px 8px 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .entry {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
     padding: 4px 0;
+    border: none;
     border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.1s;
+  }
+
+  .entry:hover {
+    background: rgba(255, 255, 255, 0.02);
   }
 
   .entry:last-child {
@@ -455,9 +612,9 @@
 
   .entry-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: 2px;
+    justify-content: space-between;
+    gap: 8px;
   }
 
   .entry-label {
@@ -470,21 +627,31 @@
     min-width: 0;
   }
 
+  .entry-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .entry-badge {
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-muted, #8f7aa8);
+    font-size: 9px;
+  }
+
   .entry-tokens {
     font-size: 9px;
     color: var(--text-muted, #8f7aa8);
-    flex-shrink: 0;
-    margin-left: 8px;
   }
 
   .entry-preview {
     font-size: 9px;
     color: var(--text-muted, #8f7aa8);
     line-height: 1.4;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
+    white-space: pre-wrap;
     word-break: break-word;
   }
 
@@ -504,5 +671,12 @@
   .footer-note {
     font-size: 9px;
     color: var(--text-muted, #8f7aa8);
+    line-height: 1.5;
+  }
+
+  @media (max-width: 1180px) {
+    .inspector {
+      width: 280px;
+    }
   }
 </style>
