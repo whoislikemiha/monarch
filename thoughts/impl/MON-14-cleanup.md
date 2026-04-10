@@ -142,7 +142,7 @@ and have no cross-dependencies beyond Wave 0.
   now live on the inner struct but with identical names, so the body of
   each guarded block is unchanged.
 
-- MON-37 PR: _pending_ — replaces the per-event `spawn_blocking`
+- MON-37 PR: https://github.com/whoislikemiha/monarch/pull/22 — replaces the per-event `spawn_blocking`
   fire-and-forget in `handle_sidecar_event` with a bounded
   `tokio::sync::mpsc::channel::<PersistCommand>(256)` drained by a single
   manager-lifetime consumer task spawned in `AgentManager::new`. FIFO
