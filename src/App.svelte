@@ -7,9 +7,11 @@
   import CouncilView from "./lib/CouncilView.svelte";
   import SpawnDialog from "./lib/SpawnDialog.svelte";
   import HistoryPanel from "./lib/HistoryPanel.svelte";
-  import type { Agent, AgentConfig, AgentViewState, SessionRecord } from "./lib/types";
+  import ProjectEditor from "./lib/ProjectEditor.svelte";
+  import type { Agent, AgentConfig, AgentViewState, Project, SessionRecord } from "./lib/types";
 
   let agents: Agent[] = $state([]);
+  let projects: Project[] = $state([]);
   let activeId: string | null = $state(null);
   let showSpawnDialog = $state(false);
   let showSidebar = $state(true);
@@ -28,6 +30,7 @@
   interface SavedAgentInfo {
     id: string;
     name: string;
+    projectId?: string;
     provider?: string;
     model?: string;
     thinkingLevel?: string;
@@ -40,14 +43,26 @@
   // Viewing history for a saved agent
   let viewingSavedAgent: SavedAgentInfo | null = $state(null);
 
+  // Editing project instructions
+  let editingProject: Project | null = $state(null);
+
   // Council needs at least 2 running agents
   let councilAgents = $derived(agents.filter((a) => a.status === "running"));
 
   // --- DB row types matching Rust ---
 
+  interface ProjectDbRow {
+    id: string;
+    name: string;
+    rootPath: string;
+    createdAt: string;
+    updatedAt: string;
+  }
+
   interface AgentDbRow {
     id: string;
     name: string;
+    projectId?: string | null;
     shadowName?: string | null;
     shadowTitle?: string | null;
     shadowGrade?: string | null;
@@ -75,6 +90,15 @@
 
   // --- Load saved agents from SQLite ---
 
+  async function loadProjects() {
+    try {
+      const rows = await invoke<ProjectDbRow[]>("db_get_projects");
+      projects = rows;
+    } catch {
+      // No projects yet
+    }
+  }
+
   async function loadSavedAgents() {
     try {
       const dbAgents = await invoke<AgentDbRow[]>("db_get_agents");
@@ -85,6 +109,7 @@
           loaded.push({
             id: row.id,
             name: row.name,
+            projectId: row.projectId || undefined,
             provider: row.provider || undefined,
             model: row.model || undefined,
             thinkingLevel: row.thinkingLevel || undefined,
@@ -128,6 +153,7 @@
       shadow: saved.shadow as any,
     };
     const sourceSessionId = selectedSessionId || saved.sessions[0]?.sessionId;
+    const restoredSession = saved.sessions.find((session) => session.sessionId === sourceSessionId);
     const newId = await createAgent(config, {
       agentId: saved.id,
       sessionId: sourceSessionId,
@@ -138,12 +164,16 @@
     // Merge archived sessions with the freshly-created current session
     agents = agents.map((a) => {
       if (a.id !== newId) return a;
-      // Current session is already sessions[0] from createAgent; append old ones after it
-      const currentSession = a.sessions[0];
+      const currentSession = restoredSession || a.sessions[0];
       const archivedSessions = saved.sessions.filter(
         (s) => s.sessionId !== currentSession?.sessionId,
       );
-      return { ...a, sessions: [currentSession, ...archivedSessions].filter(Boolean) };
+      return {
+        ...a,
+        projectId: saved.projectId,
+        sessionId: currentSession?.sessionId || a.sessionId,
+        sessions: [currentSession, ...archivedSessions].filter(Boolean),
+      };
     });
   }
 
@@ -159,6 +189,7 @@
   }
 
   onMount(() => {
+    loadProjects();
     loadSavedAgents();
   });
 
@@ -253,7 +284,19 @@
       shadowTitle: config?.shadow?.shadowTitle || null,
       shadowGrade: config?.shadow?.shadowGrade || null,
     })
-      .then(() => {
+      .then(async () => {
+        // Refresh projects — spawn_agent may have auto-created one
+        await loadProjects();
+        // Get the agent's project_id from DB (set by Rust during spawn)
+        try {
+          const dbAgents = await invoke<AgentDbRow[]>("db_get_agents");
+          const dbAgent = dbAgents.find(a => a.id === id);
+          if (dbAgent?.projectId) {
+            agents = agents.map((a) =>
+              a.id === id ? { ...a, projectId: dbAgent.projectId || undefined } : a,
+            );
+          }
+        } catch { /* ignore */ }
         agents = agents.map((a) =>
           a.id === id ? { ...a, status: "running" as const } : a,
         );
@@ -403,6 +446,11 @@
   }
 
   let activeAgent = $derived(agents.find((a) => a.id === activeId));
+  let activeProject = $derived(
+    activeAgent?.projectId
+      ? projects.find((p) => p.id === activeAgent!.projectId)
+      : undefined
+  );
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -411,9 +459,11 @@
   {#if showSidebar}
     <Sidebar
       {agents}
+      {projects}
       savedAgents={savedAgents.map(s => ({
         id: s.id,
         name: s.name,
+        projectId: s.projectId,
         provider: s.provider,
         model: s.model,
         thinkingLevel: s.thinkingLevel,
@@ -432,6 +482,7 @@
       onviewhistory={(saved) => {
         viewingSavedAgent = savedAgents.find(s => s.id === saved.id) || null;
       }}
+      oneditproject={(project) => { editingProject = project; }}
     />
   {/if}
   <div class="main-panel">
@@ -441,14 +492,18 @@
         onback={() => (councilMode = false)}
       />
     {:else if activeAgent}
-      <AgentView
-        agent={activeAgent}
-        onrestart={restartAgent}
-        onagentchange={(agentId, updater) => updateAgent(agentId, updater)}
-        getcachedstate={getAgentViewState}
-        onviewstatechange={updateAgentViewState}
-        bind:this={agentViewRef}
-      />
+      {#key activeAgent.viewKey}
+        <AgentView
+          agent={activeAgent}
+          projectName={activeProject?.name}
+          onrestart={restartAgent}
+          onagentchange={(agentId, updater) => updateAgent(agentId, updater)}
+          getcachedstate={getAgentViewState}
+          onviewstatechange={updateAgentViewState}
+          onprojectedit={() => { if (activeProject) editingProject = activeProject; }}
+          bind:this={agentViewRef}
+        />
+      {/key}
     {:else}
       <div class="empty-state">
         {#if showRestoreBar && savedAgents.length > 0}
@@ -478,6 +533,7 @@
 
 {#if showSpawnDialog}
   <SpawnDialog
+    {projects}
     onspawn={(config) => {
       showSpawnDialog = false;
       createAgent(config);
@@ -505,17 +561,35 @@
   />
 {/if}
 
+{#if editingProject}
+  <ProjectEditor
+    project={editingProject}
+    agents={agents}
+    onclose={() => (editingProject = null)}
+    onupdate={(updated) => {
+      projects = projects.map(p => p.id === updated.id ? updated : p);
+      editingProject = updated;
+    }}
+  />
+{/if}
+
 <style>
   .app {
     display: flex;
     width: 100vw;
     height: 100vh;
+    min-width: 0;
+    min-height: 100vh;
+    overflow: hidden;
   }
 
   .main-panel {
     flex: 1;
     display: flex;
     min-width: 0;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
   }
 
   .empty-state {
@@ -524,13 +598,16 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 8px;
+    padding: 32px;
+    text-align: center;
     color: var(--text-muted);
   }
 
   .empty-icon {
     font-size: 48px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    margin-bottom: 12px;
+    line-height: 1;
     color: var(--accent-purple);
   }
 
@@ -538,6 +615,7 @@
     font-size: 12px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     margin: 0;
+    max-width: 32rem;
   }
 
   .hint {

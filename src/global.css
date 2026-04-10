@@ -19,6 +19,13 @@
   --error: #ee5396;
 }
 
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+}
+
 body {
   margin: 0;
   padding: 0;
@@ -31,6 +38,10 @@ body {
     "Segoe UI",
     sans-serif;
   overflow: hidden;
+}
+
+#app {
+  isolation: isolate;
 }
 
 * {

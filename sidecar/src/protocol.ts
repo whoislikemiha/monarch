@@ -21,6 +21,7 @@ export interface CreateSessionCommand {
   thinkingLevel: string;
   shadow?: ShadowConfig;
   customPrompt?: string | null;
+  projectInstructions?: string | null;
 }
 
 export interface DestroySessionCommand {
@@ -83,6 +84,7 @@ export interface SetCustomPromptCommand {
   type: "set_custom_prompt";
   agentId: string;
   prompt?: string | null;
+  projectInstructions?: string | null;
 }
 
 export type SidecarCommand =

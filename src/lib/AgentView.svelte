@@ -22,16 +22,20 @@
 
   let {
     agent,
+    projectName,
     onrestart,
     onagentchange,
     getcachedstate,
     onviewstatechange,
+    onprojectedit,
   }: {
     agent: Agent;
+    projectName?: string;
     onrestart?: (id: string) => void;
     onagentchange?: (agentId: string, updater: (agent: Agent) => Agent) => void;
     getcachedstate?: (agentId: string) => AgentViewState | undefined;
     onviewstatechange?: (agentId: string, state: AgentViewState | null) => void;
+    onprojectedit?: () => void;
   } = $props();
 
   let items: DisplayItem[] = $state([]);
@@ -280,6 +284,12 @@
 
     toolExecutions = new Map();
     streamingMessage = null;
+    lastUsage = undefined;
+    currentToolGroup = null;
+    pendingExtensionRequest = null;
+    showStderr = false;
+    activityStatus = "";
+    eventCount = 0;
     scrollToBottom();
   }
 
@@ -826,10 +836,12 @@
     <!-- Normal chat view -->
     <AgentHeader
       {agent}
+      {projectName}
       onprompt={() => (showPromptEditor = true)}
       onhistory={() => (showHistory = true)}
       oncompact={compact}
       onnewsession={newSession}
+      {onprojectedit}
     />
 
     <div class="messages-scroll" bind:this={scrollContainer}>

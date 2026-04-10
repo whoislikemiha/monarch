@@ -1,17 +1,25 @@
 <script lang="ts">
-  import type { Agent, SessionRecord, ShadowIdentity } from "./types";
+  import type { Agent, Project, SessionRecord, ShadowIdentity } from "./types";
 
   interface SavedAgentInfo {
     id: string;
     name: string;
+    projectId?: string;
     provider?: string;
     model?: string;
     shadow?: ShadowIdentity;
     sessions: SessionRecord[];
   }
 
+  interface ProjectGroup {
+    project?: Project;
+    agents: Agent[];
+    savedAgents: SavedAgentInfo[];
+  }
+
   let {
     agents,
+    projects = [],
     savedAgents = [],
     activeId,
     councilMode = false,
@@ -20,8 +28,10 @@
     onkill,
     oncouncil,
     onviewhistory,
+    oneditproject,
   }: {
     agents: Agent[];
+    projects?: Project[];
     savedAgents?: SavedAgentInfo[];
     activeId: string | null;
     councilMode?: boolean;
@@ -30,6 +40,7 @@
     onkill: (id: string) => void;
     oncouncil?: () => void;
     onviewhistory?: (saved: SavedAgentInfo) => void;
+    oneditproject?: (project: Project) => void;
   } = $props();
 
   let runningCount = $derived(agents.filter((a) => a.status === "running").length);
@@ -38,6 +49,44 @@
   let inactiveSaved = $derived(
     savedAgents.filter((s) => !agents.some((a) => a.id === s.id || a.name === s.name))
   );
+
+  // Group both active agents and saved agents by project
+  let projectGroups = $derived.by(() => {
+    const projectMap = new Map<string, Project>();
+    for (const p of projects) projectMap.set(p.id, p);
+
+    const groups = new Map<string, ProjectGroup>();
+    const ungrouped: ProjectGroup = { project: undefined, agents: [], savedAgents: [] };
+
+    function ensureGroup(projectId: string): ProjectGroup {
+      if (!groups.has(projectId)) {
+        groups.set(projectId, { project: projectMap.get(projectId), agents: [], savedAgents: [] });
+      }
+      return groups.get(projectId)!;
+    }
+
+    for (const agent of agents) {
+      if (agent.projectId && projectMap.has(agent.projectId)) {
+        ensureGroup(agent.projectId).agents.push(agent);
+      } else {
+        ungrouped.agents.push(agent);
+      }
+    }
+
+    for (const saved of inactiveSaved) {
+      if (saved.projectId && projectMap.has(saved.projectId)) {
+        ensureGroup(saved.projectId).savedAgents.push(saved);
+      } else {
+        ungrouped.savedAgents.push(saved);
+      }
+    }
+
+    const result: ProjectGroup[] = [...groups.values()];
+    if (ungrouped.agents.length > 0 || ungrouped.savedAgents.length > 0) {
+      result.push(ungrouped);
+    }
+    return result;
+  });
 </script>
 
 <aside class="sidebar">
@@ -47,40 +96,48 @@
   </div>
 
   <div class="agent-list">
-    {#if agents.length > 0}
-      <div class="section-label">Active</div>
-    {/if}
-    {#each agents as agent (agent.id)}
-      <div
-        class="agent-item"
-        class:active={agent.id === activeId}
-        onclick={() => onselect(agent.id)}
-        onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') onselect(agent.id); }}
-        role="button"
-        tabindex="0"
-      >
-        <span class="status-dot {agent.isStreaming ? 'streaming' : agent.status}"></span>
-        <div class="agent-info">
-          <span class="agent-name">{agent.name}</span>
-          {#if agent.shadow}
-            <span class="agent-grade">{agent.shadow.shadowGrade}</span>
-          {:else if agent.model}
-            <span class="agent-model">{agent.model}</span>
-          {/if}
+    {#each projectGroups as group}
+      {#if group.project}
+        <div class="section-label project-label">
+          <button
+            class="project-name-btn"
+            onclick={() => oneditproject?.(group.project!)}
+            title="Edit project instructions"
+          >
+            <span class="project-icon">/</span>{group.project.name}
+          </button>
         </div>
-        <button
-          class="btn-kill"
-          onclick={(e: MouseEvent) => { e.stopPropagation(); onkill(agent.id); }}
-          title="Kill"
+      {:else if group.agents.length > 0 || group.savedAgents.length > 0}
+        <div class="section-label">Shadows</div>
+      {/if}
+      {#each group.agents as agent (agent.id)}
+        <div
+          class="agent-item"
+          class:active={agent.id === activeId}
+          onclick={() => onselect(agent.id)}
+          onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') onselect(agent.id); }}
+          role="button"
+          tabindex="0"
         >
-          &times;
-        </button>
-      </div>
-    {/each}
-
-    {#if inactiveSaved.length > 0}
-      <div class="section-label">History</div>
-      {#each inactiveSaved as saved (saved.id)}
+          <span class="status-dot {agent.isStreaming ? 'streaming' : agent.status}"></span>
+          <div class="agent-info">
+            <span class="agent-name">{agent.name}</span>
+            {#if agent.shadow}
+              <span class="agent-grade">{agent.shadow.shadowGrade}</span>
+            {:else if agent.model}
+              <span class="agent-model">{agent.model}</span>
+            {/if}
+          </div>
+          <button
+            class="btn-kill"
+            onclick={(e: MouseEvent) => { e.stopPropagation(); onkill(agent.id); }}
+            title="Kill"
+          >
+            &times;
+          </button>
+        </div>
+      {/each}
+      {#each group.savedAgents as saved (saved.id)}
         <button
           class="agent-item saved"
           onclick={() => onviewhistory?.(saved)}
@@ -97,7 +154,7 @@
           </div>
         </button>
       {/each}
-    {/if}
+    {/each}
   </div>
 
   {#if agents.length === 0 && inactiveSaved.length === 0}
@@ -180,6 +237,34 @@
     letter-spacing: 0.5px;
     padding: 8px 10px 4px;
     font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
+  }
+
+  .project-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .project-name-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: color 0.15s;
+  }
+
+  .project-name-btn:hover {
+    color: var(--accent-purple, #be95ff);
+  }
+
+  .project-icon {
+    color: var(--accent-purple, #be95ff);
+    font-weight: 700;
   }
 
   .agent-item {

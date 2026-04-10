@@ -3,16 +3,20 @@
 
   let {
     agent,
+    projectName,
     onprompt,
     onhistory,
     oncompact,
     onnewsession,
+    onprojectedit,
   }: {
     agent: Agent;
+    projectName?: string;
     onprompt: () => void;
     onhistory: () => void;
     oncompact: () => void;
     onnewsession: () => void;
+    onprojectedit?: () => void;
   } = $props();
 
   let showMenu = $state(false);
@@ -35,7 +39,15 @@
     {#if agent.shadow?.shadowTitle}
       <span class="agent-title">{agent.shadow.shadowTitle}</span>
     {/if}
-    {#if agent.cwd}
+    {#if projectName}
+      <button
+        class="project-badge"
+        onclick={() => onprojectedit?.()}
+        title="Edit project instructions"
+      >
+        <span class="project-slash">/</span>{projectName}
+      </button>
+    {:else if agent.cwd}
       <span class="agent-cwd" title={agent.cwd}>{shortenPath(agent.cwd)}</span>
     {/if}
   </div>
@@ -58,6 +70,11 @@
           <button class="menu-item" onclick={() => handleAction(onprompt)} role="menuitem">
             System Prompt
           </button>
+          {#if onprojectedit}
+            <button class="menu-item" onclick={() => handleAction(onprojectedit)} role="menuitem">
+              Project Instructions
+            </button>
+          {/if}
           <button class="menu-item" onclick={() => handleAction(onhistory)} role="menuitem">
             Session History
           </button>
@@ -106,6 +123,33 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .project-badge {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 8px;
+    border: 1px solid rgba(190, 149, 255, 0.2);
+    border-radius: 4px;
+    background: rgba(190, 149, 255, 0.06);
+    color: var(--text-muted);
+    font-size: 10px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+
+  .project-badge:hover {
+    background: rgba(190, 149, 255, 0.12);
+    color: var(--accent-purple, #be95ff);
+    border-color: rgba(190, 149, 255, 0.4);
+  }
+
+  .project-slash {
+    color: var(--accent-purple, #be95ff);
+    font-weight: 700;
   }
 
   .agent-cwd {

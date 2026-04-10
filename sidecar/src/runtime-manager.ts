@@ -21,6 +21,7 @@ interface ManagedSession {
 	uiResolvers: UIResolvers;
 	shadow?: CreateSessionCommand["shadow"];
 	cwd: string;
+	projectInstructions?: string | null;
 	/** Live system prompt. Mutated by setCustomPrompt; the loader override closes over this ref. */
 	promptRef: { current: string };
 }
@@ -127,7 +128,9 @@ export class RuntimeManager {
 		// byte — survives every tool/extension rebuild and any before_agent_start reset.
 		const initialPrompt =
 			cmd.customPrompt?.trim() ||
-			(cmd.shadow ? buildSystemPrompt(cmd.shadow, cmd.cwd) : "");
+			(cmd.shadow
+				? buildSystemPrompt(cmd.shadow, cmd.cwd, cmd.projectInstructions)
+				: cmd.projectInstructions?.trim() || "");
 		const promptRef = { current: initialPrompt };
 
 		const resourceLoader = new DefaultResourceLoader({
@@ -224,6 +227,7 @@ export class RuntimeManager {
 			uiResolvers,
 			shadow: cmd.shadow,
 			cwd: cmd.cwd,
+			projectInstructions: cmd.projectInstructions,
 			promptRef,
 		});
 
@@ -382,13 +386,24 @@ export class RuntimeManager {
 		}
 	}
 
-	setCustomPrompt(agentId: string, prompt?: string | null): void {
+	setCustomPrompt(
+		agentId: string,
+		prompt?: string | null,
+		projectInstructions?: string | null,
+	): void {
 		const managed = this.sessions.get(agentId);
 		if (!managed) return;
 
+		// Update stored project instructions if provided
+		if (projectInstructions !== undefined) {
+			managed.projectInstructions = projectInstructions;
+		}
+
 		const next =
 			prompt?.trim() ||
-			(managed.shadow ? buildSystemPrompt(managed.shadow, managed.cwd) : "");
+			(managed.shadow
+				? buildSystemPrompt(managed.shadow, managed.cwd, managed.projectInstructions)
+				: managed.projectInstructions?.trim() || "");
 		if (!next) return;
 
 		// Update the ref so any future _rebuildSystemPrompt (tool changes, etc.)

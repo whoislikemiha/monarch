@@ -66,7 +66,11 @@ function personalityDirective(grade: Grade): string {
 	return "You are focused and efficient. Minimal personality. Let your work speak.";
 }
 
-export function buildSystemPrompt(shadow: ShadowConfig, cwd: string): string {
+export function buildSystemPrompt(
+	shadow: ShadowConfig,
+	cwd: string,
+	projectInstructions?: string | null,
+): string {
 	const date = new Date().toISOString().split("T")[0];
 	const grade = shadow.grade as Grade;
 
@@ -106,5 +110,5 @@ ${personalityDirective(grade)}
 - Show file paths clearly.
 
 Current date: ${date}
-Working directory: ${cwd}`;
+Working directory: ${cwd}${projectInstructions ? `\n\n## Project Instructions\n\n${projectInstructions}` : ""}`;
 }

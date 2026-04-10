@@ -35,9 +35,19 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute_batch(
             "
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                root_path TEXT NOT NULL UNIQUE,
+                instructions TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE TABLE IF NOT EXISTS agents (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
+                project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
                 shadow_name TEXT,
                 shadow_title TEXT,
                 shadow_grade TEXT,
@@ -105,10 +115,28 @@ impl Database {
         )
         .map_err(|e| format!("Failed to init schema: {}", e))?;
 
-        // Migration: add parent_session_id column if it doesn't exist
+        // Migrations: ignore errors if columns/tables already exist
         let _ = conn.execute_batch(
             "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT REFERENCES sessions(id);",
-        ); // Ignore error if column already exists
+        );
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                root_path TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );",
+        );
+        let _ = conn.execute_batch(
+            "ALTER TABLE agents ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL;",
+        );
+        let _ = conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id);",
+        );
+        let _ = conn.execute_batch(
+            "ALTER TABLE projects ADD COLUMN instructions TEXT;",
+        );
 
         Ok(())
     }
@@ -118,9 +146,21 @@ impl Database {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProjectRow {
+    pub id: String,
+    pub name: String,
+    pub root_path: String,
+    pub instructions: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentRow {
     pub id: String,
     pub name: String,
+    pub project_id: Option<String>,
     pub shadow_name: Option<String>,
     pub shadow_title: Option<String>,
     pub shadow_grade: Option<String>,
@@ -180,6 +220,51 @@ pub struct MemoryRow {
 // ---- Internal methods (called from Rust event handler thread) ----
 
 impl Database {
+    /// Insert a project if the root_path doesn't already exist, then return the winning row's id.
+    /// Safe under concurrent inserts: losers get the existing row's id back.
+    pub fn ensure_project_internal(&self, project: &ProjectRow) -> Result<String, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO projects (id, name, root_path, instructions, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(root_path) DO UPDATE SET updated_at=datetime('now')",
+            params![project.id, project.name, project.root_path, project.instructions, project.created_at, project.updated_at],
+        )
+        .map_err(|e| e.to_string())?;
+        // Always read back the winning row's id (may differ from project.id on conflict)
+        let id: String = conn
+            .query_row(
+                "SELECT id FROM projects WHERE root_path = ?1",
+                params![project.root_path],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(id)
+    }
+
+    pub fn get_project_by_path_internal(&self, root_path: &str) -> Result<Option<ProjectRow>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let result = conn.query_row(
+            "SELECT id, name, root_path, instructions, created_at, updated_at FROM projects WHERE root_path = ?1",
+            params![root_path],
+            |row| {
+                Ok(ProjectRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    root_path: row.get(2)?,
+                    instructions: row.get(3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            },
+        );
+        match result {
+            Ok(row) => Ok(Some(row)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     pub fn session_exists_internal(&self, session_id: &str) -> Result<bool, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let exists: i64 = conn
@@ -195,13 +280,13 @@ impl Database {
     pub fn ensure_agent_exists_internal(&self, agent: &AgentRow) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO agents (id, name, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            "INSERT INTO agents (id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
              ON CONFLICT(id) DO NOTHING",
             params![
-                agent.id, agent.name, agent.shadow_name, agent.shadow_title, agent.shadow_grade,
-                agent.provider, agent.model, agent.thinking_level, agent.cwd, agent.custom_prompt,
-                agent.created_at, agent.updated_at,
+                agent.id, agent.name, agent.project_id, agent.shadow_name, agent.shadow_title,
+                agent.shadow_grade, agent.provider, agent.model, agent.thinking_level,
+                agent.cwd, agent.custom_prompt, agent.created_at, agent.updated_at,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -211,17 +296,18 @@ impl Database {
     pub fn upsert_agent_internal(&self, agent: &AgentRow) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO agents (id, name, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            "INSERT INTO agents (id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
              ON CONFLICT(id) DO UPDATE SET
-               name=excluded.name, shadow_name=excluded.shadow_name, shadow_title=excluded.shadow_title,
+               name=excluded.name, project_id=excluded.project_id,
+               shadow_name=excluded.shadow_name, shadow_title=excluded.shadow_title,
                shadow_grade=excluded.shadow_grade, provider=excluded.provider, model=excluded.model,
                thinking_level=excluded.thinking_level, cwd=excluded.cwd, custom_prompt=excluded.custom_prompt,
                updated_at=datetime('now')",
             params![
-                agent.id, agent.name, agent.shadow_name, agent.shadow_title, agent.shadow_grade,
-                agent.provider, agent.model, agent.thinking_level, agent.cwd, agent.custom_prompt,
-                agent.created_at, agent.updated_at,
+                agent.id, agent.name, agent.project_id, agent.shadow_name, agent.shadow_title,
+                agent.shadow_grade, agent.provider, agent.model, agent.thinking_level,
+                agent.cwd, agent.custom_prompt, agent.created_at, agent.updated_at,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -394,23 +480,24 @@ pub fn db_upsert_agent(db: tauri::State<'_, Arc<Database>>, agent: AgentRow) -> 
 pub fn db_get_agents(db: tauri::State<'_, Arc<Database>>) -> Result<Vec<AgentRow>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, name, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at FROM agents ORDER BY updated_at DESC")
+        .prepare("SELECT id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at FROM agents ORDER BY updated_at DESC")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
             Ok(AgentRow {
                 id: row.get(0)?,
                 name: row.get(1)?,
-                shadow_name: row.get(2)?,
-                shadow_title: row.get(3)?,
-                shadow_grade: row.get(4)?,
-                provider: row.get(5)?,
-                model: row.get(6)?,
-                thinking_level: row.get(7)?,
-                cwd: row.get(8)?,
-                custom_prompt: row.get(9)?,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
+                project_id: row.get(2)?,
+                shadow_name: row.get(3)?,
+                shadow_title: row.get(4)?,
+                shadow_grade: row.get(5)?,
+                provider: row.get(6)?,
+                model: row.get(7)?,
+                thinking_level: row.get(8)?,
+                cwd: row.get(9)?,
+                custom_prompt: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -581,6 +668,122 @@ fn map_memory(row: &rusqlite::Row) -> rusqlite::Result<MemoryRow> {
         last_accessed: row.get(7)?,
         access_count: row.get(8)?,
     })
+}
+
+// ---- Tauri Commands: Projects ----
+
+#[tauri::command]
+pub fn db_upsert_project(db: tauri::State<'_, Arc<Database>>, project: ProjectRow) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    // Check if a project with this root_path already exists (natural key).
+    // If so, update it. Otherwise insert using the provided id.
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT id FROM projects WHERE root_path = ?1",
+            params![project.root_path],
+            |row| row.get(0),
+        )
+        .ok();
+    if let Some(existing_id) = existing {
+        conn.execute(
+            "UPDATE projects SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![project.name, existing_id],
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        conn.execute(
+            "INSERT INTO projects (id, name, root_path, instructions, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+               name=excluded.name, root_path=excluded.root_path, instructions=excluded.instructions, updated_at=datetime('now')",
+            params![project.id, project.name, project.root_path, project.instructions, project.created_at, project.updated_at],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn db_get_projects(db: tauri::State<'_, Arc<Database>>) -> Result<Vec<ProjectRow>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, name, root_path, instructions, created_at, updated_at FROM projects ORDER BY updated_at DESC")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ProjectRow {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                root_path: row.get(2)?,
+                instructions: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_get_project_by_path(db: tauri::State<'_, Arc<Database>>, root_path: String) -> Result<Option<ProjectRow>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let result = conn.query_row(
+        "SELECT id, name, root_path, instructions, created_at, updated_at FROM projects WHERE root_path = ?1",
+        params![root_path],
+        |row| {
+            Ok(ProjectRow {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                root_path: row.get(2)?,
+                instructions: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        },
+    );
+    match result {
+        Ok(row) => Ok(Some(row)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+pub fn db_rename_project(
+    db: tauri::State<'_, Arc<Database>>,
+    project_id: String,
+    name: String,
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE projects SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
+        params![name, project_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn db_update_project_instructions(
+    db: tauri::State<'_, Arc<Database>>,
+    project_id: String,
+    instructions: Option<String>,
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE projects SET instructions = ?1, updated_at = datetime('now') WHERE id = ?2",
+        params![instructions, project_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn db_delete_project(db: tauri::State<'_, Arc<Database>>, project_id: String) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ---- Tauri Commands: Events ----

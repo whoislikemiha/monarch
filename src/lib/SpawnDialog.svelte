@@ -1,15 +1,17 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
-  import type { AgentConfig, ShadowGrade } from "./types";
+  import type { AgentConfig, Project, ShadowGrade } from "./types";
   import { SHADOW_GRADES } from "./types";
 
   let {
     onspawn,
     oncancel,
+    projects = [],
   }: {
     onspawn: (config: AgentConfig) => void;
     oncancel: () => void;
+    projects?: Project[];
   } = $props();
 
   let modelInput = $state("");
@@ -46,10 +48,18 @@
     message: string;
   }
 
+  interface DetectedProject {
+    rootPath: string;
+    name: string;
+    projectId?: string | null;
+    hasInstructions: boolean;
+  }
+
   let allModels: ModelInfo[] = $state([]);
   let modelsLoading = $state(false);
   let authLoading = $state(false);
   let authStatus: ProviderAuthStatus | null = $state(null);
+  let detectedProject: DetectedProject | null = $state(null);
   let showDropdown = $state(false);
   let highlightedIndex = $state(-1);
   let modelInputEl: HTMLInputElement | undefined = $state(undefined);
@@ -111,6 +121,14 @@
     authLoading = false;
   }
 
+  async function detectProject(path: string) {
+    try {
+      detectedProject = await invoke<DetectedProject | null>("detect_project", { cwd: path });
+    } catch {
+      detectedProject = null;
+    }
+  }
+
   // Fetch models when provider changes
   $effect(() => {
     fetchModels(selectedProvider);
@@ -118,6 +136,15 @@
     modelInput = fixedModelId || "";
     showDropdown = false;
     highlightedIndex = -1;
+  });
+
+  // Detect project when cwd changes
+  $effect(() => {
+    if (cwd.trim()) {
+      detectProject(cwd.trim());
+    } else {
+      detectedProject = null;
+    }
   });
 
   function selectModel(model: ModelInfo) {
@@ -301,6 +328,23 @@
       {/if}
     </div>
 
+    {#if projects.length > 0}
+      <div class="section">
+        <span class="label">Project</span>
+        <div class="project-chips">
+          {#each projects as p (p.id)}
+            <button
+              class="project-chip"
+              class:active={detectedProject?.rootPath === p.rootPath}
+              onclick={() => { cwd = p.rootPath; }}
+            >
+              <span class="project-chip-slash">/</span>{p.name}
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     <div class="row">
       <div class="field">
         <label class="label" for="thinking">Thinking</label>
@@ -325,6 +369,19 @@
         </div>
       </div>
     </div>
+
+    {#if detectedProject}
+      <div class="project-info">
+        <span class="project-info-label">
+          <span class="project-icon">/</span>
+          {detectedProject.name}
+        </span>
+        <span class="project-info-path">{detectedProject.rootPath}</span>
+        {#if detectedProject.hasInstructions}
+          <span class="project-info-tag">Project instructions found</span>
+        {/if}
+      </div>
+    {/if}
 
     <div class="section">
       <span class="label">Shadow Identity</span>
@@ -376,6 +433,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 24px;
+    overflow-y: auto;
     z-index: 100;
   }
 
@@ -384,11 +443,14 @@
     border: 1px solid var(--border-subtle, #35274f);
     border-radius: 12px;
     padding: 24px;
-    width: 480px;
-    max-width: 90vw;
+    width: min(560px, 100%);
+    max-width: min(560px, calc(100vw - 48px));
+    max-height: calc(100vh - 48px);
     display: flex;
     flex-direction: column;
     gap: 16px;
+    overflow-y: auto;
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
   }
 
   h2 {
@@ -438,6 +500,82 @@
   .preset-btn.active {
     border-color: var(--accent-purple, #be95ff);
     color: var(--accent-purple, #be95ff);
+  }
+
+  .project-chips {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .project-chip {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 12px;
+    border: 1px solid var(--border-subtle, #35274f);
+    border-radius: 6px;
+    background: var(--bg-panel-2, #201734);
+    color: var(--text-secondary, #dde1e6);
+    font-size: 12px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+
+  .project-chip:hover {
+    background: var(--bg-panel-3, #2a1e45);
+    border-color: rgba(190, 149, 255, 0.3);
+    color: var(--text-primary, #f2f4f8);
+  }
+
+  .project-chip.active {
+    background: rgba(190, 149, 255, 0.1);
+    border-color: var(--accent-purple, #be95ff);
+    color: var(--accent-purple, #be95ff);
+  }
+
+  .project-chip-slash {
+    color: var(--accent-purple, #be95ff);
+    font-weight: 700;
+  }
+
+  .project-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(190, 149, 255, 0.25);
+    background: rgba(190, 149, 255, 0.06);
+  }
+
+  .project-info-label {
+    font-size: 12px;
+    font-weight: 600;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    color: var(--text-primary, #f2f4f8);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .project-info .project-icon {
+    color: var(--accent-purple, #be95ff);
+    font-weight: 700;
+  }
+
+  .project-info-path {
+    font-size: 10px;
+    color: var(--text-muted, #8f7aa8);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    overflow-wrap: anywhere;
+  }
+
+  .project-info-tag {
+    font-size: 10px;
+    color: var(--accent-purple, #be95ff);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
   .field-hint {
@@ -589,6 +727,7 @@
   .row {
     display: flex;
     gap: 12px;
+    flex-wrap: wrap;
   }
 
   .field {
@@ -596,6 +735,7 @@
     flex-direction: column;
     gap: 4px;
     flex: 1;
+    min-width: 0;
   }
 
   .flex-grow {
@@ -604,6 +744,7 @@
 
   input,
   select {
+    width: 100%;
     background: var(--bg-panel-2, #201734);
     border: 1px solid var(--border-subtle, #35274f);
     border-radius: 6px;
@@ -676,5 +817,30 @@
     font-size: 10px;
     font-weight: 400;
     opacity: 0.6;
+  }
+
+  @media (max-width: 640px) {
+    .overlay {
+      padding: 16px;
+    }
+
+    .dialog {
+      padding: 20px;
+      max-width: calc(100vw - 32px);
+      max-height: calc(100vh - 32px);
+    }
+
+    .preset-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .actions {
+      flex-wrap: wrap-reverse;
+    }
+
+    .actions button {
+      width: 100%;
+      justify-content: center;
+    }
   }
 </style>

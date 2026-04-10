@@ -47,6 +47,16 @@ pub fn run() {
             db::db_save_memory,
             db::db_get_memories,
             db::db_log_event,
+            // Projects
+            db::db_upsert_project,
+            db::db_get_projects,
+            db::db_get_project_by_path,
+            db::db_rename_project,
+            db::db_update_project_instructions,
+            db::db_delete_project,
+            // Project detection
+            agent::detect_project,
+            agent::read_project_instructions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

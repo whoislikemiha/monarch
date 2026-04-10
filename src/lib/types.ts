@@ -25,6 +25,16 @@ export interface ShadowIdentity {
   shadowGrade: ShadowGrade;
 }
 
+// Project — a codebase root that groups agents
+export interface Project {
+  id: string;
+  name: string;
+  rootPath: string;
+  instructions?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // Agent state
 export type AgentStatus = "running" | "idle" | "stopped" | "error";
 
@@ -33,6 +43,7 @@ export interface Agent {
   viewKey: string;
   name: string;
   status: AgentStatus;
+  projectId?: string;
   provider?: string;
   model?: string;
   thinkingLevel?: string;

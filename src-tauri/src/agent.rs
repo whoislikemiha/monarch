@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{AppHandle, Emitter};
 
-use crate::db::{AgentRow, Database, MessageRow};
+use crate::db::{AgentRow, Database, MessageRow, ProjectRow};
 use crate::persistence::read_agent_prompt_file;
+use std::path::{Path, PathBuf};
 
 // ---- Agent state tracking ----
 
@@ -441,6 +442,133 @@ fn chrono_now() -> String {
     format!("{}", secs)
 }
 
+// ---- Project Detection ----
+
+/// Walk up from `start` looking for a `.git` directory. Returns the directory containing `.git`.
+fn find_project_root(start: &Path) -> Option<PathBuf> {
+    let mut current = start.to_path_buf();
+    loop {
+        if current.join(".git").exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+/// Read instruction files from a project root.
+/// Reads both AGENTS.md and CLAUDE.md if present, concatenating them.
+fn read_instructions_from_root(root: &Path) -> Option<String> {
+    let mut parts = Vec::new();
+    for name in &["AGENTS.md", "CLAUDE.md"] {
+        let path = root.join(name);
+        if path.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let trimmed = content.trim();
+                if !trimmed.is_empty() {
+                    parts.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
+}
+
+/// Detect project from cwd → find or create project row → return (project_id, instructions).
+/// DB instructions take precedence. On first creation, populate from files.
+fn resolve_project(
+    db: &Database,
+    cwd: &str,
+) -> Result<(Option<String>, Option<String>), String> {
+    let cwd_path = Path::new(cwd);
+    let root = match find_project_root(cwd_path) {
+        Some(r) => r,
+        None => return Ok((None, None)),
+    };
+    let root_str = root.to_string_lossy().to_string();
+
+    // Read file-based instructions for initial population
+    let file_instructions = read_instructions_from_root(&root);
+
+    // Ensure project exists (race-safe: returns the winning row's id)
+    let name = root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| root_str.clone());
+    let candidate_id = format!("project-{}", uuid_v4_simple());
+    let now = chrono_now();
+    let project_id = db.ensure_project_internal(&ProjectRow {
+        id: candidate_id,
+        name,
+        root_path: root_str.clone(),
+        instructions: file_instructions.clone(),
+        created_at: now.clone(),
+        updated_at: now,
+    })?;
+
+    // Prefer DB instructions (user may have edited them); fall back to files
+    let db_project = db.get_project_by_path_internal(&root_str)?;
+    let instructions = db_project
+        .and_then(|p| p.instructions)
+        .filter(|s| !s.trim().is_empty())
+        .or(file_instructions);
+
+    Ok((Some(project_id), instructions))
+}
+
+fn uuid_v4_simple() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let t = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{:x}-{:x}", t, std::process::id())
+}
+
+#[tauri::command]
+pub fn detect_project(
+    db: tauri::State<'_, Arc<Database>>,
+    cwd: String,
+) -> Result<Option<serde_json::Value>, String> {
+    let cwd_path = Path::new(&cwd);
+    let root = match find_project_root(cwd_path) {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let root_str = root.to_string_lossy().to_string();
+    let name = root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| root_str.clone());
+    let existing = db.get_project_by_path_internal(&root_str)?;
+    let file_instructions = read_instructions_from_root(&root);
+    Ok(Some(serde_json::json!({
+        "rootPath": root_str,
+        "name": existing.as_ref().map(|p| p.name.as_str()).unwrap_or(&name),
+        "projectId": existing.as_ref().map(|p| p.id.as_str()),
+        "hasInstructions": existing.as_ref()
+            .and_then(|p| p.instructions.as_ref())
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+            || file_instructions.is_some(),
+    })))
+}
+
+#[tauri::command]
+pub fn read_project_instructions(cwd: String) -> Result<Option<String>, String> {
+    let cwd_path = Path::new(&cwd);
+    let root = match find_project_root(cwd_path) {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    Ok(read_instructions_from_root(&root))
+}
+
 // ---- Tauri Commands ----
 
 #[tauri::command]
@@ -466,6 +594,10 @@ pub fn spawn_agent(
     let model_value = model.clone();
     let thinking_value = thinking_level.clone();
 
+    // Detect project from cwd and read instruction files
+    let effective_cwd = cwd.as_deref().unwrap_or(".");
+    let (project_id, project_instructions) = resolve_project(&db, effective_cwd)?;
+
     // Persist the agent/session on the backend as the source of truth for FK-safe
     // message logging, even if the frontend-side write was skipped or failed.
     db.upsert_agent_internal(&AgentRow {
@@ -474,6 +606,7 @@ pub fn spawn_agent(
             .clone()
             .or_else(|| shadow_title.clone())
             .unwrap_or_else(|| id.clone()),
+        project_id: project_id.clone(),
         shadow_name: shadow_name.clone(),
         shadow_title: shadow_title.clone(),
         shadow_grade: shadow_grade.clone(),
@@ -523,13 +656,14 @@ pub fn spawn_agent(
     let cmd = serde_json::json!({
         "type": "create_session",
         "agentId": id,
-        "cwd": cwd.as_deref().unwrap_or("."),
+        "cwd": effective_cwd,
         "provider": provider.as_deref().unwrap_or("anthropic"),
         "model": model.as_deref().unwrap_or("claude-sonnet-4-5"),
         "thinkingLevel": thinking_level.as_deref().unwrap_or("medium"),
         "shadow": shadow,
         "customPrompt": read_agent_prompt_file(&id)?
             .filter(|prompt| !prompt.trim().is_empty()),
+        "projectInstructions": project_instructions,
     });
 
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
@@ -700,6 +834,7 @@ pub fn new_agent_session(
     db.ensure_agent_exists_internal(&AgentRow {
         id: agent_id.clone(),
         name: agent_id.clone(),
+        project_id: None,
         shadow_name: None,
         shadow_title: None,
         shadow_grade: None,
