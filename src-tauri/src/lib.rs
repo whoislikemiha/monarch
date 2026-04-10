@@ -28,10 +28,11 @@ const SIDECAR_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(1500);
 /// `run()`; this Builder exists purely so `cargo test` can emit
 /// `src/lib/bindings.ts` with typed wrappers for Phase 2 to import.
 ///
-/// `agent::spawn_agent` is intentionally omitted: specta's `SpectaFn` trait
-/// caps arg count at 10, and `spawn_agent` currently takes 13 (the three
-/// state extractors + 10 value params). Phase 2 should refactor the signature
-/// to collapse the shadow/model fields into structs and re-add it here.
+/// MON-35: `agent::spawn_agent` used to be omitted because specta's
+/// `SpectaFn` trait caps arg count at 10 and the command took 13 (three
+/// state extractors + ten value params). The ten value params now collapse
+/// into `agent::SpawnAgentRequest`, so the command fits under the cap and
+/// is registered below.
 pub fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         // Force LiveAgentState to be emitted as a named type export so Phase
@@ -40,7 +41,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         .typ::<agent_state::LiveAgentState>()
         .commands(collect_commands![
         // Agent lifecycle (sidecar-based)
-        // NOTE: agent::spawn_agent omitted — see doc comment above.
+        agent::spawn_agent,
         agent::send_command,
         agent::kill_agent,
         agent::get_agent_state,
@@ -158,9 +159,9 @@ pub fn run() {
     let ws_broadcast = agent_mgr.ws_broadcast.clone();
 
     // Note: specta_builder() is used purely for type export (cargo test).
-    // Runtime invocation goes through tauri::generate_handler! below, which
-    // can register spawn_agent (13 params) — specta's SpectaFn trait caps at
-    // 10 and spawn_agent doesn't fit. Phase 2 collapses that signature.
+    // Runtime invocation goes through tauri::generate_handler! below.
+    // MON-35 collapsed spawn_agent's ten value params into SpawnAgentRequest,
+    // so specta and the runtime handler now register the same command shape.
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())

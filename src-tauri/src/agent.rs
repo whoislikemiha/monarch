@@ -1379,25 +1379,56 @@ pub fn read_project_instructions(cwd: String) -> Result<Option<String>, MonarchE
 
 // ---- Tauri Commands ----
 
+/// Shadow identity block carried inside `SpawnAgentRequest`. Mirrors the
+/// frontend's nested `config.shadow` object (name/title/grade), which the
+/// backend then maps into the sidecar-facing `ShadowConfig` by injecting the
+/// synthesized agent id at command-build time.
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ShadowSpec {
+    pub shadow_name: Option<String>,
+    pub shadow_title: Option<String>,
+    pub shadow_grade: Option<String>,
+}
+
+/// Request payload for the `spawn_agent` Tauri command. Collapsing the ten
+/// per-field params into a struct keeps the command under specta's 10-arg
+/// `SpectaFn` cap so it can participate in typed binding generation — see
+/// `lib.rs::specta_builder` for the registration site.
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnAgentRequest {
+    pub id: String,
+    pub session_id: String,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub thinking_level: Option<String>,
+    pub cwd: Option<String>,
+    pub shadow: Option<ShadowSpec>,
+    pub context_window: Option<i32>,
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn spawn_agent(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
-    id: String,
-    session_id: String,
-    provider: Option<String>,
-    model: Option<String>,
-    thinking_level: Option<String>,
-    cwd: Option<String>,
-    shadow_name: Option<String>,
-    shadow_title: Option<String>,
-    shadow_grade: Option<String>,
-    context_window: Option<i32>,
+    req: SpawnAgentRequest,
 ) -> Result<(), MonarchError> {
     // Ensure sidecar is running
     state.ensure_sidecar(&app)?;
+
+    let SpawnAgentRequest {
+        id,
+        session_id,
+        provider,
+        model,
+        thinking_level,
+        cwd,
+        shadow: shadow_spec,
+        context_window,
+    } = req;
 
     let now = chrono_now();
     let provider_value = provider.clone();
@@ -1407,6 +1438,10 @@ pub fn spawn_agent(
     // Detect project from cwd and read instruction files
     let effective_cwd = cwd.as_deref().unwrap_or(".");
     let (project_id, project_instructions) = resolve_project(&db, effective_cwd)?;
+
+    let shadow_name = shadow_spec.as_ref().and_then(|s| s.shadow_name.clone());
+    let shadow_title = shadow_spec.as_ref().and_then(|s| s.shadow_title.clone());
+    let shadow_grade = shadow_spec.as_ref().and_then(|s| s.shadow_grade.clone());
 
     // Persist the agent/session on the backend as the source of truth for FK-safe
     // message logging, even if the frontend-side write was skipped or failed.
@@ -1463,16 +1498,12 @@ pub fn spawn_agent(
     }
 
     // Build create_session command
-    let shadow = if shadow_name.is_some() || shadow_title.is_some() || shadow_grade.is_some() {
-        Some(ShadowConfig {
-            name: shadow_name.clone().unwrap_or_else(|| "Shadow".to_string()),
-            title: shadow_title.clone().unwrap_or_else(|| "Shadow Soldier".to_string()),
-            grade: shadow_grade.clone().unwrap_or_else(|| "Knight".to_string()),
-            id: id.clone(),
-        })
-    } else {
-        None
-    };
+    let shadow = shadow_spec.as_ref().map(|_| ShadowConfig {
+        name: shadow_name.clone().unwrap_or_else(|| "Shadow".to_string()),
+        title: shadow_title.clone().unwrap_or_else(|| "Shadow Soldier".to_string()),
+        grade: shadow_grade.clone().unwrap_or_else(|| "Knight".to_string()),
+        id: id.clone(),
+    });
 
     let cmd = SidecarCommand::CreateSession {
         agent_id: id.clone(),
@@ -1785,22 +1816,40 @@ pub fn respond_extension_ui(
 pub fn ws_spawn_agent(
     mgr: &AgentManager,
     db: &Arc<Database>,
-    id: String,
-    session_id: String,
-    provider: Option<String>,
-    model: Option<String>,
-    thinking_level: Option<String>,
-    cwd: Option<String>,
-    shadow_name: Option<String>,
-    shadow_title: Option<String>,
-    shadow_grade: Option<String>,
+    req: SpawnAgentRequest,
 ) -> Result<(), MonarchError> {
     let app = mgr.get_app_handle()?;
     mgr.ensure_sidecar(&app)?;
 
+    let SpawnAgentRequest {
+        id,
+        session_id,
+        provider,
+        model,
+        thinking_level,
+        cwd,
+        shadow: shadow_spec,
+        context_window,
+    } = req;
+
     let now = chrono_now();
     let effective_cwd = cwd.as_deref().unwrap_or(".");
     let (project_id, project_instructions) = resolve_project(db, effective_cwd)?;
+
+    let shadow_name = shadow_spec.as_ref().and_then(|s| s.shadow_name.clone());
+    let shadow_title = shadow_spec.as_ref().and_then(|s| s.shadow_title.clone());
+    let shadow_grade = shadow_spec.as_ref().and_then(|s| s.shadow_grade.clone());
+
+    // MON-35: reuse the persisted context window on restore paths, matching
+    // `spawn_agent`. Previously the WS path silently dropped the caller's
+    // value; collapsing to `SpawnAgentRequest` fixes that along the way.
+    let effective_context_window = match context_window {
+        Some(cw) => Some(cw),
+        None => db
+            .get_agent_context_window_internal(&id)
+            .ok()
+            .flatten(),
+    };
 
     db.upsert_agent_internal(&AgentRow {
         id: id.clone(),
@@ -1814,7 +1863,7 @@ pub fn ws_spawn_agent(
         thinking_level: thinking_level.clone(),
         cwd: cwd.clone(),
         custom_prompt: None,
-        context_window: None,
+        context_window: effective_context_window,
         created_at: now.clone(),
         updated_at: now.clone(),
     })?;
@@ -1840,16 +1889,12 @@ pub fn ws_spawn_agent(
         map.insert(id.clone(), session_id.clone());
     }
 
-    let shadow = if shadow_name.is_some() || shadow_title.is_some() || shadow_grade.is_some() {
-        Some(ShadowConfig {
-            name: shadow_name.clone().unwrap_or_else(|| "Shadow".to_string()),
-            title: shadow_title.clone().unwrap_or_else(|| "Shadow Soldier".to_string()),
-            grade: shadow_grade.clone().unwrap_or_else(|| "Knight".to_string()),
-            id: id.clone(),
-        })
-    } else {
-        None
-    };
+    let shadow = shadow_spec.as_ref().map(|_| ShadowConfig {
+        name: shadow_name.clone().unwrap_or_else(|| "Shadow".to_string()),
+        title: shadow_title.clone().unwrap_or_else(|| "Shadow Soldier".to_string()),
+        grade: shadow_grade.clone().unwrap_or_else(|| "Knight".to_string()),
+        id: id.clone(),
+    });
 
     let cmd = SidecarCommand::CreateSession {
         agent_id: id.clone(),
@@ -1860,7 +1905,7 @@ pub fn ws_spawn_agent(
         shadow,
         custom_prompt: read_agent_prompt_file(&id)?.filter(|p| !p.trim().is_empty()),
         project_instructions,
-        context_window: None,
+        context_window: effective_context_window,
     };
 
     mgr.send_to_sidecar(&serde_json::to_string(&cmd)?)?;
