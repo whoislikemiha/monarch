@@ -80,7 +80,11 @@ function normalizeStoredAssistantContent(content: string): Array<Record<string, 
 	return [{ type: "text", text: JSON.stringify(parsed) }];
 }
 
-function buildDynamicModel(provider: string, modelId: string): Model<Api> | undefined {
+function buildDynamicModel(
+	provider: string,
+	modelId: string,
+	contextWindowOverride?: number | null,
+): Model<Api> | undefined {
 	if (provider === "openrouter") {
 		return {
 			id: modelId,
@@ -102,6 +106,10 @@ function buildDynamicModel(provider: string, modelId: string): Model<Api> | unde
 	}
 
 	if (provider === "lmstudio") {
+		const contextWindow =
+			contextWindowOverride != null && contextWindowOverride > 0
+				? contextWindowOverride
+				: LMSTUDIO_DEFAULT_CONTEXT_WINDOW;
 		return {
 			id: modelId,
 			name: modelId,
@@ -116,7 +124,7 @@ function buildDynamicModel(provider: string, modelId: string): Model<Api> | unde
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
-			contextWindow: LMSTUDIO_DEFAULT_CONTEXT_WINDOW,
+			contextWindow,
 			maxTokens: 4096,
 		};
 	}
@@ -149,8 +157,17 @@ function resolveModel(
 	session: AgentSession,
 	provider: string,
 	modelId: string,
+	contextWindowOverride?: number | null,
 ): Model<Api> | undefined {
-	return session.modelRegistry.find(provider, modelId) ?? buildDynamicModel(provider, modelId);
+	// For lmstudio, always build a dynamic model so a user-supplied context window
+	// takes effect even if a registry entry exists.
+	if (provider === "lmstudio") {
+		return buildDynamicModel(provider, modelId, contextWindowOverride);
+	}
+	return (
+		session.modelRegistry.find(provider, modelId) ??
+		buildDynamicModel(provider, modelId, contextWindowOverride)
+	);
 }
 
 export class RuntimeManager {
@@ -203,7 +220,7 @@ export class RuntimeManager {
 		}
 
 		// Resolve model from registry (supports known + custom models)
-		const model = resolveModel(session, cmd.provider, cmd.model);
+		const model = resolveModel(session, cmd.provider, cmd.model, cmd.contextWindow);
 		if (model) {
 			try {
 				await session.setModel(model);
@@ -326,6 +343,7 @@ export class RuntimeManager {
 		agentId: string,
 		provider: string,
 		modelId: string,
+		contextWindow?: number | null,
 	): Promise<void> {
 		const managed = this.getSession(agentId);
 		if (!managed) return;
@@ -334,7 +352,7 @@ export class RuntimeManager {
 			ensureLmStudioProviderRegistered(managed.session);
 		}
 
-		const model = resolveModel(managed.session, provider, modelId);
+		const model = resolveModel(managed.session, provider, modelId, contextWindow);
 		if (!model) {
 			this.emit({
 				type: "error",

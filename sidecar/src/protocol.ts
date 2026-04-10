@@ -22,6 +22,8 @@ export interface CreateSessionCommand {
   shadow?: ShadowConfig;
   customPrompt?: string | null;
   projectInstructions?: string | null;
+  /** User-supplied context window (tokens). Currently only honoured for lmstudio. */
+  contextWindow?: number | null;
 }
 
 export interface DestroySessionCommand {
@@ -45,6 +47,8 @@ export interface SetModelCommand {
   agentId: string;
   provider: string;
   modelId: string;
+  /** User-supplied context window (tokens). Currently only honoured for lmstudio. */
+  contextWindow?: number | null;
 }
 
 export interface SetThinkingLevelCommand {
