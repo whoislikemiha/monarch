@@ -198,7 +198,7 @@ because they keep tightening the type system around the same call sites.
   - _Why first in this wave:_ subsequent refactors (MON-32, MON-35, MON-33)
     all touch command signatures — converting the error type once up-front
     avoids three passes over the same lines.
-- [ ] **MON-32** — Typed `SidecarEvent` and `SidecarCommand` enums  · High · `refactor`
+- [ ] **MON-32** — Typed `SidecarEvent` and `SidecarCommand` enums  · High · `refactor` — **PR #25 merged to phase-1 (2026-04-11)**
   - Done when: `apply_event` dispatches on a `#[serde(tag = "type")]` enum
     instead of `get("type").as_str()`; outbound command JSON sites are
     replaced with a typed `SidecarCommand` serialized once. No more
@@ -277,31 +277,43 @@ about the shape left behind. -->
   the tracker rules. Base all Wave 2 branches on the Phase 1 branch,
   not on `master`.
 
-- **Next task: MON-32 — Typed `SidecarEvent` and `SidecarCommand`
-  enums.** Second in Wave 2. MON-31 is merged (PR #24, commit
-  `9dacfca` on the phase-1 base), so the `MonarchError` surface is in
-  place and MON-32 threads its returns through it. Full ticket:
-  https://linear.app/monarch-commander/issue/MON-32
+- **Next task: MON-35 — Re-enable specta coverage for `spawn_agent`.**
+  Third in Wave 2. MON-32 is merged (PR #25, commit `c3f35ce` on the
+  phase-1 base), so the typed `SidecarCommand` surface is in place
+  and `SidecarCommand::CreateSession` is the obvious landing site
+  for the collapsed shape. Full ticket:
+  https://linear.app/monarch-commander/issue/MON-35
 
-  _Linear state note:_ the merge auto-flipped MON-31 to **Done** even
-  though phase-1 is not `master`. Per the durable rule, revert MON-31
-  back to **In Review** manually — the actual ship happens when the
-  phase-1 train lands on master.
+  _Linear state note:_ the merge auto-flipped MON-32 to **Done**
+  even though phase-1 is not `master`. Per the durable rule, revert
+  MON-32 back to **In Review** manually — the actual ship happens
+  when the phase-1 train lands on master.
 
-  _Scope reminder from the ticket:_ replace the stringly
-  `get("type").as_str()` dispatch in `apply_event` with a
-  `#[serde(tag = "type", rename_all = "snake_case")]` enum
-  (`SidecarEvent`) and replace the hand-built `serde_json::json!({
-  "type": "..", .. })` command-building sites with a typed
-  `SidecarCommand` enum serialized once. Kill the `unwrap_or("")` /
-  `unwrap_or(0)` defaulting on event fields — missing fields should
-  surface as parse errors, not silent zeroes.
+  _Scope reminder from the ticket:_ collapse `spawn_agent`'s shadow
+  + model + thinking_level + context_window fields into a
+  `SpawnAgentRequest` struct so the Tauri command fits under the
+  10-arg specta cap. Re-add it to the `collect_commands!` macro in
+  `lib.rs::specta_builder()` (currently omitted — see the doc
+  comment at `lib.rs:31-34`). Delete the
+  `type Value = unknown; type Vec<T> = T[]` post-processing hack
+  in `lib.rs::export_bindings` at line 116.
 
-- **Wave 2 starting state for MON-32.** Branch from
+  _Heads-up on the hack-deletion bullet:_ see the "MON-32 residue
+  MON-35 will encounter" bullets below. The `Value = unknown` hack
+  is **not** a pure spawn_agent problem — it workarounds a specta
+  rc.24 bug that bites every `serde_json::Value` reference in the
+  command surface, and `LiveAgentState` + MON-32's new typed
+  protocol added more of those, not fewer. Surface the issue
+  early, and negotiate with the reviewer whether to split the hack
+  deletion into a follow-up sub-issue or descope that acceptance
+  bullet from MON-35.
+
+- **Wave 2 starting state for MON-35.** Branch from
   `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` at
-  `9dacfca` (MON-31 merge commit). `cargo check` / `cargo clippy`
-  clean modulo the two pre-existing `too_many_arguments` warnings on
-  `spawn_agent` / `ws_spawn_agent`. `svelte-check` clean. No Rust
+  `c3f35ce` (MON-32 merge commit). `cargo check` / `cargo clippy`
+  clean modulo the two pre-existing `too_many_arguments` warnings
+  on `spawn_agent` (13 args) and `ws_spawn_agent` (11 args) —
+  MON-35 fixes both. `svelte-check` clean (269 files). No Rust
   test harness — manual verification only.
 
 - **Wave 2 residue MON-32 will encounter (from MON-31).**
@@ -338,6 +350,110 @@ about the shape left behind. -->
     MON-31 (optional consistency win). `run_persist_consumer` still
     stringifies at its log/desync boundary — that's intentional and
     MON-32 should not touch it.
+
+- **MON-32 — PR #25 (2026-04-11).** Typed Rust ↔ sidecar JSONL
+  protocol shipped in three commits on the PR branch (`c8a7994`
+  outbound → `d8af6be` inbound + `apply_event` move → `52d901d`
+  typed `send_command` passthrough). New module
+  `src-tauri/src/sidecar_protocol.rs` (~680 lines) mirrors
+  `sidecar/src/protocol.ts`: `SidecarCommand` (Serialize +
+  Deserialize, 11 variants), `SidecarEvent` / `InnerEvent`
+  (Deserialize with custom impls routing unknown tags through
+  explicit `Unknown { raw }` variants while propagating errors on
+  malformed known-tag payloads), plus `Message` / `ShadowConfig` /
+  `LoadSessionMessage` helpers. A free `apply_event(&mut
+  LiveAgentState, &InnerEvent)` function replaces the inherent
+  method; `LiveAgentState` loses `streaming_from_json` /
+  `parse_usage` (derived `Deserialize` + `streaming_from` in the
+  new module) and `Usage` / `Cost` pick up `#[serde(default)]` at
+  struct level to preserve per-field defaulting. Every outbound
+  sidecar-command site in `agent.rs` migrated to typed
+  `SidecarCommand`; `AgentState.create_cmd_json: String` →
+  `create_cmd: SidecarCommand`; `handle_sidecar_event` parses each
+  line twice (`Value` for byte-fidelity `LogEvent.data` +
+  `from_value::<SidecarEvent>` for dispatch); `build_persist_commands`
+  takes `&InnerEvent` + raw `Option<&Value>`; `send_command` /
+  `ws_send_command` validate payload shape via
+  `from_value::<SidecarCommand>` after injecting `agentId` into
+  the raw `Value`. Full impl notes: `thoughts/impl/MON-32.md`.
+  - **Deviations from plan:** `InnerEvent::Unknown` handling moved
+    from `apply_event` to `handle_sidecar_event` (cleaner match
+    exhaustiveness in `build_persist_commands`, raw-payload
+    logging at the reader boundary where `agent_id` is in scope).
+    `send_command` uses `Value`-inject-then-`from_value` instead
+    of a `SidecarCommand::set_agent_id` helper + per-variant
+    `#[serde(default)]` (one-shot validation, zero type
+    pollution). `Usage` / `Cost` struct-level `#[serde(default)]`
+    preserves pre-MON-32 per-field `unwrap_or(0)` behavior
+    without tightening the schema against Pi SDK events that
+    omit fields. `ToolExecutionEnd.tool_name` is
+    `Option<String>` with a `"unknown"` fallback in
+    `build_persist_commands` to preserve the pre-MON-32 stored
+    `toolResult` row shape byte-for-byte. `CompactionStart.reason`
+    / `CompactionEnd.aborted` stay `Option<T>` with display-time
+    fallbacks in `apply_event` — the Option is the schema
+    commitment, the fallback is only for status-item text.
+  - **Starting point for MON-35:** the typed command surface is
+    now the canonical wire contract, and
+    `SidecarCommand::CreateSession` is the obvious landing site
+    for `SpawnAgentRequest`'s inner representation — the typed
+    shape already collapses shadow + model + thinking_level +
+    context_window into one struct. MON-35 can build a
+    `SpawnAgentRequest { id, session_id, create_command:
+    SidecarCommand::CreateSession {...}}` or just reuse
+    `CreateSession` directly on the Tauri command and plumb
+    `id` + `session_id` as sibling fields. Either shape gets
+    `spawn_agent` under the 10-arg specta cap.
+
+- **MON-32 residue MON-35 will encounter.**
+  - The two `too_many_arguments` clippy warnings on `spawn_agent`
+    (13 args) and `ws_spawn_agent` (11 args) are the only
+    non-clean warnings on the branch. MON-32 intentionally did
+    not touch them; they are MON-35's core deliverable.
+  - `spawn_agent` is currently omitted from the specta
+    `collect_commands!` macro in `lib.rs::specta_builder()` — see
+    the doc comment at `lib.rs:31-34` and `lib.rs:160-163` for
+    the runtime `tauri::generate_handler!` (which *does* include
+    it because specta is only used for type export). MON-35 re-
+    adds it to `collect_commands!` once the arg count is ≤ 10.
+  - The `type Value = unknown; type Vec<T> = T[]` post-processing
+    hack in `lib.rs::export_bindings` (line 116) is **not a pure
+    spawn_agent problem** — it workarounds a specta rc.24 bug in
+    TS emission of `serde_json::Value` references. MON-32
+    actually adds *more* `Value` references (via
+    `SidecarCommand::ExtensionUiResponse.value`,
+    `ToolExecutionStart.args`, `ToolExecutionEnd.result`,
+    `InnerEvent::Unknown.raw`), and `LiveAgentState` already
+    exposes `ContentBlocks` / `ToolArgs` / `ToolResult` as
+    `serde_json::Value`. Deleting the hack per MON-35's
+    acceptance bullet may require either a specta upgrade or
+    wrapping those fields in specta-aware newtypes — this is
+    likely *not* inside MON-35's spawn_agent refactor scope.
+    Flag early and negotiate with the reviewer: either split
+    the hack deletion into a follow-up sub-issue, or descope
+    that bullet from MON-35.
+  - The `#[tauri::command]` + `ws_spawn_agent` duplication is
+    MON-33's territory, not MON-35's. MON-35 should leave the
+    twin arrangement in place — collapse the arg list on both
+    sides in parallel, but do not merge the two functions into
+    one shared service layer.
+  - `SidecarCommand::CreateSession` has required `cwd`,
+    `provider`, `model`, `thinking_level` fields (no Options).
+    The Tauri `spawn_agent` currently passes `Option<String>` for
+    each and defaults to literals (`"anthropic"`,
+    `"claude-sonnet-4-5"`, `"medium"`). If `SpawnAgentRequest`
+    exposes these as `Option<String>` to preserve the call-site
+    shape, the struct-to-`CreateSession` conversion needs to
+    apply the same defaults (the current implementation at
+    `agent.rs::spawn_agent` does this inline — MON-35 should
+    lift it into a `From<SpawnAgentRequest>` or helper).
+  - The `send_command` / `ws_send_command` typed passthrough
+    uses a `Value`-inject + `from_value::<SidecarCommand>` round
+    trip. If MON-35 adds any new frontend call shapes (unlikely
+    — it's a pure signature refactor) they'll go through the
+    same validation. Do not add `#[serde(default)]` to
+    `SidecarCommand` agent_id fields — the `Value`-inject
+    handles it cleanly and pollutes nothing.
 
 - **Wave 1 residue MON-31 encountered.** (Historical — MON-31 shipped
   2026-04-11, PR #24. Keeping the list for context on what MON-32 and
