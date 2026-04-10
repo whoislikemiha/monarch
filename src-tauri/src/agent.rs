@@ -1516,15 +1516,19 @@ pub fn send_command(
     id: String,
     command_json: String,
 ) -> Result<(), MonarchError> {
-    let mut cmd: serde_json::Value =
-        serde_json::from_str(&command_json)?;
-
-    if let Some(obj) = cmd.as_object_mut() {
+    // MON-32: narrow typed passthrough. Parse the frontend's payload as a
+    // Value, inject `agentId`, then re-deserialize into SidecarCommand so
+    // the shape is validated against the canonical wire contract. Any
+    // payload that doesn't fit a known variant hits serde_json::Error →
+    // MonarchError::Serde and propagates to the frontend — no silent
+    // escape hatch. The one-shot-to-Value pre-pass lets the frontend omit
+    // agentId without bloating every variant with #[serde(default)].
+    let mut value: serde_json::Value = serde_json::from_str(&command_json)?;
+    if let Some(obj) = value.as_object_mut() {
         obj.insert("agentId".to_string(), serde_json::Value::String(id));
     }
-
-    let json = serde_json::to_string(&cmd)?;
-    state.send_with_recovery(&app, &db, &json)
+    let cmd: SidecarCommand = serde_json::from_value(value)?;
+    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
 }
 
 #[tauri::command]
@@ -1882,12 +1886,13 @@ pub fn ws_send_command(
     command_json: String,
 ) -> Result<(), MonarchError> {
     let app = mgr.get_app_handle()?;
-    let mut cmd: serde_json::Value = serde_json::from_str(&command_json)?;
-    if let Some(obj) = cmd.as_object_mut() {
+    // MON-32: narrow typed passthrough, see send_command for rationale.
+    let mut value: serde_json::Value = serde_json::from_str(&command_json)?;
+    if let Some(obj) = value.as_object_mut() {
         obj.insert("agentId".to_string(), serde_json::Value::String(id));
     }
-    let json = serde_json::to_string(&cmd)?;
-    mgr.send_with_recovery(&app, db, &json)
+    let cmd: SidecarCommand = serde_json::from_value(value)?;
+    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
 }
 
 pub fn ws_kill_agent(mgr: &AgentManager, id: String) -> Result<(), MonarchError> {

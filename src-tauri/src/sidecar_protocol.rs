@@ -26,7 +26,7 @@ use crate::agent_state::{
 // ========================================================================
 
 /// Mirror of `ShadowConfig` in `sidecar/src/protocol.ts`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShadowConfig {
     pub name: String,
@@ -39,10 +39,11 @@ pub struct ShadowConfig {
 /// in `LoadSessionCommand.messages[]` — role is left as a free-form string
 /// because the DB already stores arbitrary role strings and we don't want to
 /// gate sidecar replay on a validation layer that isn't in scope for MON-32.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoadSessionMessage {
     pub role: String,
     pub content: String,
+    #[serde(default)]
     pub model: Option<String>,
 }
 
@@ -51,8 +52,13 @@ pub struct LoadSessionMessage {
 /// `serde_json::to_string` at the send site; the `?` on the resulting
 /// `serde_json::Error` hits `MonarchError::Serde` via the existing
 /// `From<serde_json::Error>` impl.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize)]
+///
+/// `Deserialize` is also derived to support the `send_command` /
+/// `ws_send_command` narrow typed passthrough: the frontend posts a
+/// JSON payload, Rust injects `agentId` into the raw `Value`, then
+/// `from_value::<SidecarCommand>` validates the shape against the
+/// canonical wire contract before reserializing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum SidecarCommand {
     CreateSession {
@@ -106,30 +112,6 @@ pub enum SidecarCommand {
         prompt: Option<String>,
         project_instructions: Option<String>,
     },
-}
-
-impl SidecarCommand {
-    /// Replace the `agentId` field in any variant. Used by the
-    /// `send_command` passthrough so the frontend can omit the id and the
-    /// Rust side can inject it from the Tauri command parameter.
-    #[allow(dead_code)]
-    pub fn set_agent_id(&mut self, id: String) {
-        match self {
-            Self::CreateSession { agent_id, .. }
-            | Self::DestroySession { agent_id }
-            | Self::Prompt { agent_id, .. }
-            | Self::Abort { agent_id }
-            | Self::SetModel { agent_id, .. }
-            | Self::SetThinkingLevel { agent_id, .. }
-            | Self::NewSession { agent_id }
-            | Self::Compact { agent_id }
-            | Self::LoadSession { agent_id, .. }
-            | Self::ExtensionUiResponse { agent_id, .. }
-            | Self::SetCustomPrompt { agent_id, .. } => {
-                *agent_id = id;
-            }
-        }
-    }
 }
 
 // ========================================================================
