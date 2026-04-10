@@ -191,7 +191,7 @@ and have no cross-dependencies beyond Wave 0.
 Strictly sequential: each step depends on the previous one having landed,
 because they keep tightening the type system around the same call sites.
 
-- [ ] **MON-31** — Introduce `MonarchError` domain error type  · High · `refactor`
+- [ ] **MON-31** — Introduce `MonarchError` domain error type  · High · `refactor` — **PR #24 open**
   - Done when: Every Tauri command returns `Result<T, MonarchError>` (or an
     intentional alias); `thiserror` chains replace the `.to_string()` churn;
     poisoned-lock paths surface distinct variants.
@@ -230,6 +230,44 @@ because they keep tightening the type system around the same call sites.
 <!-- Wave 2 is the longest and most interdependent — leave a checkpoint note
 after each issue merges, including any assumptions the next step is making
 about the shape left behind. -->
+
+- **MON-31 — PR #24 (2026-04-11).** Full Tauri command surface now
+  returns `Result<T, MonarchError>` — every `#[tauri::command]` +
+  `ws_*` twin across `agent.rs`, `db.rs`, `persistence.rs`,
+  `models.rs`, `toolbox/placeholder.rs` + internal helpers
+  (`write_command`, `ensure_sidecar`, `Database::*_internal`,
+  `resolve_project`, `lib::export_bindings`). `.map_err(|e|
+  e.to_string())?` collapses to `?` via `From` impls; lock sites tag
+  via `lock_poisoned(label)`. The error module is at
+  `src-tauri/src/error.rs` and surfaces a flat DTO
+  `{ kind, message, details }` with sidecar sub-kinds flattened to
+  the top-level `kind` (`sidecarProcessDown | sidecarStdinWrite |
+  sidecarReplyError | sidecarParse`). Bindings regenerated — every
+  `typedError<T, E>` wrapper now has `ErrorDto` in the `E` position.
+  Frontend acceptance site: `App.svelte` spawn handler branches on
+  `err.kind` via a new `formatSpawnError` helper; AgentView's
+  try/catch sites intentionally left on the opaque path for
+  incremental consumer adoption.
+  - **Deviations from plan:** no `thiserror` dep (manual `Display` +
+    `Error` impls, ~30 lines, keeps DTO projection colocated);
+    `Result<T>` alias lives in `error.rs` but is not re-exported
+    crate-wide — call sites use the fully-qualified
+    `Result<T, MonarchError>` form to avoid shadowing in files that
+    collect `rusqlite::Result<Vec<_>>`; `PersistCommand::apply` **was**
+    migrated (optional consistency win per the Wave 2 handoff), while
+    `run_persist_consumer` stringifies only at the log/desync
+    boundary; `ws::make_response` adds a new top-level `errorData`
+    (DTO) field alongside the existing `error` (string) to preserve
+    WS-client backwards compat rather than nesting under `error.data`.
+  - **Starting point for MON-32:** command surface is uniform now —
+    `MonarchError::Serde` (from `serde_json::Error`) is the natural
+    landing for `sidecar_parse`-style errors once the typed
+    `SidecarEvent` lands. The two pre-existing `too_many_arguments`
+    clippy warnings on `spawn_agent` / `ws_spawn_agent` still stand,
+    waiting on MON-35. `resolve_sidecar_path`'s
+    `MonarchError::not_found("sidecar/dist/index.js")` is a good
+    template for the MON-32 branch that needs to distinguish config
+    issues from runtime failures.
 
 - **Handoff from Wave 1 → Wave 2 starting point.** Wave 1 is merged
   into `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` (all
