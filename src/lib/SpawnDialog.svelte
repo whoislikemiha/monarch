@@ -18,13 +18,36 @@
   let modelInput = $state("");
   let thinkingLevel = $state("off");
   let cwd = $state("/home/miha");
-  // LM Studio users must tell us what context length they loaded their model
-  // with — we can't detect it via the OpenAI-compatible API. Stored in tokens.
+  // LM Studio context length for the selected model. Auto-detected from the
+  // native `/api/v0/models` endpoint when available, overridable by the user
+  // via the slider or presets below. Stored in tokens.
   let lmStudioContextWindow: number = $state(8192);
+  // Set to true the first time the user touches the slider/presets, so that
+  // later model selections don't clobber an explicit override. Reset whenever
+  // the user leaves the LM Studio provider and comes back.
+  let lmStudioCtxUserOverride = $state(false);
+  // True when the active value was pre-filled from `max_context_length` for
+  // a model that wasn't loaded in LM Studio — drives the "not loaded" hint.
+  let lmStudioCtxFromMax = $state(false);
+  // True when the active value came from the discovery call (live or max),
+  // false when it's still the hardcoded default / manual.
+  let lmStudioCtxAutoDetected = $state(false);
   const LMSTUDIO_CTX_MIN = 1024;
   const LMSTUDIO_CTX_MAX = 262144;
   const LMSTUDIO_CTX_STEP = 1024;
   const LMSTUDIO_CTX_PRESETS = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
+
+  function clampCtxToSlider(n: number): number {
+    if (!Number.isFinite(n) || n <= 0) return LMSTUDIO_CTX_MIN;
+    const snapped = Math.round(n / LMSTUDIO_CTX_STEP) * LMSTUDIO_CTX_STEP;
+    return Math.min(LMSTUDIO_CTX_MAX, Math.max(LMSTUDIO_CTX_MIN, snapped));
+  }
+
+  function noteCtxUserOverride() {
+    lmStudioCtxUserOverride = true;
+    lmStudioCtxFromMax = false;
+    lmStudioCtxAutoDetected = false;
+  }
 
   function formatCtxTokens(n: number): string {
     if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + "M";
@@ -65,6 +88,11 @@
     id: string;
     name: string;
     provider: string;
+    // LM Studio only — pre-detected via /api/v0/models. `contextWindowIsMax`
+    // is true when the value is the model's max (not loaded) rather than
+    // the live loaded context length.
+    contextWindow?: number;
+    contextWindowIsMax?: boolean;
   }
 
   interface ProviderAuthStatus {
@@ -243,8 +271,28 @@
     modelInput = fixedModelId || "";
     showDropdown = false;
     highlightedIndex = -1;
+    // Leaving (or re-entering) LM Studio drops any manual ctx override so
+    // the next model selection can auto-fill cleanly.
+    lmStudioCtxUserOverride = false;
+    lmStudioCtxFromMax = false;
+    lmStudioCtxAutoDetected = false;
     fetchModels(provider);
     fetchAuthStatus(provider);
+  });
+
+  // Pre-fill the LM Studio context slider from the discovered model entry
+  // whenever the typed / selected model id matches one we have sizing for.
+  // User overrides win — once they touch the slider, stop auto-filling.
+  $effect(() => {
+    if (selectedProvider !== "lmstudio") return;
+    if (lmStudioCtxUserOverride) return;
+    const id = modelInput.trim();
+    if (!id) return;
+    const match = allModels.find((m) => m.id === id);
+    if (!match || match.contextWindow == null) return;
+    lmStudioContextWindow = clampCtxToSlider(match.contextWindow);
+    lmStudioCtxFromMax = match.contextWindowIsMax === true;
+    lmStudioCtxAutoDetected = true;
   });
 
   function refreshModels() {
@@ -504,6 +552,7 @@
             value={lmStudioContextWindow}
             oninput={(e) => {
               lmStudioContextWindow = Number((e.currentTarget as HTMLInputElement).value);
+              noteCtxUserOverride();
             }}
           />
           <div class="lmstudio-ctx-presets">
@@ -512,14 +561,25 @@
                 type="button"
                 class="lmstudio-ctx-preset"
                 class:active={lmStudioContextWindow === preset}
-                onclick={() => (lmStudioContextWindow = preset)}
+                onclick={() => {
+                  lmStudioContextWindow = preset;
+                  noteCtxUserOverride();
+                }}
               >
                 {formatCtxTokens(preset)}
               </button>
             {/each}
           </div>
           <div class="field-hint">
-            Match the context length you loaded the model with in LM Studio — we can't auto-detect it.
+            {#if lmStudioCtxFromMax}
+              Model not loaded in LM Studio — using its max context. Load it there and refresh for the live value.
+            {:else if lmStudioCtxUserOverride}
+              Manual override — reselect the model to auto-fill again.
+            {:else if lmStudioCtxAutoDetected}
+              Auto-detected from LM Studio. Drag to override if needed.
+            {:else}
+              Match the context length you loaded the model with in LM Studio, or pick a model to auto-fill.
+            {/if}
           </div>
         </div>
       {/if}
