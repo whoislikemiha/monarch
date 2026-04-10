@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
-  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { invoke, listen, type UnlistenFn } from "$lib/api";
   import MessageList from "./MessageList.svelte";
   import ChatInput from "./ChatInput.svelte";
   import AgentControls from "./AgentControls.svelte";

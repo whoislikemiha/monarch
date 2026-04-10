@@ -21,6 +21,8 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 dirs = "6"
 rusqlite = { version = "0.33", features = ["bundled"] }
+tokio-tungstenite = "0.26"
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

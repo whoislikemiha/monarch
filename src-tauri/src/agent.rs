@@ -5,10 +5,18 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::broadcast;
 
 use crate::db::{AgentRow, Database, MessageRow, ProjectRow};
 use crate::persistence::read_agent_prompt_file;
 use std::path::{Path, PathBuf};
+
+/// A broadcast event sent to WebSocket clients
+#[derive(Debug, Clone, Serialize)]
+pub struct WsBroadcast {
+    pub event: String,
+    pub payload: String,
+}
 
 // ---- Agent state tracking ----
 
@@ -62,15 +70,37 @@ pub struct AgentManager {
     agents: Mutex<HashMap<String, AgentState>>,
     /// agentId → sessionId mapping, shared with the reader thread
     session_map: AgentSessionMap,
+    /// Broadcast channel for forwarding events to WebSocket clients
+    pub ws_broadcast: broadcast::Sender<WsBroadcast>,
+    /// Stored AppHandle for WS-initiated commands that need sidecar access
+    app_handle: Mutex<Option<AppHandle>>,
 }
 
 impl AgentManager {
     pub fn new() -> Self {
+        let (ws_broadcast, _) = broadcast::channel(256);
         Self {
             sidecar: Mutex::new(None),
             agents: Mutex::new(HashMap::new()),
             session_map: Arc::new(Mutex::new(HashMap::new())),
+            ws_broadcast,
+            app_handle: Mutex::new(None),
         }
+    }
+
+    /// Store the AppHandle after Tauri setup so WS commands can use it
+    pub fn set_app_handle(&self, handle: AppHandle) {
+        if let Ok(mut h) = self.app_handle.lock() {
+            *h = Some(handle);
+        }
+    }
+
+    fn get_app_handle(&self) -> Result<AppHandle, String> {
+        self.app_handle
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone()
+            .ok_or_else(|| "AppHandle not initialized".to_string())
     }
 
     fn ensure_sidecar(
@@ -121,12 +151,13 @@ impl AgentManager {
         let app_clone = app.clone();
         let db_clone = db.clone();
         let session_map_clone = self.session_map.clone();
+        let ws_tx = self.ws_broadcast.clone();
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines() {
                 match line {
                     Ok(line) if !line.is_empty() => {
-                        handle_sidecar_event(&app_clone, &db_clone, &session_map_clone, &line);
+                        handle_sidecar_event(&app_clone, &db_clone, &session_map_clone, &ws_tx, &line);
                     }
                     Ok(_) => {}
                     Err(_) => break,
@@ -257,11 +288,21 @@ fn get_session_id(session_map: &AgentSessionMap, agent_id: &str) -> Option<Strin
     session_map.lock().ok().and_then(|m| m.get(agent_id).cloned())
 }
 
+/// Emit an event to both Tauri webview and WebSocket clients
+fn emit_event(app: &AppHandle, ws_tx: &broadcast::Sender<WsBroadcast>, event_name: &str, payload: &str) {
+    let _ = app.emit(event_name, payload.to_string());
+    let _ = ws_tx.send(WsBroadcast {
+        event: event_name.to_string(),
+        payload: payload.to_string(),
+    });
+}
+
 /// Handle a single JSONL event from the sidecar
 fn handle_sidecar_event(
     app: &AppHandle,
     db: &Arc<Database>,
     session_map: &AgentSessionMap,
+    ws_tx: &broadcast::Sender<WsBroadcast>,
     line: &str,
 ) {
     let parsed: serde_json::Value = match serde_json::from_str(line) {
@@ -286,12 +327,12 @@ fn handle_sidecar_event(
                 "agentId": agent_id,
                 "contextWindow": context_window,
             });
-            let _ = app.emit(&event_name, ready_event.to_string());
+            emit_event(app, ws_tx, &event_name, &ready_event.to_string());
         }
 
         "session_destroyed" => {
             let exit_event = format!("agent-exit-{}", agent_id);
-            let _ = app.emit(&exit_event, serde_json::json!(null));
+            emit_event(app, ws_tx, &exit_event, &serde_json::json!(null).to_string());
         }
 
         "event" => {
@@ -306,25 +347,24 @@ fn handle_sidecar_event(
 
                 // Forward to frontend
                 let event_name = format!("agent-event-{}", agent_id);
-                let _ = app.emit(&event_name, inner_event.to_string());
+                emit_event(app, ws_tx, &event_name, &inner_event.to_string());
             }
         }
 
         "extension_ui_request" => {
             let event_name = format!("agent-event-{}", agent_id);
-            let _ = app.emit(&event_name, line);
+            emit_event(app, ws_tx, &event_name, line);
         }
 
         "error" => {
             let error_msg = parsed.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error");
             eprintln!("[monarch] Sidecar error for {}: {}", agent_id, error_msg);
-            // Forward as a notification event the frontend can display
             let event_name = format!("agent-event-{}", agent_id);
             let error_event = serde_json::json!({
                 "type": "sidecar_error",
                 "error": error_msg,
             });
-            let _ = app.emit(&event_name, error_event.to_string());
+            emit_event(app, ws_tx, &event_name, &error_event.to_string());
         }
 
         _ => {
@@ -574,7 +614,7 @@ pub fn read_project_instructions(cwd: String) -> Result<Option<String>, String> 
 #[tauri::command]
 pub fn spawn_agent(
     app: AppHandle,
-    state: tauri::State<'_, AgentManager>,
+    state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
     id: String,
     session_id: String,
@@ -703,7 +743,7 @@ pub fn spawn_agent(
 #[tauri::command]
 pub fn send_command(
     app: AppHandle,
-    state: tauri::State<'_, AgentManager>,
+    state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
     id: String,
     command_json: String,
@@ -723,7 +763,7 @@ pub fn send_command(
 #[tauri::command]
 pub fn broadcast_prompt(
     app: AppHandle,
-    state: tauri::State<'_, AgentManager>,
+    state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
     agent_ids: Vec<String>,
     message: String,
@@ -751,7 +791,7 @@ pub fn broadcast_prompt(
 
 #[tauri::command]
 pub fn kill_agent(
-    state: tauri::State<'_, AgentManager>,
+    state: tauri::State<'_, Arc<AgentManager>>,
     id: String,
     _graceful: Option<bool>,
 ) -> Result<(), String> {
@@ -778,7 +818,7 @@ pub fn kill_agent(
 #[tauri::command]
 pub fn load_session_context(
     app: AppHandle,
-    state: tauri::State<'_, AgentManager>,
+    state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
     agent_id: String,
     source_session_id: String,
@@ -818,7 +858,7 @@ pub fn load_session_context(
 #[tauri::command]
 pub fn new_agent_session(
     app: AppHandle,
-    state: tauri::State<'_, AgentManager>,
+    state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
     agent_id: String,
     new_session_id: String,
@@ -901,7 +941,7 @@ pub fn new_agent_session(
 #[tauri::command]
 pub fn switch_agent_session(
     app: AppHandle,
-    state: tauri::State<'_, AgentManager>,
+    state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
     agent_id: String,
     session_id: String,
@@ -945,7 +985,7 @@ pub fn switch_agent_session(
 #[tauri::command]
 pub fn respond_extension_ui(
     app: AppHandle,
-    state: tauri::State<'_, AgentManager>,
+    state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
     agent_id: String,
     request_id: String,
@@ -959,4 +999,293 @@ pub fn respond_extension_ui(
     });
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     state.send_with_recovery(&app, &db, &json)
+}
+
+// ---- WebSocket wrappers ----
+// These mirror the Tauri commands but take raw state instead of tauri::State extractors.
+
+pub fn ws_spawn_agent(
+    mgr: &AgentManager,
+    db: &Arc<Database>,
+    id: String,
+    session_id: String,
+    provider: Option<String>,
+    model: Option<String>,
+    thinking_level: Option<String>,
+    cwd: Option<String>,
+    shadow_name: Option<String>,
+    shadow_title: Option<String>,
+    shadow_grade: Option<String>,
+) -> Result<(), String> {
+    let app = mgr.get_app_handle()?;
+    mgr.ensure_sidecar(&app, db)?;
+
+    let now = chrono_now();
+    let effective_cwd = cwd.as_deref().unwrap_or(".");
+    let (project_id, project_instructions) = resolve_project(db, effective_cwd)?;
+
+    db.upsert_agent_internal(&AgentRow {
+        id: id.clone(),
+        name: shadow_name.clone().or_else(|| shadow_title.clone()).unwrap_or_else(|| id.clone()),
+        project_id: project_id.clone(),
+        shadow_name: shadow_name.clone(),
+        shadow_title: shadow_title.clone(),
+        shadow_grade: shadow_grade.clone(),
+        provider: provider.clone(),
+        model: model.clone(),
+        thinking_level: thinking_level.clone(),
+        cwd: cwd.clone(),
+        custom_prompt: None,
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    })?;
+
+    if !db.session_exists_internal(&session_id)? {
+        db.create_session_internal(&crate::db::SessionRow {
+            id: session_id.clone(),
+            agent_id: id.clone(),
+            pi_session_file: None,
+            model: model.clone(),
+            provider: provider.clone(),
+            started_at: now,
+            ended_at: None,
+            message_count: 0,
+            total_tokens: 0,
+            total_cost: 0.0,
+            parent_session_id: None,
+        })?;
+    }
+
+    {
+        let mut map = mgr.session_map.lock().map_err(|e| e.to_string())?;
+        map.insert(id.clone(), session_id.clone());
+    }
+
+    let shadow = if shadow_name.is_some() || shadow_title.is_some() || shadow_grade.is_some() {
+        Some(serde_json::json!({
+            "name": shadow_name.as_deref().unwrap_or("Shadow"),
+            "title": shadow_title.as_deref().unwrap_or("Shadow Soldier"),
+            "grade": shadow_grade.as_deref().unwrap_or("Knight"),
+            "id": &id,
+        }))
+    } else {
+        None
+    };
+
+    let cmd = serde_json::json!({
+        "type": "create_session",
+        "agentId": id,
+        "cwd": effective_cwd,
+        "provider": provider.as_deref().unwrap_or("anthropic"),
+        "model": model.as_deref().unwrap_or("claude-sonnet-4-5"),
+        "thinkingLevel": thinking_level.as_deref().unwrap_or("medium"),
+        "shadow": shadow,
+        "customPrompt": read_agent_prompt_file(&id)?.filter(|p| !p.trim().is_empty()),
+        "projectInstructions": project_instructions,
+    });
+
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    mgr.send_to_sidecar(&json)?;
+
+    let mut agents = mgr.agents.lock().map_err(|e| e.to_string())?;
+    agents.insert(id, AgentState {
+        lifecycle: AgentLifecycleState::Idle,
+        provider,
+        model,
+        thinking_level,
+        is_streaming: false,
+        session_id,
+        create_cmd_json: json,
+    });
+
+    Ok(())
+}
+
+pub fn ws_send_command(
+    mgr: &AgentManager,
+    db: &Arc<Database>,
+    id: String,
+    command_json: String,
+) -> Result<(), String> {
+    let app = mgr.get_app_handle()?;
+    let mut cmd: serde_json::Value = serde_json::from_str(&command_json).map_err(|e| e.to_string())?;
+    if let Some(obj) = cmd.as_object_mut() {
+        obj.insert("agentId".to_string(), serde_json::Value::String(id));
+    }
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    mgr.send_with_recovery(&app, db, &json)
+}
+
+pub fn ws_broadcast_prompt(
+    mgr: &AgentManager,
+    db: &Arc<Database>,
+    agent_ids: Vec<String>,
+    message: String,
+) -> Result<(), String> {
+    let app = mgr.get_app_handle()?;
+    let mut errors = Vec::new();
+    for id in &agent_ids {
+        let cmd = serde_json::json!({ "type": "prompt", "agentId": id, "message": message });
+        let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+        if let Err(e) = mgr.send_with_recovery(&app, db, &json) {
+            errors.push(format!("{}: {}", id, e));
+        }
+    }
+    if errors.is_empty() { Ok(()) } else { Err(format!("Some agents failed: {}", errors.join(", "))) }
+}
+
+pub fn ws_kill_agent(mgr: &AgentManager, id: String) -> Result<(), String> {
+    let cmd = serde_json::json!({ "type": "destroy_session", "agentId": id });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let _ = mgr.send_to_sidecar(&json);
+    let mut agents = mgr.agents.lock().map_err(|e| e.to_string())?;
+    agents.remove(&id);
+    drop(agents);
+    let mut map = mgr.session_map.lock().map_err(|e| e.to_string())?;
+    map.remove(&id);
+    Ok(())
+}
+
+pub fn ws_load_session_context(
+    mgr: &AgentManager,
+    db: &Arc<Database>,
+    agent_id: String,
+    source_session_id: String,
+) -> Result<(), String> {
+    let app = mgr.get_app_handle()?;
+    let messages = db.get_messages_with_ancestry(&source_session_id)?;
+    if messages.is_empty() { return Ok(()); }
+    let msg_array: Vec<serde_json::Value> = messages.iter()
+        .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
+        .map(|m| serde_json::json!({ "role": m.role, "content": m.content, "model": m.model }))
+        .collect();
+    let cmd = serde_json::json!({ "type": "load_session", "agentId": agent_id, "messages": msg_array });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    mgr.send_with_recovery(&app, db, &json)
+}
+
+pub fn ws_new_agent_session(
+    mgr: &AgentManager,
+    db: &Arc<Database>,
+    agent_id: String,
+    new_session_id: String,
+    parent_session_id: Option<String>,
+) -> Result<(), String> {
+    let app = mgr.get_app_handle()?;
+    let old_session_id = {
+        let map = mgr.session_map.lock().map_err(|e| e.to_string())?;
+        map.get(&agent_id).cloned()
+    };
+    if let Some(old_sid) = &old_session_id {
+        let _ = db.update_session_internal(old_sid, None, None, None, Some(&chrono_now()));
+    }
+    let agent_state = {
+        let agents = mgr.agents.lock().map_err(|e| e.to_string())?;
+        agents.get(&agent_id).cloned()
+    };
+    let (model, provider) = agent_state.map(|s| (s.model.clone(), s.provider.clone())).unwrap_or((None, None));
+    db.ensure_agent_exists_internal(&AgentRow {
+        id: agent_id.clone(), name: agent_id.clone(), project_id: None,
+        shadow_name: None, shadow_title: None, shadow_grade: None,
+        provider: provider.clone(), model: model.clone(), thinking_level: None,
+        cwd: None, custom_prompt: None, created_at: chrono_now(), updated_at: chrono_now(),
+    })?;
+    let valid_parent = match parent_session_id {
+        Some(pid) if db.session_exists_internal(&pid)? => Some(pid),
+        _ => None,
+    };
+    db.create_session_internal(&crate::db::SessionRow {
+        id: new_session_id.clone(), agent_id: agent_id.clone(), pi_session_file: None,
+        model, provider, started_at: chrono_now(), ended_at: None,
+        message_count: 0, total_tokens: 0, total_cost: 0.0, parent_session_id: valid_parent,
+    })?;
+    {
+        let mut map = mgr.session_map.lock().map_err(|e| e.to_string())?;
+        map.insert(agent_id.clone(), new_session_id);
+    }
+    let cmd = serde_json::json!({ "type": "new_session", "agentId": agent_id });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    mgr.send_with_recovery(&app, db, &json)
+}
+
+pub fn ws_switch_agent_session(
+    mgr: &AgentManager,
+    db: &Arc<Database>,
+    agent_id: String,
+    session_id: String,
+) -> Result<(), String> {
+    let app = mgr.get_app_handle()?;
+    if !db.session_exists_internal(&session_id)? {
+        return Err(format!("Session not found: {}", session_id));
+    }
+    let old_session_id = {
+        let map = mgr.session_map.lock().map_err(|e| e.to_string())?;
+        map.get(&agent_id).cloned()
+    };
+    if let Some(old_sid) = &old_session_id {
+        if old_sid != &session_id {
+            let _ = db.update_session_internal(old_sid, None, None, None, Some(&chrono_now()));
+        }
+    }
+    {
+        let mut map = mgr.session_map.lock().map_err(|e| e.to_string())?;
+        map.insert(agent_id.clone(), session_id.clone());
+    }
+    {
+        let mut agents = mgr.agents.lock().map_err(|e| e.to_string())?;
+        if let Some(agent) = agents.get_mut(&agent_id) {
+            agent.session_id = session_id.clone();
+        }
+    }
+    let cmd = serde_json::json!({ "type": "new_session", "agentId": agent_id });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    mgr.send_with_recovery(&app, db, &json)
+}
+
+pub fn ws_respond_extension_ui(
+    mgr: &AgentManager,
+    db: &Arc<Database>,
+    agent_id: String,
+    request_id: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let app = mgr.get_app_handle()?;
+    let cmd = serde_json::json!({
+        "type": "extension_ui_response",
+        "agentId": agent_id,
+        "requestId": request_id,
+        "value": value,
+    });
+    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    mgr.send_with_recovery(&app, db, &json)
+}
+
+pub fn ws_detect_project(db: &Arc<Database>, cwd: String) -> Result<Option<serde_json::Value>, String> {
+    let cwd_path = Path::new(&cwd);
+    let root = match find_project_root(cwd_path) {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let root_str = root.to_string_lossy().to_string();
+    let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| root_str.clone());
+    let existing = db.get_project_by_path_internal(&root_str)?;
+    let file_instructions = read_instructions_from_root(&root);
+    Ok(Some(serde_json::json!({
+        "rootPath": root_str,
+        "name": existing.as_ref().map(|p| p.name.as_str()).unwrap_or(&name),
+        "projectId": existing.as_ref().map(|p| p.id.as_str()),
+        "hasInstructions": existing.as_ref()
+            .and_then(|p| p.instructions.as_ref())
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false) || file_instructions.is_some(),
+    })))
+}
+
+pub fn ws_read_project_instructions(cwd: String) -> Result<Option<String>, String> {
+    let cwd_path = Path::new(&cwd);
+    let root = match find_project_root(cwd_path) {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    Ok(read_instructions_from_root(&root))
 }

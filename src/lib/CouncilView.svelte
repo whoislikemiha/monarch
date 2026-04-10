@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
-  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { invoke, listen, type UnlistenFn } from "$lib/api";
   import AssistantMessageComp from "./AssistantMessage.svelte";
   import ChatInput from "./ChatInput.svelte";
   import type {

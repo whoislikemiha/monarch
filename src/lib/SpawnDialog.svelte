@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "$lib/api";
   import { open } from "@tauri-apps/plugin-dialog";
   import type { AgentConfig, AgentTemplate, Project, ShadowGrade } from "./types";
   import { SHADOW_GRADES } from "./types";
@@ -39,15 +39,11 @@
 
   const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
-  // LM Studio runs on the user's localhost, so it's only reachable from the
-  // Tauri desktop app — not from a browser dev context.
-  const isTauri = typeof (window as any).__TAURI_INTERNALS__ !== "undefined";
-
   const providers = [
     { label: "Anthropic", value: "anthropic" },
     { label: "OpenAI Codex", value: "openai-codex" },
     { label: "OpenRouter", value: "openrouter" },
-    ...(isTauri ? [{ label: "LM Studio", value: "lmstudio" }] : []),
+    { label: "LM Studio", value: "lmstudio" },
   ];
 
   // Providers whose model lists are fetched over the network and benefit
@@ -107,17 +103,6 @@
       .slice(0, 50);
   });
 
-  // Hardcoded fallback for when Tauri IPC isn't available (browser mode)
-  const FALLBACK_MODELS: Record<string, ModelInfo[]> = {
-    anthropic: [
-      { id: "claude-opus-4-6", name: "Claude Opus 4.6", provider: "anthropic" },
-      { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic" },
-      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
-    ],
-    "openai-codex": [
-      { id: "gpt-5.4", name: "GPT-5.4", provider: "openai-codex" },
-    ],
-  };
 
   async function fetchModels(provider: string) {
     const token = ++modelFetchToken;
@@ -130,24 +115,8 @@
     } catch (err) {
       if (token !== modelFetchToken) return;
       const message = err instanceof Error ? err.message : String(err);
-      if (isTauri) {
-        // Real backend error — surface it to the user (common for LM Studio).
-        modelsError = message;
-        allModels = [];
-      } else {
-        // Tauri unavailable (browser mode) — use fallbacks so the dev UI still works.
-        if (provider === "openrouter") {
-          try {
-            const resp = await fetch("https://openrouter.ai/api/v1/models");
-            const json = await resp.json();
-            allModels = json.data.map((m: any) => ({ id: m.id, name: m.name, provider: "openrouter" }));
-          } catch {
-            allModels = [];
-          }
-        } else {
-          allModels = FALLBACK_MODELS[provider] || [];
-        }
-      }
+      modelsError = message;
+      allModels = [];
     } finally {
       if (token === modelFetchToken) {
         modelsLoading = false;
@@ -166,7 +135,6 @@
   }
 
   async function loadTemplates() {
-    if (!isTauri) return;
     try {
       templates = await invoke<AgentTemplate[]>("db_list_agent_templates");
     } catch {
@@ -194,7 +162,7 @@
 
   async function persistCurrentAsTemplate() {
     const name = shadowName.trim();
-    if (!name || !isTauri) return;
+    if (!name) return;
     const now = new Date().toISOString();
     const template: AgentTemplate = {
       id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -218,7 +186,6 @@
 
   async function deleteTemplate(id: string, e: MouseEvent) {
     e.stopPropagation();
-    if (!isTauri) return;
     try {
       await invoke("db_delete_agent_template", { templateId: id });
       await loadTemplates();
@@ -628,19 +595,17 @@
       </div>
     </div>
 
-    {#if isTauri}
-      <label class="template-save-check" title={shadowName.trim() ? "" : "Set a shadow name to enable"}>
-        <input
-          type="checkbox"
-          bind:checked={saveAsTemplate}
-          disabled={!shadowName.trim()}
-        />
-        <span>Save as template</span>
-        {#if saveAsTemplate && shadowName.trim()}
-          <span class="template-save-hint">&middot; uses "{shadowName.trim()}" as the name</span>
-        {/if}
-      </label>
-    {/if}
+    <label class="template-save-check" title={shadowName.trim() ? "" : "Set a shadow name to enable"}>
+      <input
+        type="checkbox"
+        bind:checked={saveAsTemplate}
+        disabled={!shadowName.trim()}
+      />
+      <span>Save as template</span>
+      {#if saveAsTemplate && shadowName.trim()}
+        <span class="template-save-hint">&middot; uses "{shadowName.trim()}" as the name</span>
+      {/if}
+    </label>
 
     <div class="actions">
       <button class="btn-cancel" onclick={oncancel}>Cancel</button>

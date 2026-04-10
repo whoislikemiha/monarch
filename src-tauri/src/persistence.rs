@@ -40,3 +40,14 @@ pub fn save_agent_prompt(agent_id: String, prompt: String) -> Result<(), String>
 pub fn get_prompts_dir() -> String {
     prompts_dir().to_string_lossy().to_string()
 }
+
+// ---- WebSocket wrappers ----
+
+pub fn ws_save_agent_prompt(agent_id: String, prompt: String) -> Result<(), String> {
+    let path = prompts_dir().join(format!("{}.md", agent_id));
+    std::fs::write(&path, prompt).map_err(|e| format!("Failed to save prompt: {}", e))
+}
+
+pub fn ws_get_prompts_dir() -> String {
+    prompts_dir().to_string_lossy().to_string()
+}

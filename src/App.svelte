@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
+  import { invoke, listen } from "$lib/api";
   import Sidebar from "./lib/Sidebar.svelte";
   import AgentView from "./lib/AgentView.svelte";
   import CouncilView from "./lib/CouncilView.svelte";
@@ -19,7 +18,7 @@
   let counter = 0;
   let agentViewRef: AgentView | undefined = $state(undefined);
   let showRestoreBar = $state(false);
-  let exitListeners: Map<string, import("@tauri-apps/api/event").UnlistenFn> = new Map();
+  let exitListeners: Map<string, import("$lib/api").UnlistenFn> = new Map();
   let agentViewStates: Map<string, AgentViewState> = $state(new Map());
 
   function createViewKey(agentId: string): string {

@@ -2,6 +2,7 @@ mod agent;
 mod db;
 mod models;
 mod persistence;
+mod ws;
 
 use agent::AgentManager;
 use db::Database;
@@ -11,13 +12,42 @@ use std::sync::Arc;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let database = Arc::new(Database::new().expect("Failed to initialize database"));
+    let agent_mgr = Arc::new(AgentManager::new());
+    let model_cache = Arc::new(ModelCache::new());
+
+    // Clones for the WS server
+    let ws_db = database.clone();
+    let ws_agent_mgr = agent_mgr.clone();
+    let ws_model_cache = model_cache.clone();
+    let ws_broadcast = agent_mgr.ws_broadcast.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(AgentManager::new())
-        .manage(ModelCache::new())
+        .manage(agent_mgr)
+        .manage(model_cache)
         .manage(database)
+        .setup(move |app| {
+            // Store AppHandle so WS-initiated commands can access the sidecar
+            ws_agent_mgr.set_app_handle(app.handle().clone());
+
+            // Start the WebSocket bridge server
+            let ws_state = Arc::new(ws::WsState {
+                db: ws_db,
+                agent_mgr: ws_agent_mgr,
+                model_cache: ws_model_cache,
+                broadcast_rx: ws_broadcast,
+            });
+            std::thread::spawn(move || {
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .expect("Failed to create WS tokio runtime")
+                    .block_on(ws::start_ws_server(ws_state));
+            });
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // Agent lifecycle (sidecar-based)
             agent::spawn_agent,
