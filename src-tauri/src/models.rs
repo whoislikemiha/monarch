@@ -11,14 +11,10 @@ pub struct ModelInfo {
     pub name: String,
     pub provider: String,
     /// Optional pre-detected context window in tokens. Only populated for
-    /// LM Studio entries discovered via the native `/api/v0/models` endpoint.
+    /// LM Studio entries discovered via the native `/api/v0/models` endpoint,
+    /// and only for models LM Studio reports as currently loaded.
     #[serde(rename = "contextWindow", skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u32>,
-    /// True when the upstream provider reports the model is not currently
-    /// loaded — `context_window` in that case reflects `max_context_length`,
-    /// not a live runtime value.
-    #[serde(rename = "contextWindowIsMax", skip_serializing_if = "Option::is_none")]
-    pub context_window_is_max: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,7 +79,6 @@ fn anthropic_models() -> Vec<ModelInfo> {
         name: name.to_string(),
         provider: "anthropic".to_string(),
         context_window: None,
-        context_window_is_max: None,
     })
     .collect()
 }
@@ -97,7 +92,6 @@ fn openai_codex_models() -> Vec<ModelInfo> {
         name: name.to_string(),
         provider: "openai-codex".to_string(),
         context_window: None,
-        context_window_is_max: None,
     })
     .collect()
 }
@@ -138,8 +132,6 @@ struct LmStudioNativeModel {
     state: Option<String>,
     #[serde(default)]
     loaded_context_length: Option<u32>,
-    #[serde(default)]
-    max_context_length: Option<u32>,
 }
 
 /// Host root for LM Studio's REST API (e.g. `http://127.0.0.1:1234`).
@@ -201,28 +193,18 @@ async fn fetch_lmstudio_models_native(
         .await
         .map_err(|e| format!("Failed to parse LM Studio native response: {}", e))?;
 
+    // Only surface models LM Studio reports as currently loaded — matches
+    // the scope of the OpenAI-compatible /v1/models endpoint, so the picker
+    // only lists things the user can actually talk to right now.
     Ok(parsed
         .data
         .into_iter()
-        .map(|m| {
-            let is_loaded = m.state.as_deref() == Some("loaded");
-            let (context_window, context_window_is_max) = if is_loaded && m.loaded_context_length.is_some() {
-                (m.loaded_context_length, Some(false))
-            } else if let Some(max) = m.max_context_length {
-                // Not loaded (or no live size reported) — surface the ceiling
-                // so the spawn dialog can pre-fill with a value that won't
-                // under-report. UI flags this as a non-live fallback.
-                (Some(max), Some(true))
-            } else {
-                (None, None)
-            };
-            ModelInfo {
-                id: m.id.clone(),
-                name: m.id,
-                provider: "lmstudio".to_string(),
-                context_window,
-                context_window_is_max,
-            }
+        .filter(|m| m.state.as_deref() == Some("loaded"))
+        .map(|m| ModelInfo {
+            id: m.id.clone(),
+            name: m.id,
+            provider: "lmstudio".to_string(),
+            context_window: m.loaded_context_length,
         })
         .collect())
 }
@@ -260,7 +242,6 @@ async fn fetch_lmstudio_models_openai(
             name: m.id,
             provider: "lmstudio".to_string(),
             context_window: None,
-            context_window_is_max: None,
         })
         .collect())
 }
@@ -288,7 +269,6 @@ async fn fetch_openrouter_models() -> Result<Vec<ModelInfo>, String> {
             name: m.name,
             provider: "openrouter".to_string(),
             context_window: None,
-            context_window_is_max: None,
         })
         .collect())
 }

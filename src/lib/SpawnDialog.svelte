@@ -57,11 +57,10 @@
     id: string;
     name: string;
     provider: string;
-    // LM Studio only — pre-detected via /api/v0/models. `contextWindowIsMax`
-    // is true when the value is the model's max (not loaded) rather than
-    // the live loaded context length.
+    // LM Studio only — live `loaded_context_length` as reported by the
+    // native `/api/v0/models` endpoint. Absent on the `/v1/models` fallback
+    // path and for non-LM-Studio providers.
     contextWindow?: number;
-    contextWindowIsMax?: boolean;
   }
 
   interface ProviderAuthStatus {
@@ -510,14 +509,12 @@
             {/if}
           </span>
           <div class="field-hint">
-            {#if selectedLmStudioModel?.contextWindow && selectedLmStudioModel.contextWindowIsMax}
-              Model not loaded in LM Studio — using its max context. Load it there and refresh for the live value.
-            {:else if selectedLmStudioModel?.contextWindow}
+            {#if selectedLmStudioModel?.contextWindow}
               Auto-detected from LM Studio.
             {:else if modelInput.trim()}
               No context length reported for this model. Sidecar default will be used.
             {:else}
-              Pick a model above to see its context window.
+              Pick a loaded model above to see its context window.
             {/if}
           </div>
         </div>
