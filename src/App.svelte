@@ -3,7 +3,6 @@
   import { invoke, listen } from "$lib/api";
   import Sidebar from "./lib/Sidebar.svelte";
   import AgentView from "./lib/AgentView.svelte";
-  import CouncilView from "./lib/CouncilView.svelte";
   import SpawnDialog from "./lib/SpawnDialog.svelte";
   import TabBar from "./lib/TabBar.svelte";
   import ProjectEditor from "./lib/ProjectEditor.svelte";
@@ -28,7 +27,6 @@
   let activeTabId: string | null = $state(null);
   let sidebarCollapsed = $state(false);
   let showSpawnDialog = $state(false);
-  let councilMode = $state(false);
   let counter = 0;
   let agentViewRef: AgentView | undefined = $state(undefined);
   let exitListeners: Map<string, import("$lib/api").UnlistenFn> = new Map();
@@ -61,9 +59,6 @@
 
   // Editing project instructions
   let editingProject: Project | null = $state(null);
-
-  // Council needs at least 2 running agents
-  let councilAgents = $derived(agents.filter((a) => a.status === "running"));
 
   // --- DB row types matching Rust ---
 
@@ -471,15 +466,6 @@
       return;
     }
 
-    // Ctrl+L — toggle council mode
-    if (e.ctrlKey && e.key === "l") {
-      e.preventDefault();
-      if (councilAgents.length >= 2) {
-        councilMode = !councilMode;
-      }
-      return;
-    }
-
     // Ctrl+1-9 — switch tabs (always)
     if (e.ctrlKey && e.key >= "1" && e.key <= "9") {
       e.preventDefault();
@@ -536,7 +522,7 @@
   );
   let activeCustomPrompt: string | null = $state(null);
   let agentContext: AgentContext = $derived(
-    !councilMode && activeAgent && currentLive
+    activeAgent && currentLive
       ? {
           agentId: activeAgent.id,
           agent: activeAgent,
@@ -558,13 +544,9 @@
     {projects}
     collapsed={sidebarCollapsed}
     activeId={activeTabId}
-    {councilMode}
     onselect={selectAgent}
     oncreate={() => (showSpawnDialog = true)}
     onkill={killAgent}
-    oncouncil={() => {
-      if (councilAgents.length >= 2) councilMode = !councilMode;
-    }}
     oneditproject={(project) => { editingProject = project; }}
     onsavetemplate={async (source) => {
       const now = new Date().toISOString();
@@ -596,12 +578,7 @@
       onnewconversation={newConversation}
     />
     <div class="main-content">
-      {#if councilMode && councilAgents.length >= 2}
-        <CouncilView
-          agents={councilAgents}
-          onback={() => (councilMode = false)}
-        />
-      {:else if activeAgent}
+      {#if activeAgent}
         {#key activeAgent.viewKey}
           <AgentView
             agent={activeAgent}
@@ -618,7 +595,7 @@
         <div class="empty-state">
           <span class="empty-icon">&gt;_</span>
           <p>Extract a shadow to begin</p>
-          <p class="hint">Ctrl+N extract &middot; Ctrl+B sidebar &middot; Ctrl+L council &middot; Ctrl+1-9 switch</p>
+          <p class="hint">Ctrl+N extract &middot; Ctrl+B sidebar &middot; Ctrl+1-9 switch</p>
         </div>
       {/if}
     </div>

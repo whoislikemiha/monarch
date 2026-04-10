@@ -21,11 +21,9 @@
     projects = [],
     collapsed = false,
     activeId,
-    councilMode = false,
     onselect,
     oncreate,
     onkill,
-    oncouncil,
     oneditproject,
     onsavetemplate,
   }: {
@@ -33,11 +31,9 @@
     projects?: Project[];
     collapsed?: boolean;
     activeId: string | null;
-    councilMode?: boolean;
     onselect: (id: string) => void;
     oncreate: () => void;
     onkill: (id: string) => void;
-    oncouncil?: () => void;
     oneditproject?: (project: Project) => void;
     onsavetemplate?: (source: TemplateSource) => void;
   } = $props();
@@ -71,8 +67,6 @@
     onsavetemplate?.(contextMenu.source);
     closeContextMenu();
   }
-
-  let runningCount = $derived(agents.filter((a) => a.status === "running").length);
 
   // Group agents by project
   let projectGroups = $derived.by(() => {
@@ -111,9 +105,6 @@
     <div class="rail">
       <div class="rail-icon" title="Monarch">M</div>
       <button class="rail-btn" onclick={oncreate} title="Extract Shadow (Ctrl+N)">+</button>
-      {#if runningCount >= 2 && oncouncil}
-        <button class="rail-btn council-rail-btn" class:active={councilMode} onclick={oncouncil} title="Council Mode (Ctrl+L)">C</button>
-      {/if}
     </div>
   {:else}
     <!-- Full sidebar -->
@@ -199,18 +190,6 @@
       </div>
     {/if}
 
-    {#if runningCount >= 2 && oncouncil}
-      <div class="council-section">
-        <button
-          class="council-btn"
-          class:active={councilMode}
-          onclick={oncouncil}
-        >
-          Council Mode
-          <span class="council-shortcut">Ctrl+L</span>
-        </button>
-      </div>
-    {/if}
   {/if}
 </aside>
 
@@ -273,12 +252,6 @@
   .rail-btn:hover {
     background: var(--bg-panel-3);
     color: #e2d4ff;
-  }
-
-  .council-rail-btn.active {
-    background: rgba(190, 149, 255, 0.12);
-    border-color: var(--accent-purple, #be95ff);
-    color: var(--accent-purple, #be95ff);
   }
 
   .sidebar-header {
@@ -471,44 +444,6 @@
     font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
     text-align: center;
     line-height: 1.6;
-  }
-
-  .council-section {
-    padding: 8px;
-    border-top: 1px solid var(--border-subtle);
-  }
-
-  .council-btn {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    background: var(--bg-panel-2);
-    color: var(--text-secondary);
-    font-size: 11px;
-    font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
-  }
-
-  .council-btn:hover {
-    background: var(--bg-panel-3);
-    color: var(--accent-purple, #be95ff);
-    border-color: var(--accent-purple, #be95ff);
-  }
-
-  .council-btn.active {
-    background: rgba(190, 149, 255, 0.12);
-    border-color: var(--accent-purple, #be95ff);
-    color: var(--accent-purple, #be95ff);
-  }
-
-  .council-shortcut {
-    font-size: 9px;
-    opacity: 0.5;
   }
 
   .context-menu-backdrop {
