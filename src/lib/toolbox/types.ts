@@ -11,7 +11,7 @@ import type {
  * Live, Rust-assembled state for a single agent.
  *
  * Wire shape (Rust-authored): see `LiveAgentState` in src/lib/bindings.ts,
- * emitted on `agent-state-{id}` as a JSON string. The `liveAgentStore`
+ * emitted on `agent-state-{id}` as a JSON object. The `liveAgentStore`
  * adapter converts the wire shape to this frontend shape on seed/update so
  * tool components continue to see `toolExecutions: Map`, `lastUsage?: Usage`,
  * and a derived `currentToolGroup`. This keeps the toolbox contract frozen
