@@ -25,11 +25,20 @@
 
   const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
+  // LM Studio runs on the user's localhost, so it's only reachable from the
+  // Tauri desktop app — not from a browser dev context.
+  const isTauri = typeof (window as any).__TAURI_INTERNALS__ !== "undefined";
+
   const providers = [
     { label: "Anthropic", value: "anthropic" },
     { label: "OpenAI Codex", value: "openai-codex" },
     { label: "OpenRouter", value: "openrouter" },
+    ...(isTauri ? [{ label: "LM Studio", value: "lmstudio" }] : []),
   ];
+
+  // Providers whose model lists are fetched over the network and benefit
+  // from an explicit refresh action.
+  const REFRESHABLE_PROVIDERS = new Set(["openrouter", "lmstudio"]);
 
   let selectedProvider = $state("openrouter");
 
@@ -57,6 +66,8 @@
 
   let allModels: ModelInfo[] = $state([]);
   let modelsLoading = $state(false);
+  let modelsError: string | null = $state(null);
+  let modelFetchToken = 0;
   let authLoading = $state(false);
   let authStatus: ProviderAuthStatus | null = $state(null);
   let detectedProject: DetectedProject | null = $state(null);
@@ -91,24 +102,39 @@
   };
 
   async function fetchModels(provider: string) {
+    const token = ++modelFetchToken;
     modelsLoading = true;
+    modelsError = null;
     try {
-      allModels = await invoke<ModelInfo[]>("get_models", { provider });
-    } catch {
-      // Tauri not available (browser mode) — try direct fetch for OpenRouter, else fallback
-      if (provider === "openrouter") {
-        try {
-          const resp = await fetch("https://openrouter.ai/api/v1/models");
-          const json = await resp.json();
-          allModels = json.data.map((m: any) => ({ id: m.id, name: m.name, provider: "openrouter" }));
-        } catch {
-          allModels = [];
-        }
+      const fetched = await invoke<ModelInfo[]>("get_models", { provider });
+      if (token !== modelFetchToken) return; // stale — provider changed
+      allModels = fetched;
+    } catch (err) {
+      if (token !== modelFetchToken) return;
+      const message = err instanceof Error ? err.message : String(err);
+      if (isTauri) {
+        // Real backend error — surface it to the user (common for LM Studio).
+        modelsError = message;
+        allModels = [];
       } else {
-        allModels = FALLBACK_MODELS[provider] || [];
+        // Tauri unavailable (browser mode) — use fallbacks so the dev UI still works.
+        if (provider === "openrouter") {
+          try {
+            const resp = await fetch("https://openrouter.ai/api/v1/models");
+            const json = await resp.json();
+            allModels = json.data.map((m: any) => ({ id: m.id, name: m.name, provider: "openrouter" }));
+          } catch {
+            allModels = [];
+          }
+        } else {
+          allModels = FALLBACK_MODELS[provider] || [];
+        }
+      }
+    } finally {
+      if (token === modelFetchToken) {
+        modelsLoading = false;
       }
     }
-    modelsLoading = false;
   }
 
   async function fetchAuthStatus(provider: string) {
@@ -131,12 +157,21 @@
 
   // Fetch models when provider changes
   $effect(() => {
-    fetchModels(selectedProvider);
-    fetchAuthStatus(selectedProvider);
+    const provider = selectedProvider;
+    // Reset UI state first so no stale list/highlight bleeds in from the
+    // previous provider before the new fetch resolves.
+    allModels = [];
+    modelsError = null;
     modelInput = fixedModelId || "";
     showDropdown = false;
     highlightedIndex = -1;
+    fetchModels(provider);
+    fetchAuthStatus(provider);
   });
+
+  function refreshModels() {
+    fetchModels(selectedProvider);
+  }
 
   // Detect project when cwd changes
   $effect(() => {
@@ -293,7 +328,15 @@
           type="text"
           bind:this={modelInputEl}
           bind:value={modelInput}
-          placeholder={fixedModelId ? "Uses your Pi Codex login" : modelsLoading ? "Loading models..." : "Search models..."}
+          placeholder={fixedModelId
+            ? "Uses your Pi Codex login"
+            : modelsLoading
+              ? "Loading models..."
+              : modelsError
+                ? "Provider unreachable — see hint below"
+                : allModels.length === 0
+                  ? "No models available"
+                  : "Search models..."}
           readonly={!!fixedModelId}
           onfocus={() => { if (!fixedModelId) showDropdown = true; }}
           onblur={() => setTimeout(() => (showDropdown = false), 200)}
@@ -303,11 +346,33 @@
         />
         {#if modelsLoading}
           <span class="loading-indicator"></span>
+        {:else if !fixedModelId && REFRESHABLE_PROVIDERS.has(selectedProvider)}
+          <button
+            class="refresh-btn"
+            onmousedown={(e: MouseEvent) => { e.preventDefault(); refreshModels(); }}
+            title="Refresh model list"
+            type="button"
+          >
+            ↻
+          </button>
         {/if}
       </div>
       {#if fixedModelId}
         <div class="field-hint">
           Uses Pi's existing `openai-codex` auth and locks this provider to GPT-5.4.
+        </div>
+      {/if}
+      {#if !fixedModelId && modelsError}
+        <div class="model-error">
+          <span class="model-error-label">Can't reach provider</span>
+          <span class="model-error-text">{modelsError}</span>
+          <button class="model-error-retry" onclick={refreshModels} type="button">
+            Retry
+          </button>
+        </div>
+      {:else if !fixedModelId && !modelsLoading && allModels.length === 0}
+        <div class="field-hint">
+          No models found for this provider.
         </div>
       {/if}
       {#if !fixedModelId && showDropdown && filteredModels().length > 0}
@@ -646,6 +711,74 @@
 
   @keyframes spin {
     to { transform: translateY(-50%) rotate(360deg); }
+  }
+
+  .refresh-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--border-subtle, #35274f);
+    border-radius: 4px;
+    background: var(--bg-panel-2, #201734);
+    color: var(--text-secondary, #dde1e6);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .refresh-btn:hover {
+    background: var(--bg-panel-3, #2a1e45);
+    color: var(--accent-purple, #be95ff);
+  }
+
+  .model-error {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 120, 120, 0.4);
+    background: rgba(64, 20, 20, 0.45);
+  }
+
+  .model-error-label {
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #ffb4b4;
+  }
+
+  .model-error-text {
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--text-secondary, #dde1e6);
+    overflow-wrap: anywhere;
+  }
+
+  .model-error-retry {
+    align-self: flex-start;
+    margin-top: 4px;
+    padding: 4px 10px;
+    border: 1px solid rgba(255, 180, 180, 0.5);
+    border-radius: 4px;
+    background: transparent;
+    color: #ffb4b4;
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+  }
+
+  .model-error-retry:hover {
+    background: rgba(255, 180, 180, 0.1);
   }
 
   .model-dropdown {
