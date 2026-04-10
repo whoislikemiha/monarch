@@ -63,9 +63,14 @@ The one-line fix that the review identified as a true merge blocker.
 
 **Notes (Wave 0):**
 
-<!-- Note anything learned while shipping MON-29 that affects the rest of
-the plan. If the fix forced a signature change on emit_event, flag it here
-so Wave 1 knows. -->
+- MON-29 PR: _pending_ — fix landed as a new `emit_state_event` helper alongside
+  the existing `emit_event`; the shared helper is untouched, so Wave 1's
+  MON-38 is free to move serialization out of the write lock without
+  refactoring a shared signature. State-emit call sites now clone
+  `LiveAgentState` out of the guard and pass `&state` to the new helper, so
+  MON-38 only has to swap the `.clone()` for the deferred-serialize pattern.
+  Nothing else surprising; `cargo check`, `cargo clippy` (no new warnings),
+  and `svelte-check` all clean.
 
 ---
 

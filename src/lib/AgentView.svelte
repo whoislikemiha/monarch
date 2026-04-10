@@ -440,19 +440,15 @@
     if (version !== activationVersion) return;
 
     // Pull-then-subscribe: after the initial seed, follow incremental
-    // snapshots on `agent-state-{id}`. The payload is a JSON-encoded string
-    // (same convention as the legacy raw channel).
-    unlistenState = await listen<string>(
+    // snapshots on `agent-state-{id}`. Rust passes the `LiveAgentState`
+    // straight to `Emitter::emit`, so the payload arrives as the already-
+    // deserialized object — no inner `JSON.parse` step.
+    unlistenState = await listen<WireLiveAgentState>(
       `agent-state-${target.id}`,
       (event) => {
         if (version !== activationVersion) return;
-        try {
-          const snapshot: WireLiveAgentState = JSON.parse(event.payload);
-          applyUpdate(target.id, snapshot);
-          scrollToBottom();
-        } catch (e) {
-          console.error("Failed to parse agent-state payload:", e);
-        }
+        applyUpdate(target.id, event.payload);
+        scrollToBottom();
       },
     );
 

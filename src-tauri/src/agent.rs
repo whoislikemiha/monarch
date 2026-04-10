@@ -382,7 +382,7 @@ impl AgentManager {
                 });
 
             let entry = self.live_entry(agent_id);
-            let snapshot_json = {
+            let snapshot = {
                 // Block briefly on the write lock. Recovery is rare and
                 // single-threaded per agent, so contention is effectively zero.
                 let mut guard = match entry.try_write() {
@@ -398,13 +398,11 @@ impl AgentManager {
                 }
                 guard.dirty = false;
                 guard.state.reset_with_items(items);
-                serde_json::to_string(&guard.state).ok()
+                guard.state.clone()
             };
 
-            if let Some(payload) = snapshot_json {
-                let event_name = format!("agent-state-{}", agent_id);
-                emit_event(app, &self.ws_broadcast, &event_name, &payload);
-            }
+            let event_name = format!("agent-state-{}", agent_id);
+            emit_state_event(app, &self.ws_broadcast, &event_name, &snapshot);
         }
 
         Ok(())
@@ -474,10 +472,8 @@ impl AgentManager {
             guard.state.clone()
         };
 
-        if let Ok(payload) = serde_json::to_string(&snapshot) {
-            let event_name = format!("agent-state-{}", agent_id);
-            emit_event(app, &self.ws_broadcast, &event_name, &payload);
-        }
+        let event_name = format!("agent-state-{}", agent_id);
+        emit_state_event(app, &self.ws_broadcast, &event_name, &snapshot);
 
         Ok(snapshot)
     }
@@ -513,6 +509,27 @@ fn emit_event(app: &AppHandle, ws_tx: &broadcast::Sender<WsBroadcast>, event_nam
         event: event_name.to_string(),
         payload: payload.to_string(),
     });
+}
+
+/// Emit an assembled `LiveAgentState` snapshot on the `agent-state-{id}`
+/// channel. The Tauri path passes the value directly so `Emitter::emit`
+/// serializes it exactly once — subscribers receive a JSON object rather than
+/// a JSON-encoded string wrapped in another JSON string. The WebSocket path
+/// keeps the `{event, payload: String}` envelope convention shared with the
+/// other broadcast event types.
+fn emit_state_event(
+    app: &AppHandle,
+    ws_tx: &broadcast::Sender<WsBroadcast>,
+    event_name: &str,
+    state: &LiveAgentState,
+) {
+    let _ = app.emit(event_name, state);
+    if let Ok(payload) = serde_json::to_string(state) {
+        let _ = ws_tx.send(WsBroadcast {
+            event: event_name.to_string(),
+            payload,
+        });
+    }
 }
 
 /// Handle a single JSONL event from the sidecar.
@@ -576,10 +593,10 @@ async fn handle_sidecar_event(
                 guard.dirty = false;
                 guard.state = LiveAgentState::default();
                 guard.state.state_version = guard.state.state_version.saturating_add(1);
-                if let Ok(payload) = serde_json::to_string(&guard.state) {
-                    let state_event = format!("agent-state-{}", agent_id);
-                    emit_event(app, ws_tx, &state_event, &payload);
-                }
+                let snapshot = guard.state.clone();
+                drop(guard);
+                let state_event = format!("agent-state-{}", agent_id);
+                emit_state_event(app, ws_tx, &state_event, &snapshot);
             }
         }
 
@@ -685,7 +702,7 @@ async fn apply_and_maybe_emit(
 
     // Clone the small bits of context the debounce task will need. Must be
     // owned so they can outlive the caller's borrow.
-    let snapshot_to_emit: Option<String> = {
+    let snapshot_to_emit: Option<LiveAgentState> = {
         let mut guard = entry.write().await;
 
         let outcome = guard.state.apply_event(inner_event);
@@ -697,7 +714,7 @@ async fn apply_and_maybe_emit(
                 if let Some(h) = guard.debounce_handle.take() {
                     h.abort();
                 }
-                serde_json::to_string(&guard.state).ok()
+                Some(guard.state.clone())
             }
             ApplyOutcome::Debounce => {
                 guard.dirty = true;
@@ -714,15 +731,12 @@ async fn apply_and_maybe_emit(
                             return;
                         }
                         g.dirty = false;
-                        let payload = match serde_json::to_string(&g.state) {
-                            Ok(p) => p,
-                            Err(_) => return,
-                        };
-                        let event_name = format!("agent-state-{}", agent_id_owned);
+                        let snapshot = g.state.clone();
                         // Release the guard before emit — emit can block on
                         // broadcast channel send under worst case.
                         drop(g);
-                        emit_event(&app_clone, &ws_tx_clone, &event_name, &payload);
+                        let event_name = format!("agent-state-{}", agent_id_owned);
+                        emit_state_event(&app_clone, &ws_tx_clone, &event_name, &snapshot);
                     });
                     guard.debounce_handle = Some(handle);
                 }
@@ -731,9 +745,9 @@ async fn apply_and_maybe_emit(
         }
     };
 
-    if let Some(payload) = snapshot_to_emit {
+    if let Some(snapshot) = snapshot_to_emit {
         let event_name = format!("agent-state-{}", agent_id);
-        emit_event(app, ws_tx, &event_name, &payload);
+        emit_state_event(app, ws_tx, &event_name, &snapshot);
     }
 }
 
@@ -751,15 +765,13 @@ async fn mark_agent_desynced(
         .entry(agent_id.to_string())
         .or_insert_with(|| Arc::new(RwLock::new(AgentStateEntry::default())))
         .clone();
-    let payload = {
+    let snapshot = {
         let mut guard = entry.write().await;
         guard.state.mark_desynced();
-        serde_json::to_string(&guard.state).ok()
+        guard.state.clone()
     };
-    if let Some(payload) = payload {
-        let event_name = format!("agent-state-{}", agent_id);
-        emit_event(app, ws_tx, &event_name, &payload);
-    }
+    let event_name = format!("agent-state-{}", agent_id);
+    emit_state_event(app, ws_tx, &event_name, &snapshot);
 }
 
 /// Persist event data to SQLite based on event type
