@@ -329,15 +329,15 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 
 ### Providers
 
-Built-in (auth from `~/.pi/agent/auth.json`):
-- `anthropic` — Claude (Opus, Sonnet, Haiku).
-- `openai-codex` — GPT via OpenAI Codex subscription auth.
+Subscription-backed, auth from `~/.pi/agent/auth.json` (checked by `get_provider_auth_status`):
+- `anthropic` — Claude (Opus, Sonnet, Haiku). Also works with `ANTHROPIC_API_KEY`.
+- `openai-codex` — GPT via Pi's OpenAI Codex login; the model picker locks to the single supported ID.
 
-Dynamic (registered per-session by `registerCustomProviders()` in the sidecar):
-- `openrouter` — any model routed via OpenRouter.
-- `lmstudio` — local models at `http://127.0.0.1:1234/v1` (override with `LMSTUDIO_BASE_URL`).
+Dynamic providers built in the sidecar by `buildDynamicModel` in [`sidecar/src/runtime-manager.ts`](./sidecar/src/runtime-manager.ts):
+- `openrouter` — any model routed via `https://openrouter.ai/api/v1`. Requires `OPENROUTER_API_KEY` in the sidecar's environment.
+- `lmstudio` — local OpenAI-compatible server at `http://127.0.0.1:1234/v1` (override with `LMSTUDIO_BASE_URL`). The sidecar registers the provider on first use with a dummy API key, since LM Studio accepts any.
 
-Model discovery is in [`src-tauri/src/models.rs`](./src-tauri/src/models.rs), exposed as `get_models` and `get_provider_auth_status` Tauri commands.
+Model discovery lives in [`src-tauri/src/models.rs`](./src-tauri/src/models.rs) and is exposed as `get_models` and `get_provider_auth_status` Tauri commands. For `openrouter` and `lmstudio`, `get_models` hits the provider's `/models` endpoint directly; the LM Studio arm returns `Err(...)` when the local server is unreachable so the UI can show a distinct "provider unreachable" state.
 
 ---
 
