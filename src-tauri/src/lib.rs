@@ -2,6 +2,7 @@ mod agent;
 mod db;
 mod models;
 mod persistence;
+mod toolbox;
 mod ws;
 
 use agent::AgentManager;
@@ -91,6 +92,9 @@ pub fn run() {
             // Project detection
             agent::detect_project,
             agent::read_project_instructions,
+            // Toolbox
+            toolbox::toolbox_list_tools,
+            toolbox::placeholder::toolbox_placeholder_ping,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
