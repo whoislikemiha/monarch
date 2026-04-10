@@ -10,6 +10,11 @@ pub struct ModelInfo {
     pub id: String,
     pub name: String,
     pub provider: String,
+    /// Optional pre-detected context window in tokens. Only populated for
+    /// LM Studio entries discovered via the native `/api/v0/models` endpoint,
+    /// and only for models LM Studio reports as currently loaded.
+    #[serde(rename = "contextWindow", skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +78,7 @@ fn anthropic_models() -> Vec<ModelInfo> {
         id: id.to_string(),
         name: name.to_string(),
         provider: "anthropic".to_string(),
+        context_window: None,
     })
     .collect()
 }
@@ -85,6 +91,7 @@ fn openai_codex_models() -> Vec<ModelInfo> {
         id: id.to_string(),
         name: name.to_string(),
         provider: "openai-codex".to_string(),
+        context_window: None,
     })
     .collect()
 }
@@ -110,30 +117,115 @@ struct LmStudioModel {
     id: String,
 }
 
-fn lmstudio_base_url() -> String {
-    std::env::var("LMSTUDIO_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:1234/v1".to_string())
+/// Subset of the `/api/v0/models` payload we care about. LM Studio exposes
+/// more fields (type, arch, quantization, publisher, etc.) — we only need
+/// identity and context sizing.
+#[derive(Deserialize)]
+struct LmStudioNativeResponse {
+    data: Vec<LmStudioNativeModel>,
+}
+
+#[derive(Deserialize)]
+struct LmStudioNativeModel {
+    id: String,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    loaded_context_length: Option<u32>,
+}
+
+/// Host root for LM Studio's REST API (e.g. `http://127.0.0.1:1234`).
+/// `LMSTUDIO_BASE_URL` may point at either the host root or the legacy
+/// OpenAI-compatible path — strip a trailing `/v1` so callers can append
+/// either `/v1/models` or `/api/v0/models`.
+fn lmstudio_host_root() -> String {
+    let raw = std::env::var("LMSTUDIO_BASE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:1234".to_string());
+    let trimmed = raw.trim_end_matches('/');
+    trimmed
+        .strip_suffix("/v1")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| trimmed.to_string())
 }
 
 async fn fetch_lmstudio_models() -> Result<Vec<ModelInfo>, String> {
-    let base_url = lmstudio_base_url();
-    let url = format!("{}/models", base_url.trim_end_matches('/'));
-
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
         .build()
         .map_err(|e| e.to_string())?;
 
+    // Prefer the native endpoint — it exposes per-model context sizing.
+    // Fall back to the OpenAI-compatible endpoint if the user is running
+    // an older LM Studio build that doesn't expose `/api/v0`.
+    match fetch_lmstudio_models_native(&client).await {
+        Ok(models) => Ok(models),
+        Err(native_err) => {
+            match fetch_lmstudio_models_openai(&client).await {
+                Ok(models) => Ok(models),
+                Err(openai_err) => Err(format!("{} / {}", native_err, openai_err)),
+            }
+        }
+    }
+}
+
+async fn fetch_lmstudio_models_native(
+    client: &reqwest::Client,
+) -> Result<Vec<ModelInfo>, String> {
+    let host = lmstudio_host_root();
+    let url = format!("{}/api/v0/models", host);
+
     let resp = client
         .get(&url)
         .send()
         .await
-        .map_err(|e| format!("LM Studio not reachable at {}: {}", base_url, e))?;
+        .map_err(|e| format!("LM Studio not reachable at {}: {}", host, e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!(
+            "LM Studio native API returned HTTP {} at {}",
+            resp.status(),
+            url
+        ));
+    }
+
+    let parsed: LmStudioNativeResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse LM Studio native response: {}", e))?;
+
+    // Only surface models LM Studio reports as currently loaded — matches
+    // the scope of the OpenAI-compatible /v1/models endpoint, so the picker
+    // only lists things the user can actually talk to right now.
+    Ok(parsed
+        .data
+        .into_iter()
+        .filter(|m| m.state.as_deref() == Some("loaded"))
+        .map(|m| ModelInfo {
+            id: m.id.clone(),
+            name: m.id,
+            provider: "lmstudio".to_string(),
+            context_window: m.loaded_context_length,
+        })
+        .collect())
+}
+
+async fn fetch_lmstudio_models_openai(
+    client: &reqwest::Client,
+) -> Result<Vec<ModelInfo>, String> {
+    let host = lmstudio_host_root();
+    let url = format!("{}/v1/models", host);
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("LM Studio not reachable at {}: {}", host, e))?;
 
     if !resp.status().is_success() {
         return Err(format!(
             "LM Studio returned HTTP {} at {}",
             resp.status(),
-            base_url
+            url
         ));
     }
 
@@ -149,6 +241,7 @@ async fn fetch_lmstudio_models() -> Result<Vec<ModelInfo>, String> {
             id: m.id.clone(),
             name: m.id,
             provider: "lmstudio".to_string(),
+            context_window: None,
         })
         .collect())
 }
@@ -175,6 +268,7 @@ async fn fetch_openrouter_models() -> Result<Vec<ModelInfo>, String> {
             id: m.id.clone(),
             name: m.name,
             provider: "openrouter".to_string(),
+            context_window: None,
         })
         .collect())
 }

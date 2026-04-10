@@ -186,9 +186,23 @@
   });
 
   let estimatedTotal = $derived(categories.reduce((s, c) => s + c.tokens, 0));
-  let apiTotal = $derived(sessionStats?.totalTokens ?? lastUsage?.totalTokens ?? 0);
+
+  // Live context occupancy — mirrors AgentControls logic: input + cached tokens
+  // from the most recent message, NOT cumulative session billing.
+  let liveContextTokens = $derived.by(() => {
+    if (!lastUsage) return 0;
+    const cached = (lastUsage.cacheRead ?? 0) + (lastUsage.cacheWrite ?? 0);
+    if (lastUsage.input && lastUsage.input > 0) return lastUsage.input + cached;
+    if (lastUsage.totalTokens) {
+      const output = lastUsage.output ?? 0;
+      return Math.max(lastUsage.totalTokens - output, 0);
+    }
+    return 0;
+  });
+
+  let billingTotal = $derived(sessionStats?.totalTokens ?? 0);
   let resolvedWindow = $derived(contextWindow ?? 128000);
-  let usedRatio = $derived(apiTotal > 0 ? apiTotal / resolvedWindow : 0);
+  let usedRatio = $derived(liveContextTokens > 0 ? Math.min(liveContextTokens / resolvedWindow, 1) : 0);
 </script>
 
 <div class="inspector">
@@ -199,12 +213,18 @@
 
   <div class="inspector-summary">
     <div class="summary-row">
-      <span class="summary-label">Context Used</span>
-      <span class="summary-value">{formatTokens(apiTotal)} / {formatTokens(resolvedWindow)}</span>
+      <span class="summary-label">Context Occupancy</span>
+      <span class="summary-value">{formatTokens(liveContextTokens)} / {formatTokens(resolvedWindow)}</span>
     </div>
     <div class="summary-bar">
       <div class="summary-fill" style:width={`${Math.min(usedRatio * 100, 100)}%`}></div>
     </div>
+    {#if billingTotal > 0}
+      <div class="summary-row sub">
+        <span class="summary-label">Billing Total</span>
+        <span class="summary-value">{formatTokens(billingTotal)}</span>
+      </div>
+    {/if}
     {#if sessionStats}
       <div class="summary-row sub">
         <span class="summary-label">Turns</span>

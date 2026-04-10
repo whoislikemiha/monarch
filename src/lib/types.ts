@@ -91,6 +91,8 @@ export interface AgentConfig {
   thinkingLevel?: string;
   cwd?: string;
   shadow?: ShadowIdentity;
+  /** User-supplied context window in tokens. Currently only surfaced for lmstudio. */
+  contextWindow?: number;
 }
 
 // Session stats from get_session_stats

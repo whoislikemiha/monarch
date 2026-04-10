@@ -151,6 +151,9 @@ impl Database {
         let _ = conn.execute_batch(
             "ALTER TABLE projects ADD COLUMN instructions TEXT;",
         );
+        let _ = conn.execute_batch(
+            "ALTER TABLE agents ADD COLUMN context_window INTEGER;",
+        );
 
         Ok(())
     }
@@ -183,6 +186,8 @@ pub struct AgentRow {
     pub thinking_level: Option<String>,
     pub cwd: Option<String>,
     pub custom_prompt: Option<String>,
+    /// User-supplied context window (tokens). Currently only used for lmstudio.
+    pub context_window: Option<i32>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -310,34 +315,48 @@ impl Database {
     pub fn ensure_agent_exists_internal(&self, agent: &AgentRow) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO agents (id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "INSERT INTO agents (id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(id) DO NOTHING",
             params![
                 agent.id, agent.name, agent.project_id, agent.shadow_name, agent.shadow_title,
                 agent.shadow_grade, agent.provider, agent.model, agent.thinking_level,
-                agent.cwd, agent.custom_prompt, agent.created_at, agent.updated_at,
+                agent.cwd, agent.custom_prompt, agent.context_window, agent.created_at, agent.updated_at,
             ],
         )
         .map_err(|e| e.to_string())?;
         Ok(())
     }
 
+    pub fn get_agent_context_window_internal(&self, agent_id: &str) -> Result<Option<i32>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let result: Option<i32> = conn
+            .query_row(
+                "SELECT context_window FROM agents WHERE id = ?1",
+                params![agent_id],
+                |row| row.get(0),
+            )
+            .ok()
+            .flatten();
+        Ok(result)
+    }
+
     pub fn upsert_agent_internal(&self, agent: &AgentRow) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO agents (id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "INSERT INTO agents (id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(id) DO UPDATE SET
                name=excluded.name, project_id=excluded.project_id,
                shadow_name=excluded.shadow_name, shadow_title=excluded.shadow_title,
                shadow_grade=excluded.shadow_grade, provider=excluded.provider, model=excluded.model,
                thinking_level=excluded.thinking_level, cwd=excluded.cwd, custom_prompt=excluded.custom_prompt,
+               context_window=excluded.context_window,
                updated_at=datetime('now')",
             params![
                 agent.id, agent.name, agent.project_id, agent.shadow_name, agent.shadow_title,
                 agent.shadow_grade, agent.provider, agent.model, agent.thinking_level,
-                agent.cwd, agent.custom_prompt, agent.created_at, agent.updated_at,
+                agent.cwd, agent.custom_prompt, agent.context_window, agent.created_at, agent.updated_at,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -510,7 +529,7 @@ pub fn db_upsert_agent(db: tauri::State<'_, Arc<Database>>, agent: AgentRow) -> 
 pub fn db_get_agents(db: tauri::State<'_, Arc<Database>>) -> Result<Vec<AgentRow>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at FROM agents ORDER BY updated_at DESC")
+        .prepare("SELECT id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at FROM agents ORDER BY updated_at DESC")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -526,8 +545,9 @@ pub fn db_get_agents(db: tauri::State<'_, Arc<Database>>) -> Result<Vec<AgentRow
                 thinking_level: row.get(8)?,
                 cwd: row.get(9)?,
                 custom_prompt: row.get(10)?,
-                created_at: row.get(11)?,
-                updated_at: row.get(12)?,
+                context_window: row.get(11)?,
+                created_at: row.get(12)?,
+                updated_at: row.get(13)?,
             })
         })
         .map_err(|e| e.to_string())?;

@@ -33,9 +33,25 @@
     return n.toString();
   }
 
-  let displayTokens = $derived(
-    sessionStats?.totalTokens ?? lastUsage?.totalTokens ?? 0
-  );
+  // Live context occupancy: what's sitting in the model's context right now,
+  // taken from the most recent assistant message's usage. NOT session-lifetime
+  // billing — that accumulates across every turn and massively overstates
+  // occupancy after a few messages.
+  let liveContextTokens = $derived.by(() => {
+    if (!lastUsage) return 0;
+    const cached = (lastUsage.cacheRead ?? 0) + (lastUsage.cacheWrite ?? 0);
+    if (lastUsage.input && lastUsage.input > 0) {
+      return lastUsage.input + cached;
+    }
+    // Pi SDK / LM Studio sometimes only populates totalTokens. Back out output
+    // to get what was in the prompt, since totalTokens = input + output.
+    if (lastUsage.totalTokens) {
+      const output = lastUsage.output ?? 0;
+      return Math.max(lastUsage.totalTokens - output, 0);
+    }
+    return 0;
+  });
+
   let displayCost = $derived(
     sessionStats?.totalCost ?? lastUsage?.cost?.total
   );
@@ -44,22 +60,18 @@
   );
   let resolvedContextWindow = $derived(contextWindow ?? DEFAULT_CONTEXT_WINDOW);
   let isEstimatedContextWindow = $derived(contextWindow == null);
-  let contextRatio = $derived(
-    displayTokens && resolvedContextWindow > 0
-      ? Math.min(displayTokens / resolvedContextWindow, 1)
+  let usedRatio = $derived(
+    resolvedContextWindow > 0
+      ? Math.min(liveContextTokens / resolvedContextWindow, 1)
       : 0
   );
-  let remainingTokens = $derived(
-    Math.max(resolvedContextWindow - displayTokens, 0)
-  );
-  let healthRatio = $derived(
-    resolvedContextWindow > 0 ? remainingTokens / resolvedContextWindow : 0
-  );
+  let usedPct = $derived(Math.round(usedRatio * 100));
   let contextFill = $derived(
-    healthRatio > 0 ? Math.max(healthRatio * 100, 4) : 0
+    liveContextTokens > 0 ? Math.max(usedRatio * 100, 4) : 0
   );
+  // Critical/warning thresholds on how FULL the context is (not how much is left).
   let contextState = $derived(
-    healthRatio <= 0.1 ? "critical" : healthRatio <= 0.3 ? "warning" : "healthy"
+    usedRatio >= 0.9 ? "critical" : usedRatio >= 0.7 ? "warning" : "healthy"
   );
 </script>
 
@@ -100,7 +112,7 @@
         class:clickable={!!oncontextinspect}
         class:warning={contextState === "warning"}
         class:critical={contextState === "critical"}
-        title={`Context remaining: ${remainingTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens${isEstimatedContextWindow ? " (estimated window)" : ""} — click to inspect`}
+        title={`Context used: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens (${usedPct}%)${isEstimatedContextWindow ? " — window is estimated, set it in the spawn dialog for LM Studio" : ""} — click to inspect`}
         onclick={oncontextinspect}
       >
         <span class="context-label">ctx</span>
@@ -108,11 +120,22 @@
           <div class="context-fill" style:width={`${contextFill}%`}></div>
         </div>
         <span class="context-value">
-          {formatTokens(remainingTokens)} left
+          {formatTokens(liveContextTokens)}/{formatTokens(resolvedContextWindow)}
+          ({usedPct}%)
         </span>
       </div>
 
-      {#if displayCost}
+      {#if sessionStats && sessionStats.totalTokens > 0}
+        <span
+          class="control-tag billing"
+          title={`Session-lifetime billing total (not current context occupancy)`}
+        >
+          Σ {formatTokens(sessionStats.totalTokens)}
+          {#if displayCost}
+            · ${displayCost.toFixed(4)}
+          {/if}
+        </span>
+      {:else if displayCost}
         <span class="control-tag tokens">${displayCost.toFixed(4)}</span>
       {/if}
     {/if}

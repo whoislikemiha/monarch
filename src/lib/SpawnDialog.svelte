@@ -18,6 +18,11 @@
   let modelInput = $state("");
   let thinkingLevel = $state("off");
   let cwd = $state("/home/miha");
+  function formatCtxTokens(n: number): string {
+    if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + "M";
+    if (n >= 1024) return (n / 1024).toFixed(n % 1024 === 0 ? 0 : 1) + "k";
+    return String(n);
+  }
 
   // Shadow identity
   let shadowName = $state("");
@@ -48,6 +53,10 @@
     id: string;
     name: string;
     provider: string;
+    // LM Studio only — live `loaded_context_length` as reported by the
+    // native `/api/v0/models` endpoint. Absent on the `/v1/models` fallback
+    // path and for non-LM-Studio providers.
+    contextWindow?: number;
   }
 
   interface ProviderAuthStatus {
@@ -201,6 +210,15 @@
     fetchAuthStatus(provider);
   });
 
+  // The LM Studio ModelInfo currently matching the typed id, if any. Drives
+  // the read-only context display and the value sent on spawn.
+  let selectedLmStudioModel = $derived.by(() => {
+    if (selectedProvider !== "lmstudio") return undefined;
+    const id = modelInput.trim();
+    if (!id) return undefined;
+    return allModels.find((m) => m.id === id);
+  });
+
   function refreshModels() {
     fetchModels(selectedProvider);
   }
@@ -267,11 +285,20 @@
     const provider = selectedProvider;
     const model = fixedModelId || trimmed || undefined;
 
+    // LM Studio: take the auto-detected value straight from the discovered
+    // model entry. No user override path — if discovery didn't populate a
+    // value (older LM Studio, model not in list), send nothing and let the
+    // sidecar apply its default context window.
+    const detectedCtx = selectedLmStudioModel?.contextWindow;
     const config: AgentConfig = {
       provider,
       model,
       thinkingLevel: thinkingLevel !== "off" ? thinkingLevel : undefined,
       cwd: cwd || undefined,
+      contextWindow:
+        provider === "lmstudio" && typeof detectedCtx === "number" && detectedCtx > 0
+          ? Math.floor(detectedCtx)
+          : undefined,
     };
 
     // Attach shadow identity if a name is provided
@@ -419,6 +446,22 @@
             ↻
           </button>
         {/if}
+        {#if !fixedModelId && showDropdown && filteredModels().length > 0}
+          <div class="model-dropdown">
+            {#each filteredModels() as model, i (model.id)}
+              <button
+                class="model-option"
+                class:highlighted={i === highlightedIndex}
+                class:selected={modelInput === model.id}
+                onmousedown={(e: MouseEvent) => { e.preventDefault(); selectModel(model); }}
+                onmouseenter={() => (highlightedIndex = i)}
+              >
+                <span class="model-id">{model.id}</span>
+                <span class="model-name">{model.name}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
       {#if fixedModelId}
         <div class="field-hint">
@@ -438,20 +481,25 @@
           No models found for this provider.
         </div>
       {/if}
-      {#if !fixedModelId && showDropdown && filteredModels().length > 0}
-        <div class="model-dropdown">
-          {#each filteredModels() as model, i (model.id)}
-            <button
-              class="model-option"
-              class:highlighted={i === highlightedIndex}
-              class:selected={modelInput === model.id}
-              onmousedown={(e: MouseEvent) => { e.preventDefault(); selectModel(model); }}
-              onmouseenter={() => (highlightedIndex = i)}
-            >
-              <span class="model-id">{model.id}</span>
-              <span class="model-name">{model.name}</span>
-            </button>
-          {/each}
+      {#if selectedProvider === "lmstudio"}
+        <div class="lmstudio-context">
+          <span class="label">
+            Context window
+            {#if selectedLmStudioModel?.contextWindow}
+              <span class="lmstudio-ctx-value">
+                {formatCtxTokens(selectedLmStudioModel.contextWindow)}
+              </span>
+            {/if}
+          </span>
+          <div class="field-hint">
+            {#if selectedLmStudioModel?.contextWindow}
+              Auto-detected from LM Studio.
+            {:else if modelInput.trim()}
+              No context length reported for this model. Sidecar default will be used.
+            {:else}
+              Pick a loaded model above to see its context window.
+            {/if}
+          </div>
         </div>
       {/if}
     </div>
@@ -691,6 +739,28 @@
 
   .template-save-hint {
     color: var(--text-muted, #8f7aa8);
+  }
+
+  .lmstudio-context {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 10px;
+  }
+
+  .lmstudio-context > .label {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    justify-content: space-between;
+    text-transform: uppercase;
+  }
+
+  .lmstudio-ctx-value {
+    color: var(--accent-purple, #be95ff);
+    font-size: 12px;
+    text-transform: none;
+    letter-spacing: 0;
   }
 
   .preset-grid {

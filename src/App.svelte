@@ -221,6 +221,7 @@
       isStreaming: false,
       stderrLines: [],
       shadow: config?.shadow,
+      contextWindow: config?.contextWindow,
       sessionId,
       sessions: [{
         sessionId,
@@ -282,6 +283,7 @@
       shadowName: config?.shadow?.shadowName || null,
       shadowTitle: config?.shadow?.shadowTitle || null,
       shadowGrade: config?.shadow?.shadowGrade || null,
+      contextWindow: config?.contextWindow ?? null,
     })
       .then(async () => {
         // Refresh projects — spawn_agent may have auto-created one
