@@ -174,7 +174,7 @@ fn make_response(id: Option<Value>, result: Result<Value, MonarchError>) -> Stri
 
 /// Dispatch a command to the appropriate internal handler.
 /// Adding a new command = adding one match arm here.
-async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Value, MonarchError> {
+pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Value, MonarchError> {
     match cmd {
         // ---- Agent lifecycle ----
         "spawn_agent" => {

@@ -33,6 +33,20 @@ impl Database {
         Ok(db)
     }
 
+    /// In-memory SQLite instance for unit tests. Not WAL (in-memory databases
+    /// don't support it) and schema is initialised the same way as the
+    /// on-disk constructor.
+    #[cfg(test)]
+    pub fn new_in_memory() -> Result<Self, MonarchError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
+        db.init_schema()?;
+        Ok(db)
+    }
+
     fn init_schema(&self) -> Result<(), MonarchError> {
         let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
         conn.execute_batch(

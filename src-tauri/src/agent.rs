@@ -1581,6 +1581,87 @@ pub fn read_project_instructions(cwd: String) -> Result<Option<String>, MonarchE
     Ok(crate::project::read_project_instructions(&cwd))
 }
 
+#[cfg(test)]
+mod tests {
+    //! Round-trip tests for MON-33's shared service layer. The goal is to
+    //! prove that both the Tauri command path and the WS dispatch path
+    //! funnel into the same `AgentManager` method — so a future refactor
+    //! that only touches one transport cannot silently drift.
+    //!
+    //! `kill_agent` is the representative operation: it exercises state
+    //! cleanup (agents map, session map, live entries) without requiring a
+    //! live sidecar process, so the test runs purely in-process.
+
+    use super::*;
+    use crate::db::Database;
+    use crate::models::ModelCache;
+    use crate::sidecar_protocol::SidecarCommand;
+    use crate::ws::{self, WsState};
+    use tokio::sync::broadcast;
+
+    fn seeded_agent_state(agent_id: &str, session_id: &str) -> AgentState {
+        AgentState {
+            lifecycle: AgentLifecycleState::Idle,
+            provider: None,
+            model: None,
+            thinking_level: None,
+            is_streaming: false,
+            session_id: session_id.to_string(),
+            create_cmd: SidecarCommand::NewSession {
+                agent_id: agent_id.to_string(),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn kill_agent_round_trip_funnels_through_shared_method() {
+        let db = Arc::new(Database::new_in_memory().expect("in-memory db"));
+        let mgr = Arc::new(AgentManager::new(db.clone()));
+        let model_cache = Arc::new(ModelCache::new());
+        let (broadcast_tx, _rx) = broadcast::channel(16);
+
+        // Seed two agents: one killed via the IPC path, one via the WS path.
+        {
+            let mut agents = mgr.agents.lock().unwrap();
+            agents.insert("ipc-kill".to_string(), seeded_agent_state("ipc-kill", "s1"));
+            agents.insert("ws-kill".to_string(), seeded_agent_state("ws-kill", "s2"));
+        }
+        {
+            let mut map = mgr.session_map.lock().unwrap();
+            map.insert("ipc-kill".to_string(), "s1".to_string());
+            map.insert("ws-kill".to_string(), "s2".to_string());
+        }
+
+        // IPC side: the Tauri command body is `state.kill(&id)`. Call the
+        // shared method directly. send_to_sidecar will fail silently because
+        // no sidecar is running; the local state cleanup runs regardless.
+        mgr.kill("ipc-kill").expect("ipc kill");
+
+        // WS side: full dispatch path — decode args, delegate to mgr.kill.
+        let ws_state = WsState {
+            db,
+            agent_mgr: mgr.clone(),
+            model_cache,
+            broadcast_rx: broadcast_tx,
+        };
+        ws::dispatch_command(
+            &ws_state,
+            "kill_agent",
+            serde_json::json!({ "id": "ws-kill" }),
+        )
+        .await
+        .expect("ws dispatch kill");
+
+        let agents = mgr.agents.lock().unwrap();
+        assert!(agents.get("ipc-kill").is_none(), "ipc path did not clear agent");
+        assert!(agents.get("ws-kill").is_none(), "ws path did not clear agent");
+        drop(agents);
+        let sessions = mgr.session_map.lock().unwrap();
+        assert!(sessions.get("ipc-kill").is_none(), "ipc path did not clear session");
+        assert!(sessions.get("ws-kill").is_none(), "ws path did not clear session");
+    }
+}
+
 // ---- Tauri Commands ----
 
 /// Shadow identity block carried inside `SpawnAgentRequest`. Mirrors the
