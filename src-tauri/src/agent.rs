@@ -382,24 +382,25 @@ impl AgentManager {
                 });
 
             let entry = self.live_entry(agent_id);
-            let snapshot = {
-                // Block briefly on the write lock. Recovery is rare and
-                // single-threaded per agent, so contention is effectively zero.
-                let mut guard = match entry.try_write() {
-                    Ok(g) => g,
-                    Err(_) => {
-                        // Someone else is mutating; skip the emit rather than
-                        // stall recovery. The next real event will re-emit.
-                        continue;
-                    }
-                };
-                if let Some(h) = guard.debounce_handle.take() {
-                    h.abort();
+            // Block briefly on the write lock. Recovery is rare and
+            // single-threaded per agent, so contention is effectively zero.
+            let mut guard = match entry.try_write() {
+                Ok(g) => g,
+                Err(_) => {
+                    // Someone else is mutating; skip the emit rather than
+                    // stall recovery. The next real event will re-emit.
+                    continue;
                 }
-                guard.dirty = false;
-                guard.state.reset_with_items(items);
-                guard.state.clone()
             };
+            if let Some(h) = guard.debounce_handle.take() {
+                h.abort();
+            }
+            guard.dirty = false;
+            guard.state.reset_with_items(items);
+            // MON-38: clone + explicit drop before emit_state_event so the
+            // write guard is released before any serialization runs.
+            let snapshot = guard.state.clone();
+            drop(guard);
 
             let event_name = format!("agent-state-{}", agent_id);
             emit_state_event(app, &self.ws_broadcast, &event_name, &snapshot);
@@ -462,15 +463,16 @@ impl AgentManager {
         };
 
         let entry = self.live_entry(agent_id);
-        let snapshot = {
-            let mut guard = entry.write().await;
-            if let Some(h) = guard.debounce_handle.take() {
-                h.abort();
-            }
-            guard.dirty = false;
-            guard.state.reset_with_items(items);
-            guard.state.clone()
-        };
+        let mut guard = entry.write().await;
+        if let Some(h) = guard.debounce_handle.take() {
+            h.abort();
+        }
+        guard.dirty = false;
+        guard.state.reset_with_items(items);
+        // MON-38: clone + explicit drop before emit_state_event so the write
+        // guard is released before any serialization runs.
+        let snapshot = guard.state.clone();
+        drop(guard);
 
         let event_name = format!("agent-state-{}", agent_id);
         emit_state_event(app, &self.ws_broadcast, &event_name, &snapshot);
@@ -517,6 +519,13 @@ fn emit_event(app: &AppHandle, ws_tx: &broadcast::Sender<WsBroadcast>, event_nam
 /// a JSON-encoded string wrapped in another JSON string. The WebSocket path
 /// keeps the `{event, payload: String}` envelope convention shared with the
 /// other broadcast event types.
+///
+/// MON-38 invariant: callers must not hold an `AgentStateEntry` write guard
+/// when invoking this helper. Both emit paths serialize `state` internally,
+/// and for a long chat `serde_json::to_string` is O(history); running it
+/// under the write lock would make the async sidecar reader O(history)-bound
+/// per event. The enforced shape at every call site is
+/// `let snap = guard.state.clone(); drop(guard); emit_state_event(.., &snap);`.
 fn emit_state_event(
     app: &AppHandle,
     ws_tx: &broadcast::Sender<WsBroadcast>,
@@ -700,50 +709,47 @@ async fn apply_and_maybe_emit(
         .or_insert_with(|| Arc::new(RwLock::new(AgentStateEntry::default())))
         .clone();
 
-    // Clone the small bits of context the debounce task will need. Must be
-    // owned so they can outlive the caller's borrow.
-    let snapshot_to_emit: Option<LiveAgentState> = {
-        let mut guard = entry.write().await;
+    // EmitNow branch: clone inside the guard, then drop(guard) before emit so
+    // serialization runs without the RwLock write guard held (MON-38).
+    let mut guard = entry.write().await;
+    let outcome = guard.state.apply_event(inner_event);
 
-        let outcome = guard.state.apply_event(inner_event);
-
-        match outcome {
-            ApplyOutcome::NoOp => None,
-            ApplyOutcome::EmitNow => {
-                guard.dirty = false;
-                if let Some(h) = guard.debounce_handle.take() {
-                    h.abort();
-                }
-                Some(guard.state.clone())
+    let snapshot_to_emit: Option<LiveAgentState> = match outcome {
+        ApplyOutcome::NoOp => None,
+        ApplyOutcome::EmitNow => {
+            guard.dirty = false;
+            if let Some(h) = guard.debounce_handle.take() {
+                h.abort();
             }
-            ApplyOutcome::Debounce => {
-                guard.dirty = true;
-                if guard.debounce_handle.is_none() {
-                    let entry_clone = entry.clone();
-                    let agent_id_owned = agent_id.to_string();
-                    let app_clone = app.clone();
-                    let ws_tx_clone = ws_tx.clone();
-                    let handle = tauri::async_runtime::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(DEBOUNCE_MILLIS)).await;
-                        let mut g = entry_clone.write().await;
-                        g.debounce_handle = None;
-                        if !g.dirty {
-                            return;
-                        }
-                        g.dirty = false;
-                        let snapshot = g.state.clone();
-                        // Release the guard before emit — emit can block on
-                        // broadcast channel send under worst case.
-                        drop(g);
-                        let event_name = format!("agent-state-{}", agent_id_owned);
-                        emit_state_event(&app_clone, &ws_tx_clone, &event_name, &snapshot);
-                    });
-                    guard.debounce_handle = Some(handle);
-                }
-                None
+            Some(guard.state.clone())
+        }
+        ApplyOutcome::Debounce => {
+            guard.dirty = true;
+            if guard.debounce_handle.is_none() {
+                let entry_clone = entry.clone();
+                let agent_id_owned = agent_id.to_string();
+                let app_clone = app.clone();
+                let ws_tx_clone = ws_tx.clone();
+                let handle = tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(DEBOUNCE_MILLIS)).await;
+                    let mut g = entry_clone.write().await;
+                    g.debounce_handle = None;
+                    if !g.dirty {
+                        return;
+                    }
+                    g.dirty = false;
+                    // MON-38: clone + explicit drop before emit_state_event.
+                    let snapshot = g.state.clone();
+                    drop(g);
+                    let event_name = format!("agent-state-{}", agent_id_owned);
+                    emit_state_event(&app_clone, &ws_tx_clone, &event_name, &snapshot);
+                });
+                guard.debounce_handle = Some(handle);
             }
+            None
         }
     };
+    drop(guard);
 
     if let Some(snapshot) = snapshot_to_emit {
         let event_name = format!("agent-state-{}", agent_id);
@@ -765,11 +771,12 @@ async fn mark_agent_desynced(
         .entry(agent_id.to_string())
         .or_insert_with(|| Arc::new(RwLock::new(AgentStateEntry::default())))
         .clone();
-    let snapshot = {
-        let mut guard = entry.write().await;
-        guard.state.mark_desynced();
-        guard.state.clone()
-    };
+    let mut guard = entry.write().await;
+    guard.state.mark_desynced();
+    // MON-38: clone + explicit drop before emit_state_event.
+    let snapshot = guard.state.clone();
+    drop(guard);
+
     let event_name = format!("agent-state-{}", agent_id);
     emit_state_event(app, ws_tx, &event_name, &snapshot);
 }
