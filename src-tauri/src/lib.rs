@@ -38,7 +38,13 @@ pub fn run() {
                 model_cache: ws_model_cache,
                 broadcast_rx: ws_broadcast,
             });
-            tokio::spawn(ws::start_ws_server(ws_state));
+            std::thread::spawn(move || {
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .expect("Failed to create WS tokio runtime")
+                    .block_on(ws::start_ws_server(ws_state));
+            });
 
             Ok(())
         })
