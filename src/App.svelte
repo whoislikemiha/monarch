@@ -5,7 +5,7 @@
   import AgentView from "./lib/AgentView.svelte";
   import CouncilView from "./lib/CouncilView.svelte";
   import SpawnDialog from "./lib/SpawnDialog.svelte";
-  import HistoryPanel from "./lib/HistoryPanel.svelte";
+  import TabBar from "./lib/TabBar.svelte";
   import ProjectEditor from "./lib/ProjectEditor.svelte";
   import ToolRail from "./lib/toolbox/ToolRail.svelte";
   import ToolPanelStack from "./lib/toolbox/ToolPanelStack.svelte";
@@ -20,18 +20,19 @@
     restoreWidth,
   } from "./lib/toolbox/persistence";
   import type { AgentContext } from "./lib/toolbox/types";
-  import type { Agent, AgentConfig, Project, SessionRecord } from "./lib/types";
+  import type { Agent, AgentConfig, AgentViewState, Project, SessionRecord } from "./lib/types";
 
   let agents: Agent[] = $state([]);
   let projects: Project[] = $state([]);
-  let activeId: string | null = $state(null);
+  let openTabs: string[] = $state([]);
+  let activeTabId: string | null = $state(null);
+  let sidebarCollapsed = $state(false);
   let showSpawnDialog = $state(false);
-  let showSidebar = $state(true);
   let councilMode = $state(false);
   let counter = 0;
   let agentViewRef: AgentView | undefined = $state(undefined);
-  let showRestoreBar = $state(false);
   let exitListeners: Map<string, import("$lib/api").UnlistenFn> = new Map();
+  let agentViewStates: Map<string, AgentViewState> = $state(new Map());
 
   // --- Toolbox state ---
   let openToolIds: string[] = $state(restoreOpenIds());
@@ -57,24 +58,6 @@
   function createViewKey(agentId: string): string {
     return `${agentId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
   }
-
-  // Saved agents loaded from SQLite for restore
-  interface SavedAgentInfo {
-    id: string;
-    name: string;
-    projectId?: string;
-    provider?: string;
-    model?: string;
-    thinkingLevel?: string;
-    cwd?: string;
-    contextWindow?: number;
-    shadow?: { shadowName: string; shadowTitle: string; shadowGrade: string };
-    sessions: SessionRecord[];
-  }
-  let savedAgents: SavedAgentInfo[] = $state([]);
-
-  // Viewing history for a saved agent
-  let viewingSavedAgent: SavedAgentInfo | null = $state(null);
 
   // Editing project instructions
   let editingProject: Project | null = $state(null);
@@ -137,97 +120,80 @@
   async function loadSavedAgents() {
     try {
       const dbAgents = await invoke<AgentDbRow[]>("db_get_agents");
-      if (dbAgents.length > 0) {
-        const loaded: SavedAgentInfo[] = [];
-        for (const row of dbAgents) {
-          const sessions = await invoke<SessionDbRow[]>("db_get_sessions", { agentId: row.id });
-          loaded.push({
-            id: row.id,
-            name: row.name,
-            projectId: row.projectId || undefined,
-            provider: row.provider || undefined,
-            model: row.model || undefined,
-            thinkingLevel: row.thinkingLevel || undefined,
-            cwd: row.cwd || undefined,
-            contextWindow: row.contextWindow || undefined,
-            shadow: row.shadowName
-              ? { shadowName: row.shadowName, shadowTitle: row.shadowTitle || "", shadowGrade: (row.shadowGrade as any) || "Knight" }
-              : undefined,
-            sessions: sessions.map((s) => ({
-              sessionId: s.id,
-              model: s.model || undefined,
-              provider: s.provider || undefined,
-              startedAt: s.startedAt,
-              messageCount: s.messageCount,
-            })),
-          });
-        }
-        savedAgents = loaded;
-        if (savedAgents.length > 0) {
-          showRestoreBar = true;
-        }
+      for (const row of dbAgents) {
+        const sessions = await invoke<SessionDbRow[]>("db_get_sessions", { agentId: row.id });
+        const latestSession = sessions[0];
+        const agent: Agent = {
+          id: row.id,
+          viewKey: createViewKey(row.id),
+          name: row.shadowName || row.name,
+          status: "stopped",
+          projectId: row.projectId || undefined,
+          provider: row.provider || undefined,
+          model: row.model || undefined,
+          thinkingLevel: row.thinkingLevel || undefined,
+          cwd: row.cwd || undefined,
+          isStreaming: false,
+          stderrLines: [],
+          contextWindow: row.contextWindow || undefined,
+          shadow: row.shadowName
+            ? { shadowName: row.shadowName, shadowTitle: row.shadowTitle || "", shadowGrade: (row.shadowGrade as any) || "Knight" }
+            : undefined,
+          sessionId: latestSession?.id,
+          sessions: sessions.map((s) => ({
+            sessionId: s.id,
+            model: s.model || undefined,
+            provider: s.provider || undefined,
+            startedAt: s.startedAt,
+            messageCount: s.messageCount,
+          })),
+          sourceSessionId: latestSession?.id,
+        };
+        agents = [...agents, agent];
+      }
+      if (agents.length > 0) {
+        openTabs = agents.map((a) => a.id);
+        if (!activeTabId) activeTabId = agents[0].id;
       }
     } catch {
       // No saved state
     }
   }
 
-  async function restoreAllAgents() {
-    showRestoreBar = false;
-    for (const saved of savedAgents) {
-      await restoreAgent(saved);
-    }
-    savedAgents = [];
+  async function loadUiState() {
+    try {
+      const tabsJson = await invoke<string | null>("db_get_ui_state", { key: "openTabs" });
+      const activeJson = await invoke<string | null>("db_get_ui_state", { key: "activeTabId" });
+      const collapsedJson = await invoke<string | null>("db_get_ui_state", { key: "sidebarCollapsed" });
+      if (tabsJson) {
+        const savedTabs: string[] = JSON.parse(tabsJson);
+        const agentIds = new Set(agents.map((a) => a.id));
+        openTabs = savedTabs.filter((id) => agentIds.has(id));
+      }
+      if (activeJson) {
+        const savedActive = JSON.parse(activeJson);
+        if (openTabs.includes(savedActive)) activeTabId = savedActive;
+        else if (openTabs.length > 0) activeTabId = openTabs[0];
+      }
+      if (collapsedJson) sidebarCollapsed = JSON.parse(collapsedJson);
+    } catch {}
   }
 
-  async function restoreAgent(saved: SavedAgentInfo, selectedSessionId?: string) {
-    const config: AgentConfig = {
-      provider: saved.provider,
-      model: saved.model,
-      thinkingLevel: saved.thinkingLevel,
-      cwd: saved.cwd,
-      contextWindow: saved.contextWindow,
-      shadow: saved.shadow as any,
-    };
-    const sourceSessionId = selectedSessionId || saved.sessions[0]?.sessionId;
-    const restoredSession = saved.sessions.find((session) => session.sessionId === sourceSessionId);
-    const newId = await createAgent(config, {
-      agentId: saved.id,
-      sessionId: sourceSessionId,
-      sourceSessionId,
-      reuseExistingSession: true,
-    });
-
-    // Merge archived sessions with the freshly-created current session
-    agents = agents.map((a) => {
-      if (a.id !== newId) return a;
-      const currentSession = restoredSession || a.sessions[0];
-      const archivedSessions = saved.sessions.filter(
-        (s) => s.sessionId !== currentSession?.sessionId,
-      );
-      return {
-        ...a,
-        projectId: saved.projectId,
-        sessionId: currentSession?.sessionId || a.sessionId,
-        sessions: [currentSession, ...archivedSessions].filter(Boolean),
-      };
-    });
+  let uiStateInitialized = false;
+  function saveUiState() {
+    if (!uiStateInitialized) return;
+    invoke("db_set_ui_state", { key: "openTabs", value: JSON.stringify(openTabs) }).catch(() => {});
+    invoke("db_set_ui_state", { key: "activeTabId", value: JSON.stringify(activeTabId) }).catch(() => {});
+    invoke("db_set_ui_state", { key: "sidebarCollapsed", value: JSON.stringify(sidebarCollapsed) }).catch(() => {});
   }
 
-  async function dismissRestore() {
-    showRestoreBar = false;
-    const agentsToDelete = [...savedAgents];
-    savedAgents = [];
-    await Promise.all(
-      agentsToDelete.map((saved) =>
-        invoke("db_delete_agent", { agentId: saved.id }).catch(() => {}),
-      ),
-    );
-  }
+  $effect(() => { openTabs; activeTabId; sidebarCollapsed; saveUiState(); });
 
-  onMount(() => {
-    loadProjects();
-    loadSavedAgents();
+  onMount(async () => {
+    await loadProjects();
+    await loadSavedAgents();
+    await loadUiState();
+    uiStateInitialized = true;
   });
 
   // --- Agent lifecycle ---
@@ -271,7 +237,7 @@
       sourceSessionId: options?.sourceSessionId || undefined,
     };
     agents = [...agents, agent];
-    activeId = id;
+    openTab(id);
 
     // Save agent and session to DB immediately
     try {
@@ -379,8 +345,96 @@
     });
   }
 
+  // --- Tab management ---
+
+  function openTab(id: string) {
+    if (!openTabs.includes(id)) {
+      openTabs = [...openTabs, id];
+    }
+    activeTabId = id;
+  }
+
+  function closeTab(id: string) {
+    const idx = openTabs.indexOf(id);
+    if (idx === -1) return;
+    openTabs = openTabs.filter((t) => t !== id);
+    if (activeTabId === id) {
+      const nextIdx = Math.min(idx, openTabs.length - 1);
+      activeTabId = openTabs[nextIdx] ?? null;
+    }
+  }
+
+  async function newConversation(agentId: string) {
+    const agent = agents.find((a) => a.id === agentId);
+    if (!agent) return;
+    if (agent.status === "stopped") {
+      openTab(agentId);
+      return;
+    }
+    const previousSessionId = agent.sessionId;
+    counter++;
+    const newSessionId = `session-${Date.now()}-${counter}`;
+    try {
+      const session: SessionDbRow = {
+        id: newSessionId, agentId, model: agent.model || null, provider: agent.provider || null,
+        startedAt: new Date().toISOString(), endedAt: null, messageCount: 0,
+        totalTokens: 0, totalCost: 0, parentSessionId: previousSessionId || null,
+      };
+      await invoke("db_create_session", { session });
+    } catch (e) { console.error("Failed to create new conversation session:", e); return; }
+    try {
+      await invoke("switch_agent_session", { agentId, sessionId: newSessionId });
+    } catch (e) { console.error("Failed to switch session:", e); return; }
+    agents = agents.map((a) =>
+      a.id === agentId ? {
+        ...a, viewKey: createViewKey(agentId), sessionId: newSessionId,
+        sessions: [{ sessionId: newSessionId, model: a.model, provider: a.provider, startedAt: new Date().toISOString(), messageCount: 0 }, ...a.sessions],
+      } : a,
+    );
+    openTab(agentId);
+  }
+
+  async function spawnStoppedAgent(id: string): Promise<void> {
+    const agent = agents.find((a) => a.id === id);
+    if (!agent || agent.status !== "stopped") return;
+    const previousSessionId = agent.sessionId;
+    counter++;
+    const newSessionId = `session-${Date.now()}-${counter}`;
+    try {
+      const session: SessionDbRow = {
+        id: newSessionId, agentId: id, model: agent.model || null, provider: agent.provider || null,
+        startedAt: new Date().toISOString(), endedAt: null, messageCount: 0,
+        totalTokens: 0, totalCost: 0, parentSessionId: previousSessionId || null,
+      };
+      await invoke("db_create_session", { session });
+    } catch (e) { console.error("Failed to create session for lazy spawn:", e); }
+    agents = agents.map((a) =>
+      a.id === id ? {
+        ...a, status: "running" as const, sessionId: newSessionId, sourceSessionId: previousSessionId,
+        sessions: [{ sessionId: newSessionId, model: a.model, provider: a.provider, startedAt: new Date().toISOString(), messageCount: 0 }, ...a.sessions],
+      } : a,
+    );
+    try {
+      await invoke("spawn_agent", {
+        id, sessionId: newSessionId, provider: agent.provider || null, model: agent.model || null,
+        thinkingLevel: agent.thinkingLevel || null, cwd: agent.cwd || "/home/miha",
+        shadowName: agent.shadow?.shadowName || null, shadowTitle: agent.shadow?.shadowTitle || null,
+        shadowGrade: agent.shadow?.shadowGrade || null, contextWindow: agent.contextWindow ?? null,
+      });
+      await loadProjects();
+    } catch (err) {
+      console.error("Failed to spawn stopped agent:", err);
+      agents = agents.map((a) => a.id === id ? { ...a, status: "error" as const, stderrLines: [...a.stderrLines, String(err)] } : a);
+      throw err;
+    }
+    const unlisten = await listen(`agent-exit-${id}`, () => {
+      agents = agents.map((a) => a.id === id ? { ...a, status: "stopped" as const, isStreaming: false } : a);
+    });
+    exitListeners.set(id, unlisten);
+  }
+
   function selectAgent(id: string) {
-    activeId = id;
+    openTab(id);
   }
 
   function updateAgent(id: string, updater: (agent: Agent) => Agent) {
@@ -392,11 +446,9 @@
     // Clean up exit listener
     const unlisten = exitListeners.get(id);
     if (unlisten) { unlisten(); exitListeners.delete(id); }
+    closeTab(id);
     agents = agents.filter((a) => a.id !== id);
     removeLiveState(id);
-    if (activeId === id) {
-      activeId = agents.length > 0 ? agents[agents.length - 1].id : null;
-    }
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -415,7 +467,7 @@
     // Ctrl+B — toggle sidebar (always)
     if (e.ctrlKey && e.key === "b") {
       e.preventDefault();
-      showSidebar = !showSidebar;
+      sidebarCollapsed = !sidebarCollapsed;
       return;
     }
 
@@ -428,12 +480,12 @@
       return;
     }
 
-    // Ctrl+1-9 — switch agents (always)
+    // Ctrl+1-9 — switch tabs (always)
     if (e.ctrlKey && e.key >= "1" && e.key <= "9") {
       e.preventDefault();
       const idx = parseInt(e.key) - 1;
-      if (idx < agents.length) {
-        activeId = agents[idx].id;
+      if (idx < openTabs.length) {
+        activeTabId = openTabs[idx];
       }
       return;
     }
@@ -472,7 +524,7 @@
     }
   }
 
-  let activeAgent = $derived(agents.find((a) => a.id === activeId));
+  let activeAgent = $derived(agents.find((a) => a.id === activeTabId));
   let activeProject = $derived(
     activeAgent?.projectId
       ? projects.find((p) => p.id === activeAgent!.projectId)
@@ -480,7 +532,7 @@
   );
 
   let currentLive = $derived(
-    activeId ? liveAgentStore.byAgent.get(activeId) ?? null : null,
+    activeTabId ? liveAgentStore.byAgent.get(activeTabId) ?? null : null,
   );
   let activeCustomPrompt: string | null = $state(null);
   let agentContext: AgentContext = $derived(
@@ -501,96 +553,75 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <main class="app">
-  {#if showSidebar}
-    <Sidebar
-      {agents}
-      {projects}
-      savedAgents={savedAgents.map(s => ({
-        id: s.id,
-        name: s.name,
-        projectId: s.projectId,
-        provider: s.provider,
-        model: s.model,
-        thinkingLevel: s.thinkingLevel,
-        cwd: s.cwd,
-        shadow: s.shadow as any,
-        sessions: s.sessions,
-      }))}
-      {activeId}
-      {councilMode}
-      onselect={selectAgent}
-      oncreate={() => (showSpawnDialog = true)}
-      onkill={killAgent}
-      oncouncil={() => {
-        if (councilAgents.length >= 2) councilMode = !councilMode;
-      }}
-      onviewhistory={(saved) => {
-        viewingSavedAgent = savedAgents.find(s => s.id === saved.id) || null;
-      }}
-      oneditproject={(project) => { editingProject = project; }}
-      onsavetemplate={async (source) => {
-        const now = new Date().toISOString();
-        const template = {
-          id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          name: source.name,
-          provider: source.provider ?? null,
-          model: source.model ?? null,
-          thinkingLevel: source.thinkingLevel ?? null,
-          cwd: source.cwd ?? null,
-          shadowName: source.shadow?.shadowName ?? source.name,
-          shadowTitle: source.shadow?.shadowTitle ?? null,
-          shadowGrade: source.shadow?.shadowGrade ?? null,
-          createdAt: now,
-          updatedAt: now,
-        };
-        try {
-          await invoke("db_save_agent_template", { template });
-        } catch {}
-      }}
-    />
-  {/if}
+  <Sidebar
+    {agents}
+    {projects}
+    collapsed={sidebarCollapsed}
+    activeId={activeTabId}
+    {councilMode}
+    onselect={selectAgent}
+    oncreate={() => (showSpawnDialog = true)}
+    onkill={killAgent}
+    oncouncil={() => {
+      if (councilAgents.length >= 2) councilMode = !councilMode;
+    }}
+    oneditproject={(project) => { editingProject = project; }}
+    onsavetemplate={async (source) => {
+      const now = new Date().toISOString();
+      const template = {
+        id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: source.name,
+        provider: source.provider ?? null,
+        model: source.model ?? null,
+        thinkingLevel: source.thinkingLevel ?? null,
+        cwd: source.cwd ?? null,
+        shadowName: source.shadow?.shadowName ?? source.name,
+        shadowTitle: source.shadow?.shadowTitle ?? null,
+        shadowGrade: source.shadow?.shadowGrade ?? null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      try {
+        await invoke("db_save_agent_template", { template });
+      } catch {}
+    }}
+  />
   <div class="main-panel">
-    {#if councilMode && councilAgents.length >= 2}
-      <CouncilView
-        agents={councilAgents}
-        onback={() => (councilMode = false)}
-      />
-    {:else if activeAgent}
-      {#key activeAgent.viewKey}
-        <AgentView
-          agent={activeAgent}
-          projectName={activeProject?.name}
-          onrestart={restartAgent}
-          onagentchange={(agentId, updater) => updateAgent(agentId, updater)}
-          onprojectedit={() => { if (activeProject) editingProject = activeProject; }}
-          bind:customPrompt={activeCustomPrompt}
-          bind:this={agentViewRef}
+    <TabBar
+      {agents}
+      {openTabs}
+      {activeTabId}
+      onselect={selectAgent}
+      onclose={closeTab}
+      onnewconversation={newConversation}
+    />
+    <div class="main-content">
+      {#if councilMode && councilAgents.length >= 2}
+        <CouncilView
+          agents={councilAgents}
+          onback={() => (councilMode = false)}
         />
-      {/key}
-    {:else}
-      <div class="empty-state">
-        {#if showRestoreBar && savedAgents.length > 0}
-          <div class="restore-bar">
-            <span class="restore-text">
-              {savedAgents.length} shadow{savedAgents.length > 1 ? "s" : ""} from last session
-            </span>
-            <div class="restore-names">
-              {#each savedAgents as sa}
-                <span class="restore-name">{sa.name}</span>
-              {/each}
-            </div>
-            <div class="restore-actions">
-              <button class="restore-btn" onclick={restoreAllAgents}>Restore All</button>
-              <button class="dismiss-btn" onclick={dismissRestore}>Dismiss</button>
-            </div>
-          </div>
-        {:else}
+      {:else if activeAgent}
+        {#key activeAgent.viewKey}
+          <AgentView
+            agent={activeAgent}
+            projectName={activeProject?.name}
+            onrestart={restartAgent}
+            onspawn={spawnStoppedAgent}
+            onagentchange={(agentId, updater) => updateAgent(agentId, updater)}
+            onprojectedit={() => { if (activeProject) editingProject = activeProject; }}
+            bind:customPrompt={activeCustomPrompt}
+            bind:this={agentViewRef}
+          />
+        {/key}
+      {:else}
+        <div class="empty-state">
           <span class="empty-icon">&gt;_</span>
           <p>Extract a shadow to begin</p>
           <p class="hint">Ctrl+N extract &middot; Ctrl+B sidebar &middot; Ctrl+L council &middot; Ctrl+1-9 switch</p>
-        {/if}
-      </div>
-    {/if}
+        </div>
+      {/if}
+    </div>
   </div>
   <ToolPanelStack
     {openToolIds}
@@ -610,25 +641,6 @@
       createAgent(config);
     }}
     oncancel={() => (showSpawnDialog = false)}
-  />
-{/if}
-
-{#if viewingSavedAgent}
-  <HistoryPanel
-    agentId={viewingSavedAgent.id}
-    sessions={viewingSavedAgent.sessions}
-    onload={(session) => {
-      // Restore this agent with the selected session
-      const saved = viewingSavedAgent;
-      viewingSavedAgent = null;
-      if (saved) {
-        restoreAgent({
-          ...saved,
-          sessions: saved.sessions,
-        }, session.sessionId);
-      }
-    }}
-    onclose={() => (viewingSavedAgent = null)}
   />
 {/if}
 
@@ -655,6 +667,16 @@
   }
 
   .main-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .main-content {
     flex: 1;
     display: flex;
     min-width: 0;
@@ -693,77 +715,5 @@
     margin-top: 8px !important;
     font-size: 11px !important;
     opacity: 0.6;
-  }
-
-  .restore-bar {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    padding: 24px 32px;
-    background: var(--bg-panel-2, #201734);
-    border: 1px solid var(--accent-purple, #be95ff);
-    border-radius: 12px;
-    max-width: 400px;
-  }
-
-  .restore-text {
-    font-size: 13px;
-    color: var(--text-primary, #f2f4f8);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-  }
-
-  .restore-names {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-
-  .restore-name {
-    font-size: 11px;
-    padding: 3px 10px;
-    border-radius: 4px;
-    background: rgba(190, 149, 255, 0.12);
-    color: var(--accent-purple, #be95ff);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-  }
-
-  .restore-actions {
-    display: flex;
-    gap: 8px;
-  }
-
-  .restore-btn {
-    padding: 8px 20px;
-    border: none;
-    border-radius: 8px;
-    background: var(--accent-purple, #be95ff);
-    color: #140d22;
-    font-size: 12px;
-    font-weight: 600;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-
-  .restore-btn:hover {
-    background: #d5bbff;
-  }
-
-  .dismiss-btn {
-    padding: 8px 16px;
-    border: 1px solid var(--border-subtle, #35274f);
-    border-radius: 8px;
-    background: transparent;
-    color: var(--text-secondary, #dde1e6);
-    font-size: 12px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-
-  .dismiss-btn:hover {
-    background: var(--bg-panel-2, #201734);
   }
 </style>

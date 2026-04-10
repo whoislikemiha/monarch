@@ -1,22 +1,9 @@
 <script lang="ts">
   import type { Agent, Project, SessionRecord, ShadowIdentity } from "./types";
 
-  interface SavedAgentInfo {
-    id: string;
-    name: string;
-    projectId?: string;
-    provider?: string;
-    model?: string;
-    thinkingLevel?: string;
-    cwd?: string;
-    shadow?: ShadowIdentity;
-    sessions: SessionRecord[];
-  }
-
   interface ProjectGroup {
     project?: Project;
     agents: Agent[];
-    savedAgents: SavedAgentInfo[];
   }
 
   /** Snapshot of the clicked row passed to onsavetemplate. */
@@ -32,27 +19,25 @@
   let {
     agents,
     projects = [],
-    savedAgents = [],
+    collapsed = false,
     activeId,
     councilMode = false,
     onselect,
     oncreate,
     onkill,
     oncouncil,
-    onviewhistory,
     oneditproject,
     onsavetemplate,
   }: {
     agents: Agent[];
     projects?: Project[];
-    savedAgents?: SavedAgentInfo[];
+    collapsed?: boolean;
     activeId: string | null;
     councilMode?: boolean;
     onselect: (id: string) => void;
     oncreate: () => void;
     onkill: (id: string) => void;
     oncouncil?: () => void;
-    onviewhistory?: (saved: SavedAgentInfo) => void;
     oneditproject?: (project: Project) => void;
     onsavetemplate?: (source: TemplateSource) => void;
   } = $props();
@@ -77,22 +62,6 @@
     };
   }
 
-  function openSavedMenu(e: MouseEvent, saved: SavedAgentInfo) {
-    e.preventDefault();
-    contextMenu = {
-      x: e.clientX,
-      y: e.clientY,
-      source: {
-        name: saved.shadow?.shadowName || saved.name,
-        provider: saved.provider,
-        model: saved.model,
-        thinkingLevel: saved.thinkingLevel,
-        cwd: saved.cwd,
-        shadow: saved.shadow,
-      },
-    };
-  }
-
   function closeContextMenu() {
     contextMenu = null;
   }
@@ -105,22 +74,17 @@
 
   let runningCount = $derived(agents.filter((a) => a.status === "running").length);
 
-  // Saved agents that aren't currently active
-  let inactiveSaved = $derived(
-    savedAgents.filter((s) => !agents.some((a) => a.id === s.id || a.name === s.name))
-  );
-
-  // Group both active agents and saved agents by project
+  // Group agents by project
   let projectGroups = $derived.by(() => {
     const projectMap = new Map<string, Project>();
     for (const p of projects) projectMap.set(p.id, p);
 
     const groups = new Map<string, ProjectGroup>();
-    const ungrouped: ProjectGroup = { project: undefined, agents: [], savedAgents: [] };
+    const ungrouped: ProjectGroup = { project: undefined, agents: [] };
 
     function ensureGroup(projectId: string): ProjectGroup {
       if (!groups.has(projectId)) {
-        groups.set(projectId, { project: projectMap.get(projectId), agents: [], savedAgents: [] });
+        groups.set(projectId, { project: projectMap.get(projectId), agents: [] });
       }
       return groups.get(projectId)!;
     }
@@ -133,133 +97,120 @@
       }
     }
 
-    for (const saved of inactiveSaved) {
-      if (saved.projectId && projectMap.has(saved.projectId)) {
-        ensureGroup(saved.projectId).savedAgents.push(saved);
-      } else {
-        ungrouped.savedAgents.push(saved);
-      }
-    }
-
     const result: ProjectGroup[] = [...groups.values()];
-    if (ungrouped.agents.length > 0 || ungrouped.savedAgents.length > 0) {
+    if (ungrouped.agents.length > 0) {
       result.push(ungrouped);
     }
     return result;
   });
 </script>
 
-<aside class="sidebar">
-  <div class="sidebar-header">
-    <h1>Monarch</h1>
-    <button class="btn-new" onclick={oncreate} title="Extract Shadow (Ctrl+N)">+</button>
-  </div>
-
-  <div class="agent-list">
-    {#each projectGroups as group}
-      {#if group.project}
-        <div class="section-label project-label">
-          <button
-            class="project-name-btn"
-            onclick={() => oneditproject?.(group.project!)}
-            title="Edit project instructions"
-          >
-            <span class="project-icon">/</span>{group.project.name}
-          </button>
-        </div>
-      {:else if group.agents.length > 0 || group.savedAgents.length > 0}
-        <div class="section-label">Shadows</div>
+<aside class="sidebar" class:collapsed>
+  {#if collapsed}
+    <!-- Collapsed rail view -->
+    <div class="rail">
+      <div class="rail-icon" title="Monarch">M</div>
+      <button class="rail-btn" onclick={oncreate} title="Extract Shadow (Ctrl+N)">+</button>
+      {#if runningCount >= 2 && oncouncil}
+        <button class="rail-btn council-rail-btn" class:active={councilMode} onclick={oncouncil} title="Council Mode (Ctrl+L)">C</button>
       {/if}
-      {#each group.agents as agent (agent.id)}
-        <div
-          class="agent-item"
-          class:active={agent.id === activeId}
-          onclick={() => onselect(agent.id)}
-          onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') onselect(agent.id); }}
-          oncontextmenu={(e: MouseEvent) => openAgentMenu(e, agent)}
-          role="button"
-          tabindex="0"
-        >
-          <span class="status-dot {agent.isStreaming ? 'streaming' : agent.status}"></span>
-          <div class="agent-info">
-            <span class="agent-name">{agent.name}</span>
-            {#if agent.shadow}
-              <span class="agent-grade">{agent.shadow.shadowGrade}</span>
-            {:else if agent.model}
-              <span class="agent-model">{agent.model}</span>
-            {/if}
+    </div>
+  {:else}
+    <!-- Full sidebar -->
+    <div class="sidebar-header">
+      <h1>Monarch</h1>
+      <button class="btn-new" onclick={oncreate} title="Extract Shadow (Ctrl+N)">+</button>
+    </div>
+
+    <div class="agent-list">
+      {#each projectGroups as group}
+        {#if group.project}
+          <div class="section-label project-label">
+            <button
+              class="project-name-btn"
+              onclick={() => oneditproject?.(group.project!)}
+              title="Edit project instructions"
+            >
+              <span class="project-icon">/</span>{group.project.name}
+            </button>
           </div>
-          <button
-            class="btn-kill"
-            onclick={(e: MouseEvent) => { e.stopPropagation(); onkill(agent.id); }}
-            title="Kill"
+        {:else if group.agents.length > 0}
+          <div class="section-label">Shadows</div>
+        {/if}
+        {#each group.agents as agent (agent.id)}
+          <div
+            class="agent-item"
+            class:active={agent.id === activeId}
+            class:standby={agent.status === "stopped"}
+            onclick={() => onselect(agent.id)}
+            onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') onselect(agent.id); }}
+            oncontextmenu={(e: MouseEvent) => openAgentMenu(e, agent)}
+            role="button"
+            tabindex="0"
           >
-            &times;
-          </button>
-        </div>
-      {/each}
-      {#each group.savedAgents as saved (saved.id)}
-        <button
-          class="agent-item saved"
-          onclick={() => onviewhistory?.(saved)}
-          oncontextmenu={(e: MouseEvent) => openSavedMenu(e, saved)}
-        >
-          <span class="status-dot stopped"></span>
-          <div class="agent-info">
-            <span class="agent-name">{saved.name}</span>
-            <span class="agent-meta">
-              {saved.sessions.length} session{saved.sessions.length !== 1 ? 's' : ''}
-              {#if saved.model}
-                &middot; {saved.model}
+            <span class="status-dot {agent.isStreaming ? 'streaming' : agent.status}"></span>
+            <div class="agent-info">
+              <span class="agent-name">{agent.name}</span>
+              {#if agent.shadow}
+                <span class="agent-grade">{agent.shadow.shadowGrade}</span>
+              {:else if agent.model}
+                <span class="agent-model">{agent.model}</span>
               {/if}
-            </span>
+            </div>
+            <button
+              class="btn-kill"
+              onclick={(e: MouseEvent) => { e.stopPropagation(); onkill(agent.id); }}
+              title="Kill"
+            >
+              &times;
+            </button>
           </div>
-        </button>
+        {/each}
       {/each}
-    {/each}
-  </div>
-
-  {#if agents.length === 0 && inactiveSaved.length === 0}
-    <div class="empty-state">
-      No shadows extracted.<br />Click + to extract one.
     </div>
-  {/if}
 
-  {#if contextMenu}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div
-      class="context-menu-backdrop"
-      role="presentation"
-      onclick={closeContextMenu}
-      oncontextmenu={(e: MouseEvent) => { e.preventDefault(); closeContextMenu(); }}
-    ></div>
-    <div
-      class="context-menu"
-      style:left="{contextMenu.x}px"
-      style:top="{contextMenu.y}px"
-      role="menu"
-    >
-      <button
-        class="context-menu-item"
-        onclick={handleSaveTemplate}
-        role="menuitem"
+    {#if agents.length === 0}
+      <div class="empty-state">
+        No shadows extracted.<br />Click + to extract one.
+      </div>
+    {/if}
+
+    {#if contextMenu}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div
+        class="context-menu-backdrop"
+        role="presentation"
+        onclick={closeContextMenu}
+        oncontextmenu={(e: MouseEvent) => { e.preventDefault(); closeContextMenu(); }}
+      ></div>
+      <div
+        class="context-menu"
+        style:left="{contextMenu.x}px"
+        style:top="{contextMenu.y}px"
+        role="menu"
       >
-        Save as template
-      </button>
-    </div>
-  {/if}
+        <button
+          class="context-menu-item"
+          onclick={handleSaveTemplate}
+          role="menuitem"
+        >
+          Save as template
+        </button>
+      </div>
+    {/if}
 
-  {#if runningCount >= 2 && oncouncil}
-    <div class="council-section">
-      <button
-        class="council-btn"
-        class:active={councilMode}
-        onclick={oncouncil}
-      >
-        Council Mode
-        <span class="council-shortcut">Ctrl+L</span>
-      </button>
-    </div>
+    {#if runningCount >= 2 && oncouncil}
+      <div class="council-section">
+        <button
+          class="council-btn"
+          class:active={councilMode}
+          onclick={oncouncil}
+        >
+          Council Mode
+          <span class="council-shortcut">Ctrl+L</span>
+        </button>
+      </div>
+    {/if}
   {/if}
 </aside>
 
@@ -272,6 +223,62 @@
     display: flex;
     flex-direction: column;
     user-select: none;
+    transition: width 0.15s ease, min-width 0.15s ease;
+  }
+
+  .sidebar.collapsed {
+    width: 42px;
+    min-width: 42px;
+  }
+
+  .rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0;
+  }
+
+  .rail-icon {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--accent-purple, #be95ff);
+    font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 8px;
+    margin-bottom: 4px;
+  }
+
+  .rail-btn {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: var(--bg-panel-2);
+    color: var(--accent-purple);
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+    font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
+  }
+
+  .rail-btn:hover {
+    background: var(--bg-panel-3);
+    color: #e2d4ff;
+  }
+
+  .council-rail-btn.active {
+    background: rgba(190, 149, 255, 0.12);
+    border-color: var(--accent-purple, #be95ff);
+    color: var(--accent-purple, #be95ff);
   }
 
   .sidebar-header {
@@ -376,10 +383,10 @@
     background: var(--bg-panel-2);
     color: var(--text-primary);
   }
-  .agent-item.saved {
-    opacity: 0.7;
+  .agent-item.standby {
+    opacity: 0.5;
   }
-  .agent-item.saved:hover {
+  .agent-item.standby:hover {
     opacity: 1;
   }
 
@@ -438,14 +445,6 @@
   .agent-grade {
     font-size: 10px;
     color: var(--accent-purple, #be95ff);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .agent-meta {
-    font-size: 10px;
-    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

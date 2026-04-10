@@ -92,6 +92,9 @@ pub fn run() {
             // Project detection
             agent::detect_project,
             agent::read_project_instructions,
+            // UI state
+            db::db_get_ui_state,
+            db::db_set_ui_state,
             // Toolbox
             toolbox::toolbox_list_tools,
             toolbox::placeholder::toolbox_placeholder_ping,
