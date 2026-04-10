@@ -63,7 +63,7 @@ The one-line fix that the review identified as a true merge blocker.
 
 **Notes (Wave 0):**
 
-- MON-29 PR: _pending_ — fix landed as a new `emit_state_event` helper alongside
+- MON-29 PR: https://github.com/whoislikemiha/monarch/pull/18 — fix landed as a new `emit_state_event` helper alongside
   the existing `emit_event`; the shared helper is untouched, so Wave 1's
   MON-38 is free to move serialization out of the write lock without
   refactoring a shared signature. State-emit call sites now clone
