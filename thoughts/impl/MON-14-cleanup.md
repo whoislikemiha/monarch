@@ -56,7 +56,7 @@ Order comes from the agentic-debate review recommendation:
 
 The one-line fix that the review identified as a true merge blocker.
 
-- [ ] **MON-29** — Fix double JSON encoding on `agent-state-{id}` channel  · Urgent · `refactor`, `Bug`
+- [ ] **MON-29** — Fix double JSON encoding on `agent-state-{id}` channel  · Urgent · `refactor`, `Bug` — _In review (merged to Phase 1; awaits master)_
   - Done when: `emit_event` stops wrapping already-serialized JSON in another
     JSON envelope; frontend drops its `JSON.parse` of the inner payload;
     one-frame round trip verified in dev.
@@ -79,11 +79,11 @@ The one-line fix that the review identified as a true merge blocker.
 These four can run in any order or in parallel. They touch different files
 and have no cross-dependencies beyond Wave 0.
 
-- [ ] **MON-38** — Serialize `LiveAgentState` outside the write lock  · High · `performance`
+- [ ] **MON-38** — Serialize `LiveAgentState` outside the write lock  · High · `performance` — _In review (merged to Phase 1; awaits master)_
   - Done when: `apply_and_maybe_emit` + `rebuild_state_from_session` + the
     debounce task all `clone` → `drop(guard)` → `to_string`. Reader throughput
     is no longer O(history) per event under load.
-- [ ] **MON-30** — Fix debounce cancellation race on agent kill/destroy  · High · `Bug`
+- [ ] **MON-30** — Fix debounce cancellation race on agent kill/destroy  · High · `Bug` — _In review (branch based on Phase 1)_
   - Done when: a killed or destroyed agent cannot emit a stale snapshot from
     a still-running debounce task. Generation / cancelled flag or `Notify`
     drop — whichever is cheaper.
@@ -118,6 +118,29 @@ and have no cross-dependencies beyond Wave 0.
   need the emit; making it conditional would require `emit_state_event`
   signature churn that the briefing explicitly forbade. Left in the
   parking lot with a declined note.
+- MON-30 PR: _TBD_ — fix structure: split `AgentStateEntry` into an outer
+  struct holding `AtomicU64 cancel_generation` (lock-free) + inner
+  `RwLock<AgentStateInner>` for `state` / `dirty` / `debounce_handle`. The
+  debounce closure in `apply_and_maybe_emit` now snapshots `cancel_generation`
+  at arm time; the task body — factored into `try_consume_debounce_snapshot`
+  — re-reads the counter after taking the inner write lock and bails
+  (without clearing `dirty`) if it changed. The three kill/reset call sites
+  bump before acquiring the inner lock: `remove_live_entry` (sync —
+  `fetch_add` runs before `try_write`), `session_destroyed` handler, and
+  `rebuild_state_from_session`. Acquire/Release ordering pairs the sync
+  bump with the task's post-lock check. `cargo check`, `cargo clippy` (no
+  new warnings — same 3 pre-existing: MON-35's `too_many_arguments` ×2 and
+  MON-37's `non-binding let`). Regression test gap logged in the parking
+  lot — no Rust test harness exists in the repo yet.
+
+- Audit note for the next agent reading the MON-30 diff: this changes the
+  lock topology around `AgentStateEntry`. Anywhere you see
+  `entry.write().await` / `entry.try_write()` historically, it is now
+  `entry.inner.write().await` / `entry.inner.try_write()`. The outer
+  `AgentStateEntry` is lock-free and exposes `cancel_generation` directly;
+  the three `guard.state` / `guard.dirty` / `guard.debounce_handle` fields
+  now live on the inner struct but with identical names, so the body of
+  each guarded block is unchanged.
 
 ---
 
@@ -212,6 +235,24 @@ whether to file, fold into an existing issue, or decline.
   `emit_state_event` signature churn that the MON-38 briefing explicitly
   forbade ("other Wave 1 issues are not expecting churn there"). Leaving
   the wasted one-emit-per-rebuild as the better tradeoff.
+
+- **No working Rust test harness.** Discovered during MON-30 — the repo
+  has zero `#[test]` or `#[tokio::test]` functions and no CI workflow. I
+  added a `#[cfg(test)] mod tests` to `src-tauri/src/agent.rs` exercising
+  `try_consume_debounce_snapshot` (arm → bump gen → assert no emit and
+  `dirty` preserved, plus the happy path and `remove_live_entry`
+  invalidation case), but the test binary fails to start on Windows with
+  `STATUS_ENTRYPOINT_NOT_FOUND` (`0xc0000139`) — a Tauri-on-Windows DLL
+  symbol mismatch that only bites non-GUI binaries. Gating the tests on
+  `#[cfg(not(target_os = "windows"))]` was rejected as dead code (no CI,
+  dev machine is Windows), so the test module was removed and the helper
+  `try_consume_debounce_snapshot` was kept in place as a pure async
+  function that a future harness can call with no `AppHandle` dependency.
+  The MON-30 acceptance bullet for a regression test is unmet pending
+  this. Candidate fixes: add a GitHub Actions workflow running `cargo
+  test --lib` on `ubuntu-latest`, or restructure so lock-free helpers
+  live in a sub-crate that does not link Tauri. Worth filing before Wave
+  2 kicks off — Wave 2 is the refactor-heavy track and will want tests.
 
 ---
 

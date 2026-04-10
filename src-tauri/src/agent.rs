@@ -2,6 +2,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -95,8 +96,20 @@ impl SidecarProcess {
 /// Per-agent live state entry. Holds the assembled `LiveAgentState` plus the
 /// debounce coalescing state used by the reader task. Kept separate from the
 /// wire type so `LiveAgentState` stays purely data.
+///
+/// MON-30: `cancel_generation` lives outside the inner `RwLock` so sync kill
+/// paths (`remove_live_entry`, reached from the sync `kill_agent` Tauri
+/// command) can invalidate an in-flight debounce without trying to acquire a
+/// tokio lock from a sync context. Any debounce task captures the generation
+/// at arm time and bails after the lock handoff if it no longer matches.
 #[derive(Default)]
 pub struct AgentStateEntry {
+    pub inner: RwLock<AgentStateInner>,
+    pub cancel_generation: AtomicU64,
+}
+
+#[derive(Default)]
+pub struct AgentStateInner {
     pub state: LiveAgentState,
     /// Set true by `message_update`; cleared when the debounce task fires and
     /// emits. Gives the debounce task a way to skip redundant emits if a
@@ -116,7 +129,7 @@ pub struct AgentManager {
     /// `agent-state-{id}`. Outer DashMap is sync-friendly; inner RwLock is
     /// tokio-native because the reader task is async. Entries are lazily
     /// created on first event for an agent.
-    live_states: Arc<DashMap<String, Arc<RwLock<AgentStateEntry>>>>,
+    live_states: Arc<DashMap<String, Arc<AgentStateEntry>>>,
     /// Broadcast channel for forwarding events to WebSocket clients
     pub ws_broadcast: broadcast::Sender<WsBroadcast>,
     /// Stored AppHandle for WS-initiated commands that need sidecar access
@@ -274,21 +287,26 @@ impl AgentManager {
     }
 
     /// Get or lazily create the live-state entry for an agent.
-    fn live_entry(&self, agent_id: &str) -> Arc<RwLock<AgentStateEntry>> {
+    fn live_entry(&self, agent_id: &str) -> Arc<AgentStateEntry> {
         self.live_states
             .entry(agent_id.to_string())
-            .or_insert_with(|| Arc::new(RwLock::new(AgentStateEntry::default())))
+            .or_insert_with(|| Arc::new(AgentStateEntry::default()))
             .clone()
     }
 
     /// Drop an agent's live-state entry entirely (on kill).
+    ///
+    /// MON-30: bump `cancel_generation` unconditionally **before** the
+    /// best-effort abort. The bump is lock-free and synchronously visible
+    /// (`Release` ordering pairs with the debounce task's `Acquire` load
+    /// after it takes the inner write lock), so any in-flight debounce that
+    /// races past this point observes the new generation and bails on its
+    /// gen check. The `try_write` abort still runs as a cleanup path for the
+    /// common case where no debounce is queued.
     fn remove_live_entry(&self, agent_id: &str) {
         if let Some((_, entry)) = self.live_states.remove(agent_id) {
-            // Best-effort abort any in-flight debounce so it doesn't emit
-            // after the entry is gone. We try_write here to avoid blocking a
-            // sync caller; if the lock is held right now the debounce task
-            // itself is running and will observe the gone entry shortly.
-            if let Ok(mut guard) = entry.try_write() {
+            entry.cancel_generation.fetch_add(1, Ordering::Release);
+            if let Ok(mut guard) = entry.inner.try_write() {
                 if let Some(h) = guard.debounce_handle.take() {
                     h.abort();
                 }
@@ -384,7 +402,7 @@ impl AgentManager {
             let entry = self.live_entry(agent_id);
             // Block briefly on the write lock. Recovery is rare and
             // single-threaded per agent, so contention is effectively zero.
-            let mut guard = match entry.try_write() {
+            let mut guard = match entry.inner.try_write() {
                 Ok(g) => g,
                 Err(_) => {
                     // Someone else is mutating; skip the emit rather than
@@ -463,7 +481,13 @@ impl AgentManager {
         };
 
         let entry = self.live_entry(agent_id);
-        let mut guard = entry.write().await;
+        // MON-30: bump before acquiring the inner write lock. This replaces
+        // the assembled state wholesale, so any debounce task armed against
+        // the pre-rebuild state must bail once the lock hands over. The
+        // `Release` bump pairs with the debounce task's `Acquire` load after
+        // it takes the lock.
+        entry.cancel_generation.fetch_add(1, Ordering::Release);
+        let mut guard = entry.inner.write().await;
         if let Some(h) = guard.debounce_handle.take() {
             h.abort();
         }
@@ -555,7 +579,7 @@ async fn handle_sidecar_event(
     app: &AppHandle,
     db: &Arc<Database>,
     session_map: &AgentSessionMap,
-    live_states: &Arc<DashMap<String, Arc<RwLock<AgentStateEntry>>>>,
+    live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
     ws_tx: &broadcast::Sender<WsBroadcast>,
     line: &str,
 ) {
@@ -595,7 +619,13 @@ async fn handle_sidecar_event(
             );
             // Clear the live state for this agent so a fresh session starts clean.
             if let Some(entry) = live_states.get(agent_id).map(|e| e.clone()) {
-                let mut guard = entry.write().await;
+                // MON-30: bump before acquiring the write lock. If a debounce
+                // task is already queued on the lock, it will observe the new
+                // generation after handoff and bail; if it's still in its
+                // sleep window, the later arrival will see the bump and bail
+                // as well. Either way, only the reset snapshot is emitted.
+                entry.cancel_generation.fetch_add(1, Ordering::Release);
+                let mut guard = entry.inner.write().await;
                 if let Some(h) = guard.debounce_handle.take() {
                     h.abort();
                 }
@@ -689,13 +719,44 @@ async fn handle_sidecar_event(
     }
 }
 
+/// MON-30: body of the debounce task, factored out so it can be unit-tested
+/// without an `AppHandle`. Takes the inner write lock, clears the handle, and
+/// decides whether the arm is still valid:
+///
+/// - If `cancel_generation` no longer matches `arm_gen`, the arm was
+///   invalidated by a concurrent kill / `session_destroyed` /
+///   `rebuild_state_from_session`. Return `None` **without clearing `dirty`**
+///   so a later event on a still-alive entry will re-arm and flush the
+///   latest state.
+/// - If `dirty` is false, a terminal event already flushed since the arm.
+///   Return `None`.
+/// - Otherwise clear `dirty`, clone the state under the guard, and return
+///   the snapshot so the caller can `emit_state_event` with the guard dropped.
+async fn try_consume_debounce_snapshot(
+    entry: &Arc<AgentStateEntry>,
+    arm_gen: u64,
+) -> Option<LiveAgentState> {
+    let mut g = entry.inner.write().await;
+    g.debounce_handle = None;
+    if entry.cancel_generation.load(Ordering::Acquire) != arm_gen {
+        return None;
+    }
+    if !g.dirty {
+        return None;
+    }
+    g.dirty = false;
+    let snapshot = g.state.clone();
+    drop(g);
+    Some(snapshot)
+}
+
 /// Route one inner event through `LiveAgentState::apply_event` and emit a
 /// snapshot on `agent-state-{id}` per the returned `ApplyOutcome`. No guard
 /// is held across the emit or across any await other than the lock acquire.
 async fn apply_and_maybe_emit(
     app: &AppHandle,
     ws_tx: &broadcast::Sender<WsBroadcast>,
-    live_states: &Arc<DashMap<String, Arc<RwLock<AgentStateEntry>>>>,
+    live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
     agent_id: &str,
     inner_event: &serde_json::Value,
 ) {
@@ -706,12 +767,12 @@ async fn apply_and_maybe_emit(
     // Lazy entry creation on first event for this agent.
     let entry = live_states
         .entry(agent_id.to_string())
-        .or_insert_with(|| Arc::new(RwLock::new(AgentStateEntry::default())))
+        .or_insert_with(|| Arc::new(AgentStateEntry::default()))
         .clone();
 
     // EmitNow branch: clone inside the guard, then drop(guard) before emit so
     // serialization runs without the RwLock write guard held (MON-38).
-    let mut guard = entry.write().await;
+    let mut guard = entry.inner.write().await;
     let outcome = guard.state.apply_event(inner_event);
 
     let snapshot_to_emit: Option<LiveAgentState> = match outcome {
@@ -726,23 +787,23 @@ async fn apply_and_maybe_emit(
         ApplyOutcome::Debounce => {
             guard.dirty = true;
             if guard.debounce_handle.is_none() {
+                // MON-30: snapshot the cancel generation at arm time. The
+                // debounce task compares against the current value after
+                // taking the inner write lock; if kill/destroy/rebuild
+                // bumped it in the meantime the task bails without emitting.
+                let arm_gen = entry.cancel_generation.load(Ordering::Acquire);
                 let entry_clone = entry.clone();
                 let agent_id_owned = agent_id.to_string();
                 let app_clone = app.clone();
                 let ws_tx_clone = ws_tx.clone();
                 let handle = tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(Duration::from_millis(DEBOUNCE_MILLIS)).await;
-                    let mut g = entry_clone.write().await;
-                    g.debounce_handle = None;
-                    if !g.dirty {
-                        return;
+                    if let Some(snapshot) =
+                        try_consume_debounce_snapshot(&entry_clone, arm_gen).await
+                    {
+                        let event_name = format!("agent-state-{}", agent_id_owned);
+                        emit_state_event(&app_clone, &ws_tx_clone, &event_name, &snapshot);
                     }
-                    g.dirty = false;
-                    // MON-38: clone + explicit drop before emit_state_event.
-                    let snapshot = g.state.clone();
-                    drop(g);
-                    let event_name = format!("agent-state-{}", agent_id_owned);
-                    emit_state_event(&app_clone, &ws_tx_clone, &event_name, &snapshot);
                 });
                 guard.debounce_handle = Some(handle);
             }
@@ -764,14 +825,14 @@ async fn apply_and_maybe_emit(
 async fn mark_agent_desynced(
     app: &AppHandle,
     ws_tx: &broadcast::Sender<WsBroadcast>,
-    live_states: &Arc<DashMap<String, Arc<RwLock<AgentStateEntry>>>>,
+    live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
     agent_id: &str,
 ) {
     let entry = live_states
         .entry(agent_id.to_string())
-        .or_insert_with(|| Arc::new(RwLock::new(AgentStateEntry::default())))
+        .or_insert_with(|| Arc::new(AgentStateEntry::default()))
         .clone();
-    let mut guard = entry.write().await;
+    let mut guard = entry.inner.write().await;
     guard.state.mark_desynced();
     // MON-38: clone + explicit drop before emit_state_event.
     let snapshot = guard.state.clone();
@@ -1217,7 +1278,7 @@ pub async fn get_agent_state(
         Some(e) => e.clone(),
         None => return Ok(None),
     };
-    let guard = entry.read().await;
+    let guard = entry.inner.read().await;
     Ok(Some(guard.state.clone()))
 }
 
