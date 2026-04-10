@@ -98,7 +98,7 @@ and have no cross-dependencies beyond Wave 0.
 
 **Notes (Wave 1):**
 
-- MON-38 PR: _pending_ — audit confirmed MON-29's refactor already moved
+- MON-38 PR: https://github.com/whoislikemiha/monarch/pull/19 — audit confirmed MON-29's refactor already moved
   `serde_json::to_string` out from under the write guard (all emit sites now
   use `emit_state_event(&LiveAgentState)` which serializes on the caller's
   stack, not in the guard). The MON-38 PR codifies the invariant by
