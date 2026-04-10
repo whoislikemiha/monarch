@@ -270,12 +270,12 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
             Ok(Value::Null)
         }
         "db_get_agents" => {
-            let agents = crate::db::ws_get_agents(&state.db)?;
+            let agents = state.db.get_agents_internal()?;
             serde_json::to_value(agents).map_err(MonarchError::from)
         }
         "db_delete_agent" => {
             let agent_id = str_field(&args, "agentId")?;
-            crate::db::ws_delete_agent(&state.db, agent_id)?;
+            state.db.delete_agent_internal(&agent_id)?;
             Ok(Value::Null)
         }
 
@@ -288,7 +288,7 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
         }
         "db_get_sessions" => {
             let agent_id = str_field(&args, "agentId")?;
-            let sessions = crate::db::ws_get_sessions(&state.db, agent_id)?;
+            let sessions = state.db.get_sessions_internal(&agent_id)?;
             serde_json::to_value(sessions).map_err(MonarchError::from)
         }
 
@@ -301,7 +301,7 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
         }
         "db_get_messages" => {
             let session_id = str_field(&args, "sessionId")?;
-            let messages = crate::db::ws_get_messages(&state.db, session_id)?;
+            let messages = state.db.get_messages_internal(&session_id)?;
             serde_json::to_value(messages).map_err(MonarchError::from)
         }
         "db_get_messages_with_ancestry" => {
@@ -314,13 +314,13 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
         "db_save_memory" => {
             let memory = serde_json::from_value(args.get("memory").cloned().unwrap_or(args.clone()))
                 .map_err(|e| MonarchError::invalid_input(format!("Invalid memory: {}", e)))?;
-            let id = crate::db::ws_save_memory(&state.db, memory)?;
+            let id = state.db.save_memory_internal(&memory)?;
             Ok(Value::Number(id.into()))
         }
         "db_get_memories" => {
             let agent_id = opt_str(&args, "agentId");
             let layer = opt_str(&args, "layer");
-            let memories = crate::db::ws_get_memories(&state.db, agent_id, layer)?;
+            let memories = state.db.get_memories_internal(agent_id.as_deref(), layer.as_deref())?;
             serde_json::to_value(memories).map_err(MonarchError::from)
         }
 
@@ -341,18 +341,18 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
 
         // ---- DB: Templates ----
         "db_list_agent_templates" => {
-            let templates = crate::db::ws_list_agent_templates(&state.db)?;
+            let templates = state.db.list_agent_templates_internal()?;
             serde_json::to_value(templates).map_err(MonarchError::from)
         }
         "db_save_agent_template" => {
             let template = serde_json::from_value(args.get("template").cloned().unwrap_or(args.clone()))
                 .map_err(|e| MonarchError::invalid_input(format!("Invalid template: {}", e)))?;
-            crate::db::ws_save_agent_template(&state.db, template)?;
+            state.db.save_agent_template_internal(&template)?;
             Ok(Value::Null)
         }
         "db_delete_agent_template" => {
             let template_id = str_field(&args, "templateId")?;
-            crate::db::ws_delete_agent_template(&state.db, template_id)?;
+            state.db.delete_agent_template_internal(&template_id)?;
             Ok(Value::Null)
         }
 
@@ -360,11 +360,11 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
         "db_upsert_project" => {
             let project = serde_json::from_value(args.get("project").cloned().unwrap_or(args.clone()))
                 .map_err(|e| MonarchError::invalid_input(format!("Invalid project: {}", e)))?;
-            crate::db::ws_upsert_project(&state.db, project)?;
+            state.db.upsert_project_internal(&project)?;
             Ok(Value::Null)
         }
         "db_get_projects" => {
-            let projects = crate::db::ws_get_projects(&state.db)?;
+            let projects = state.db.get_projects_internal()?;
             serde_json::to_value(projects).map_err(MonarchError::from)
         }
         "db_get_project_by_path" => {
@@ -375,18 +375,18 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
         "db_rename_project" => {
             let project_id = str_field(&args, "projectId")?;
             let name = str_field(&args, "name")?;
-            crate::db::ws_rename_project(&state.db, project_id, name)?;
+            state.db.rename_project_internal(&project_id, &name)?;
             Ok(Value::Null)
         }
         "db_update_project_instructions" => {
             let project_id = str_field(&args, "projectId")?;
             let instructions = opt_str(&args, "instructions");
-            crate::db::ws_update_project_instructions(&state.db, project_id, instructions)?;
+            state.db.update_project_instructions_internal(&project_id, instructions.as_deref())?;
             Ok(Value::Null)
         }
         "db_delete_project" => {
             let project_id = str_field(&args, "projectId")?;
-            crate::db::ws_delete_project(&state.db, project_id)?;
+            state.db.delete_project_internal(&project_id)?;
             Ok(Value::Null)
         }
 
