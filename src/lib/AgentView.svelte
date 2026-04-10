@@ -211,7 +211,25 @@
         startedAt: s.startedAt,
         messageCount: s.messageCount,
       }));
-      updateAgent((current) => ({ ...current, sessions }), agentId);
+      updateAgent((current) => {
+        const activeSessionId = current.sessionId;
+        const activeSession = activeSessionId
+          ? dbSessions.find((session: any) => session.id === activeSessionId)
+          : undefined;
+
+        return {
+          ...current,
+          sessions,
+          sessionStats: activeSession
+            ? {
+                totalTokens: activeSession.totalTokens ?? 0,
+                totalCost: activeSession.totalCost ?? 0,
+                messageCount: activeSession.messageCount ?? 0,
+                turnCount: Math.ceil((activeSession.messageCount ?? 0) / 2),
+              }
+            : current.sessionStats,
+        };
+      }, agentId);
       return sessions;
     } catch (e) {
       console.error("Failed to refresh sessions from DB:", e);
@@ -279,6 +297,13 @@
 
     switch (event.type) {
       case "session_ready":
+        updateAgent(
+          (current) => ({
+            ...current,
+            contextWindow: event.contextWindow ?? current.contextWindow,
+          }),
+          targetAgentId,
+        );
         setActivity("Shadow ready");
         items = [...items, { kind: "status", text: "Session ready" }];
         // If restoring, replay past messages into the sidecar's LLM context
@@ -848,6 +873,7 @@
       <AgentControls
         {isStreaming}
         {lastUsage}
+        contextWindow={agent.contextWindow}
         thinkingLevel={agent.thinkingLevel}
         model={agent.model}
         sessionStats={agent.sessionStats}

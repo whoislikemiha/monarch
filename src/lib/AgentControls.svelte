@@ -4,6 +4,7 @@
   let {
     isStreaming,
     lastUsage,
+    contextWindow,
     thinkingLevel,
     model,
     sessionStats,
@@ -12,6 +13,7 @@
   }: {
     isStreaming: boolean;
     lastUsage?: Usage;
+    contextWindow?: number;
     thinkingLevel?: string;
     model?: string;
     sessionStats?: SessionStats;
@@ -19,6 +21,7 @@
     onthinking: (level: string) => void;
   } = $props();
 
+  const DEFAULT_CONTEXT_WINDOW = 128000;
   const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
   let showThinkingPicker = $state(false);
 
@@ -29,10 +32,32 @@
   }
 
   let displayTokens = $derived(
-    sessionStats?.totalTokens ?? lastUsage?.totalTokens
+    sessionStats?.totalTokens ?? lastUsage?.totalTokens ?? 0
   );
   let displayCost = $derived(
     sessionStats?.totalCost ?? lastUsage?.cost?.total
+  );
+  let hasContextMeter = $derived(
+    contextWindow != null || sessionStats != null || lastUsage != null
+  );
+  let resolvedContextWindow = $derived(contextWindow ?? DEFAULT_CONTEXT_WINDOW);
+  let isEstimatedContextWindow = $derived(contextWindow == null);
+  let contextRatio = $derived(
+    displayTokens && resolvedContextWindow > 0
+      ? Math.min(displayTokens / resolvedContextWindow, 1)
+      : 0
+  );
+  let remainingTokens = $derived(
+    Math.max(resolvedContextWindow - displayTokens, 0)
+  );
+  let healthRatio = $derived(
+    resolvedContextWindow > 0 ? remainingTokens / resolvedContextWindow : 0
+  );
+  let contextFill = $derived(
+    healthRatio > 0 ? Math.max(healthRatio * 100, 4) : 0
+  );
+  let contextState = $derived(
+    healthRatio <= 0.1 ? "critical" : healthRatio <= 0.3 ? "warning" : "healthy"
   );
 </script>
 
@@ -65,13 +90,25 @@
       {/if}
     </div>
 
-    {#if displayTokens}
-      <span class="control-tag tokens">
-        {formatTokens(displayTokens)} tok
-        {#if displayCost}
-          &middot; ${displayCost.toFixed(4)}
-        {/if}
-      </span>
+    {#if hasContextMeter}
+      <div
+        class="context-meter"
+        class:warning={contextState === "warning"}
+        class:critical={contextState === "critical"}
+        title={`Context remaining: ${remainingTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens${isEstimatedContextWindow ? " (estimated window)" : ""}`}
+      >
+        <span class="context-label">ctx</span>
+        <div class="context-track">
+          <div class="context-fill" style:width={`${contextFill}%`}></div>
+        </div>
+        <span class="context-value">
+          {formatTokens(remainingTokens)} left
+        </span>
+      </div>
+
+      {#if displayCost}
+        <span class="control-tag tokens">${displayCost.toFixed(4)}</span>
+      {/if}
     {/if}
   </div>
 
@@ -115,6 +152,94 @@
 
   .control-tag.tokens {
     color: var(--text-muted);
+  }
+
+  .context-meter {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: min(320px, 52vw);
+    padding: 4px 9px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--success) 32%, var(--border-subtle));
+    background:
+      linear-gradient(180deg, rgba(66, 190, 101, 0.08), rgba(66, 190, 101, 0.02)),
+      var(--bg-panel-2);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  .context-meter.warning {
+    border-color: color-mix(in srgb, var(--warning) 50%, var(--border-subtle));
+    background:
+      linear-gradient(180deg, rgba(255, 233, 123, 0.08), rgba(255, 233, 123, 0.02)),
+      var(--bg-panel-2);
+  }
+
+  .context-meter.critical {
+    border-color: color-mix(in srgb, var(--error) 48%, var(--border-subtle));
+    background:
+      linear-gradient(180deg, rgba(238, 83, 150, 0.1), rgba(238, 83, 150, 0.03)),
+      var(--bg-panel-2);
+  }
+
+  .context-label,
+  .context-value {
+    font-size: 10px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .context-label {
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .context-value {
+    color: var(--text-secondary);
+  }
+
+  .context-track {
+    position: relative;
+    flex: 1;
+    min-width: 88px;
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background:
+      linear-gradient(90deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)),
+      rgba(9, 6, 16, 0.72);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+      inset 0 1px 3px rgba(0, 0, 0, 0.45);
+  }
+
+  .context-fill {
+    height: 100%;
+    border-radius: inherit;
+    background:
+      linear-gradient(90deg, color-mix(in srgb, var(--success) 76%, white 10%), var(--success));
+    box-shadow:
+      0 0 14px rgba(66, 190, 101, 0.36),
+      inset 0 0 12px rgba(255, 255, 255, 0.2);
+    transition: width 0.25s ease, background 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .context-meter.warning .context-fill {
+    background:
+      linear-gradient(90deg, color-mix(in srgb, var(--warning) 88%, white 10%), var(--warning));
+    box-shadow:
+      0 0 14px rgba(255, 233, 123, 0.32),
+      inset 0 0 10px rgba(255, 255, 255, 0.16);
+  }
+
+  .context-meter.critical .context-fill {
+    background:
+      linear-gradient(90deg, color-mix(in srgb, var(--error) 78%, white 8%), var(--error));
+    box-shadow:
+      0 0 16px rgba(238, 83, 150, 0.32),
+      inset 0 0 12px rgba(255, 255, 255, 0.16);
   }
 
   .control-btn {
@@ -197,5 +322,12 @@
 
   .abort-btn:hover {
     filter: brightness(1.08);
+  }
+
+  @media (max-width: 720px) {
+    .context-meter {
+      min-width: 100%;
+      order: 10;
+    }
   }
 </style>

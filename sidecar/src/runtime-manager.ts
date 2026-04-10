@@ -227,7 +227,11 @@ export class RuntimeManager {
 			promptRef,
 		});
 
-		this.emit({ type: "session_ready", agentId: cmd.agentId });
+		this.emit({
+			type: "session_ready",
+			agentId: cmd.agentId,
+			contextWindow: model?.contextWindow,
+		});
 	}
 
 	async destroySession(agentId: string): Promise<void> {

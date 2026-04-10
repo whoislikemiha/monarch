@@ -277,9 +277,13 @@ fn handle_sidecar_event(
     match event_type {
         "session_ready" => {
             let event_name = format!("agent-event-{}", agent_id);
+            let context_window = parsed
+                .get("contextWindow")
+                .and_then(|v| v.as_i64());
             let ready_event = serde_json::json!({
                 "type": "session_ready",
                 "agentId": agent_id,
+                "contextWindow": context_window,
             });
             let _ = app.emit(&event_name, ready_event.to_string());
         }

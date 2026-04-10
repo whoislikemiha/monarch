@@ -103,6 +103,7 @@ export type SidecarCommand =
 export interface SessionReadyEvent {
   type: "session_ready";
   agentId: string;
+  contextWindow?: number;
 }
 
 export interface SessionDestroyedEvent {

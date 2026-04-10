@@ -42,6 +42,7 @@ export interface Agent {
   stderrLines: string[];
   exitCode?: number | null;
   shadow?: ShadowIdentity;
+  contextWindow?: number;
   sessionId?: string;
   sessions: SessionRecord[];
   sourceSessionId?: string; // Session ancestry to replay when restoring/continuing
@@ -192,7 +193,7 @@ export interface ToolExecution {
 
 // Pi SDK events (via sidecar)
 export type PiEvent =
-  | { type: "session_ready"; agentId: string }
+  | { type: "session_ready"; agentId: string; contextWindow?: number }
   | { type: "agent_start" }
   | { type: "agent_end"; messages: PiMessage[] }
   | { type: "turn_start" }
