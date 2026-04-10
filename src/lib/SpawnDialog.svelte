@@ -18,37 +18,6 @@
   let modelInput = $state("");
   let thinkingLevel = $state("off");
   let cwd = $state("/home/miha");
-  // LM Studio context length for the selected model. Auto-detected from the
-  // native `/api/v0/models` endpoint when available, overridable by the user
-  // via the slider or presets below. Stored in tokens.
-  let lmStudioContextWindow: number = $state(8192);
-  // Set to true the first time the user touches the slider/presets, so that
-  // later model selections don't clobber an explicit override. Reset whenever
-  // the user leaves the LM Studio provider and comes back.
-  let lmStudioCtxUserOverride = $state(false);
-  // True when the active value was pre-filled from `max_context_length` for
-  // a model that wasn't loaded in LM Studio — drives the "not loaded" hint.
-  let lmStudioCtxFromMax = $state(false);
-  // True when the active value came from the discovery call (live or max),
-  // false when it's still the hardcoded default / manual.
-  let lmStudioCtxAutoDetected = $state(false);
-  const LMSTUDIO_CTX_MIN = 1024;
-  const LMSTUDIO_CTX_MAX = 262144;
-  const LMSTUDIO_CTX_STEP = 1024;
-  const LMSTUDIO_CTX_PRESETS = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
-
-  function clampCtxToSlider(n: number): number {
-    if (!Number.isFinite(n) || n <= 0) return LMSTUDIO_CTX_MIN;
-    const snapped = Math.round(n / LMSTUDIO_CTX_STEP) * LMSTUDIO_CTX_STEP;
-    return Math.min(LMSTUDIO_CTX_MAX, Math.max(LMSTUDIO_CTX_MIN, snapped));
-  }
-
-  function noteCtxUserOverride() {
-    lmStudioCtxUserOverride = true;
-    lmStudioCtxFromMax = false;
-    lmStudioCtxAutoDetected = false;
-  }
-
   function formatCtxTokens(n: number): string {
     if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + "M";
     if (n >= 1024) return (n / 1024).toFixed(n % 1024 === 0 ? 0 : 1) + "k";
@@ -271,28 +240,17 @@
     modelInput = fixedModelId || "";
     showDropdown = false;
     highlightedIndex = -1;
-    // Leaving (or re-entering) LM Studio drops any manual ctx override so
-    // the next model selection can auto-fill cleanly.
-    lmStudioCtxUserOverride = false;
-    lmStudioCtxFromMax = false;
-    lmStudioCtxAutoDetected = false;
     fetchModels(provider);
     fetchAuthStatus(provider);
   });
 
-  // Pre-fill the LM Studio context slider from the discovered model entry
-  // whenever the typed / selected model id matches one we have sizing for.
-  // User overrides win — once they touch the slider, stop auto-filling.
-  $effect(() => {
-    if (selectedProvider !== "lmstudio") return;
-    if (lmStudioCtxUserOverride) return;
+  // The LM Studio ModelInfo currently matching the typed id, if any. Drives
+  // the read-only context display and the value sent on spawn.
+  let selectedLmStudioModel = $derived.by(() => {
+    if (selectedProvider !== "lmstudio") return undefined;
     const id = modelInput.trim();
-    if (!id) return;
-    const match = allModels.find((m) => m.id === id);
-    if (!match || match.contextWindow == null) return;
-    lmStudioContextWindow = clampCtxToSlider(match.contextWindow);
-    lmStudioCtxFromMax = match.contextWindowIsMax === true;
-    lmStudioCtxAutoDetected = true;
+    if (!id) return undefined;
+    return allModels.find((m) => m.id === id);
   });
 
   function refreshModels() {
@@ -361,15 +319,19 @@
     const provider = selectedProvider;
     const model = fixedModelId || trimmed || undefined;
 
-    const ctxNum = Number(lmStudioContextWindow);
+    // LM Studio: take the auto-detected value straight from the discovered
+    // model entry. No user override path — if discovery didn't populate a
+    // value (older LM Studio, model not in list), send nothing and let the
+    // sidecar apply its default context window.
+    const detectedCtx = selectedLmStudioModel?.contextWindow;
     const config: AgentConfig = {
       provider,
       model,
       thinkingLevel: thinkingLevel !== "off" ? thinkingLevel : undefined,
       cwd: cwd || undefined,
       contextWindow:
-        provider === "lmstudio" && Number.isFinite(ctxNum) && ctxNum > 0
-          ? Math.floor(ctxNum)
+        provider === "lmstudio" && typeof detectedCtx === "number" && detectedCtx > 0
+          ? Math.floor(detectedCtx)
           : undefined,
     };
 
@@ -539,46 +501,23 @@
       {/if}
       {#if selectedProvider === "lmstudio"}
         <div class="lmstudio-context">
-          <label class="label" for="lmstudio-ctx">
+          <span class="label">
             Context window
-            <span class="lmstudio-ctx-value">{formatCtxTokens(lmStudioContextWindow)}</span>
-          </label>
-          <input
-            id="lmstudio-ctx"
-            type="range"
-            min={LMSTUDIO_CTX_MIN}
-            max={LMSTUDIO_CTX_MAX}
-            step={LMSTUDIO_CTX_STEP}
-            value={lmStudioContextWindow}
-            oninput={(e) => {
-              lmStudioContextWindow = Number((e.currentTarget as HTMLInputElement).value);
-              noteCtxUserOverride();
-            }}
-          />
-          <div class="lmstudio-ctx-presets">
-            {#each LMSTUDIO_CTX_PRESETS as preset}
-              <button
-                type="button"
-                class="lmstudio-ctx-preset"
-                class:active={lmStudioContextWindow === preset}
-                onclick={() => {
-                  lmStudioContextWindow = preset;
-                  noteCtxUserOverride();
-                }}
-              >
-                {formatCtxTokens(preset)}
-              </button>
-            {/each}
-          </div>
+            {#if selectedLmStudioModel?.contextWindow}
+              <span class="lmstudio-ctx-value">
+                {formatCtxTokens(selectedLmStudioModel.contextWindow)}
+              </span>
+            {/if}
+          </span>
           <div class="field-hint">
-            {#if lmStudioCtxFromMax}
+            {#if selectedLmStudioModel?.contextWindow && selectedLmStudioModel.contextWindowIsMax}
               Model not loaded in LM Studio — using its max context. Load it there and refresh for the live value.
-            {:else if lmStudioCtxUserOverride}
-              Manual override — reselect the model to auto-fill again.
-            {:else if lmStudioCtxAutoDetected}
-              Auto-detected from LM Studio. Drag to override if needed.
+            {:else if selectedLmStudioModel?.contextWindow}
+              Auto-detected from LM Studio.
+            {:else if modelInput.trim()}
+              No context length reported for this model. Sidecar default will be used.
             {:else}
-              Match the context length you loaded the model with in LM Studio, or pick a model to auto-fill.
+              Pick a model above to see its context window.
             {/if}
           </div>
         </div>
@@ -860,41 +799,6 @@
     font-size: 12px;
     text-transform: none;
     letter-spacing: 0;
-  }
-
-  .lmstudio-context input[type="range"] {
-    width: 100%;
-    accent-color: var(--accent-purple, #be95ff);
-    cursor: pointer;
-  }
-
-  .lmstudio-ctx-presets {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-
-  .lmstudio-ctx-preset {
-    padding: 3px 8px;
-    border: 1px solid var(--border-subtle, #35274f);
-    border-radius: 999px;
-    background: var(--bg-panel-2, #201734);
-    color: var(--text-secondary, #dde1e6);
-    font-size: 10px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
-  }
-
-  .lmstudio-ctx-preset:hover {
-    background: var(--bg-panel-3, #2a1e45);
-    border-color: rgba(190, 149, 255, 0.4);
-  }
-
-  .lmstudio-ctx-preset.active {
-    border-color: var(--accent-purple, #be95ff);
-    color: var(--accent-purple, #be95ff);
-    background: rgba(190, 149, 255, 0.1);
   }
 
   .preset-grid {
