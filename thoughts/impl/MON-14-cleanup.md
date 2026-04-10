@@ -142,6 +142,27 @@ and have no cross-dependencies beyond Wave 0.
   now live on the inner struct but with identical names, so the body of
   each guarded block is unchanged.
 
+- MON-37 PR: _pending_ — replaces the per-event `spawn_blocking`
+  fire-and-forget in `handle_sidecar_event` with a bounded
+  `tokio::sync::mpsc::channel::<PersistCommand>(256)` drained by a single
+  manager-lifetime consumer task spawned in `AgentManager::new`. FIFO
+  ordering restored (one consumer), DB errors surface via `eprintln!` +
+  `mark_agent_desynced` (dev indicator flips like it does for parser
+  failures), and bounded back-pressure stalls the reader before unbounded
+  memory growth. `PersistCommand` enum (`LogEvent`,
+  `SaveAssistantMessage`, `SaveToolResult`) resolves `session_id` on the
+  producer side so ordering is meaningful even if the session map
+  mutates between enqueue and apply. `AgentManager::new` now takes
+  `Arc<Database>`; `lib.rs` passes `database.clone()`. `ensure_sidecar`
+  no longer takes `db` (reader task captures `persist_tx` clone instead).
+  `app_handle` slot is now `Arc<Mutex<Option<AppHandle>>>` so the
+  consumer can read it for the desync path without a back-reference to
+  the manager. `tracing` not added — `eprintln!` is consistent with the
+  rest of `agent.rs`; parking-lot item to migrate logging. `cargo check`,
+  `cargo clippy` (no new warnings — same 2 pre-existing
+  `too_many_arguments` on `spawn_agent` / `ws_spawn_agent`) clean.
+  Manual smoke pending.
+
 - MON-36 PR: https://github.com/whoislikemiha/monarch/pull/21 — wires sidecar teardown into the
   Tauri exit path. Key observation that shrank the diff: the sidecar's
   `index.ts` already has `rl.on("close", shutdown)` wired to
@@ -256,6 +277,15 @@ whether to file, fold into an existing issue, or decline.
   `emit_state_event` signature churn that the MON-38 briefing explicitly
   forbade ("other Wave 1 issues are not expecting churn there"). Leaving
   the wasted one-emit-per-rebuild as the better tradeoff.
+
+- **Migrate `agent.rs` logging from `eprintln!` to `tracing`.** MON-37
+  surfaced this: the acceptance bullet "logs errors via `tracing`" was
+  satisfied in spirit with `eprintln!("[monarch] persist failed: ..")`
+  because the entire rest of `agent.rs` uses `eprintln!`. Introducing
+  `tracing` just for the persist path would have created two logging
+  conventions in the same file and been out of scope for a Wave 1
+  cleanup. Worth doing as a file-wide sweep, not a one-site carve-out.
+  Candidate Wave 2 item.
 
 - **No working Rust test harness.** Discovered during MON-30 — the repo
   has zero `#[test]` or `#[tokio::test]` functions and no CI workflow. I
