@@ -192,14 +192,6 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
             crate::agent::ws_send_command(&state.agent_mgr, &state.db, id, command_json)?;
             Ok(Value::Null)
         }
-        "broadcast_prompt" => {
-            let agent_ids: Vec<String> = serde_json::from_value(
-                args.get("agentIds").cloned().unwrap_or(Value::Array(vec![]))
-            ).map_err(|e| e.to_string())?;
-            let message = str_field(&args, "message")?;
-            crate::agent::ws_broadcast_prompt(&state.agent_mgr, &state.db, agent_ids, message)?;
-            Ok(Value::Null)
-        }
         "kill_agent" => {
             let id = str_field(&args, "id")?;
             crate::agent::ws_kill_agent(&state.agent_mgr, id)?;

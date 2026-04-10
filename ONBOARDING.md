@@ -347,10 +347,9 @@ Model discovery lives in [`src-tauri/src/models.rs`](./src-tauri/src/models.rs) 
 
 ```
 App.svelte                       — root: agents[], activeId, session restore, keybindings
-├── Sidebar.svelte               — active + saved agents, council toggle
+├── Sidebar.svelte               — active + saved agents
 ├── SpawnDialog.svelte           — new agent: shadow identity + model picker
 ├── HistoryPanel.svelte          — session browser for a saved agent
-├── CouncilView.svelte           — multi-agent broadcast mode
 ├── AgentView.svelte             — main workspace per active agent
 │   ├── AgentHeader.svelte       — name, model, shadow grade
 │   ├── AgentControls.svelte     — thinking level, token/cost counter, abort
@@ -376,7 +375,6 @@ Top-level (`App.svelte`):
 let agents:       Agent[]              = $state([]);
 let activeId:     string | null        = $state(null);
 let savedAgents:  SavedAgentInfo[]     = $state([]);
-let councilMode:  boolean              = $state(false);
 let openToolIds:  string[]             = $state(restoreOpenIds());
 let toolboxWidth: number               = $state(restoreWidth());
 ```
@@ -474,7 +472,6 @@ From CLAUDE.md and reinforced by the code:
 - **Stale cached view state.** If you change an agent config and the UI doesn't update, the `agentViewStates` cache in `App.svelte` may need invalidation.
 - **Message content format drift.** Messages are stored as JSON strings. User messages may be plain text in older rows; assistant messages are arrays of content blocks; tool results are structured. The sidecar's `normalizeStoredUserContent` / `normalizeStoredAssistantContent` handle both shapes on replay.
 - **Race conditions in `session_map`.** It's a `Mutex<HashMap>`. Always acquire with `.lock()?` before mutating from event handler threads.
-- **Council mode needs ≥2 running agents.** `Ctrl+L` is a no-op otherwise.
 - **The `pi_session_file` column is a trap.** It's never populated at runtime but still exists. Don't build anything on it.
 
 ---
@@ -571,10 +568,9 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `App.svelte` | Shell: agent list, active id, restore flow, keybindings. |
 | `main.ts` | Svelte mount. |
 | `lib/types.ts` | Shared TypeScript types. |
-| `lib/Sidebar.svelte` | Agent list + saved agents + council toggle. |
+| `lib/Sidebar.svelte` | Agent list + saved agents. |
 | `lib/SpawnDialog.svelte` | Shadow identity + model picker. |
 | `lib/HistoryPanel.svelte` | Session browser. |
-| `lib/CouncilView.svelte` | Multi-agent broadcast view. |
 | `lib/AgentView.svelte` | Per-agent workspace + event listeners. |
 | `lib/AgentHeader.svelte` | Name / model / grade header. |
 | `lib/AgentControls.svelte` | Thinking level, token counter, abort. |

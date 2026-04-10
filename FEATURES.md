@@ -50,7 +50,6 @@ Events the sidecar emits back:
 - Multi-agent command center with named shadow identities
 - SQLite-backed restore and history browsing
 - Session continuation with ancestry
-- Council mode broadcasting to multiple live agents
 - Extension UI round-trips through Monarch
 - Prompt file overrides stored under `~/.config/monarch/prompts/`
 - Real-time audit trail and session stats

@@ -759,36 +759,6 @@ pub fn send_command(
     state.send_with_recovery(&app, &db, &json)
 }
 
-/// Send the same prompt to multiple agents simultaneously (Council mode)
-#[tauri::command]
-pub fn broadcast_prompt(
-    app: AppHandle,
-    state: tauri::State<'_, Arc<AgentManager>>,
-    db: tauri::State<'_, Arc<Database>>,
-    agent_ids: Vec<String>,
-    message: String,
-) -> Result<(), String> {
-    let mut errors = Vec::new();
-
-    for id in &agent_ids {
-        let cmd = serde_json::json!({
-            "type": "prompt",
-            "agentId": id,
-            "message": message,
-        });
-        let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
-        if let Err(e) = state.send_with_recovery(&app, &db, &json) {
-            errors.push(format!("{}: {}", id, e));
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("Some agents failed: {}", errors.join(", ")))
-    }
-}
-
 #[tauri::command]
 pub fn kill_agent(
     state: tauri::State<'_, Arc<AgentManager>>,
@@ -1115,24 +1085,6 @@ pub fn ws_send_command(
     }
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     mgr.send_with_recovery(&app, db, &json)
-}
-
-pub fn ws_broadcast_prompt(
-    mgr: &AgentManager,
-    db: &Arc<Database>,
-    agent_ids: Vec<String>,
-    message: String,
-) -> Result<(), String> {
-    let app = mgr.get_app_handle()?;
-    let mut errors = Vec::new();
-    for id in &agent_ids {
-        let cmd = serde_json::json!({ "type": "prompt", "agentId": id, "message": message });
-        let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
-        if let Err(e) = mgr.send_with_recovery(&app, db, &json) {
-            errors.push(format!("{}: {}", id, e));
-        }
-    }
-    if errors.is_empty() { Ok(()) } else { Err(format!("Some agents failed: {}", errors.join(", "))) }
 }
 
 pub fn ws_kill_agent(mgr: &AgentManager, id: String) -> Result<(), String> {

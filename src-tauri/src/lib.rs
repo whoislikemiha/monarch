@@ -53,7 +53,6 @@ pub fn run() {
             // Agent lifecycle (sidecar-based)
             agent::spawn_agent,
             agent::send_command,
-            agent::broadcast_prompt,
             agent::kill_agent,
             agent::load_session_context,
             agent::new_agent_session,

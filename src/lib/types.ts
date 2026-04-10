@@ -268,28 +268,6 @@ export type PiEvent =
     }
   | { type: "sidecar_error"; error: string };
 
-// Council — parallel prompt to multiple shadows
-export interface CouncilSession {
-  id: string;
-  prompt: string;
-  agentIds: string[];
-  responses: Map<string, CouncilResponse>;
-  selectedAgentId?: string;
-  status: "streaming" | "voting" | "decided";
-  timestamp: number;
-}
-
-export interface CouncilResponse {
-  agentId: string;
-  shadowName: string;
-  shadowGrade?: ShadowGrade;
-  content: ContentBlock[];
-  isStreaming: boolean;
-  usage?: Usage;
-  model?: string;
-  votes: number;
-}
-
 export interface AgentViewState {
   sessionId?: string;
   /** Count of user+assistant items at snapshot time — compared against DB to detect background updates. */
