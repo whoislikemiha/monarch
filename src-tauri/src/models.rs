@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,7 +181,7 @@ async fn fetch_openrouter_models() -> Result<Vec<ModelInfo>, String> {
 
 #[tauri::command]
 pub async fn get_models(
-    cache: tauri::State<'_, ModelCache>,
+    cache: tauri::State<'_, Arc<ModelCache>>,
     provider: String,
 ) -> Result<Vec<ModelInfo>, String> {
     match provider.as_str() {
@@ -214,8 +214,43 @@ pub async fn get_models(
     }
 }
 
+// ---- WebSocket wrappers ----
+
+pub async fn ws_get_models(cache: &ModelCache, provider: String) -> Result<Vec<ModelInfo>, String> {
+    match provider.as_str() {
+        "anthropic" => Ok(anthropic_models()),
+        "openai-codex" => Ok(openai_codex_models()),
+        "openrouter" => {
+            {
+                let cached = cache.openrouter.lock().map_err(|e| e.to_string())?;
+                if let Some((ref models, ref fetched_at)) = *cached {
+                    if fetched_at.elapsed() < CACHE_TTL {
+                        return Ok(models.clone());
+                    }
+                }
+            }
+            let models = fetch_openrouter_models().await?;
+            {
+                let mut cached = cache.openrouter.lock().map_err(|e| e.to_string())?;
+                *cached = Some((models.clone(), Instant::now()));
+            }
+            Ok(models)
+        }
+        "lmstudio" => fetch_lmstudio_models().await,
+        _ => Ok(vec![]),
+    }
+}
+
 #[tauri::command]
 pub fn get_provider_auth_status(provider: String) -> Result<ProviderAuthStatus, String> {
+    get_provider_auth_status_inner(provider)
+}
+
+pub fn ws_get_provider_auth_status(provider: String) -> Result<ProviderAuthStatus, String> {
+    get_provider_auth_status_inner(provider)
+}
+
+fn get_provider_auth_status_inner(provider: String) -> Result<ProviderAuthStatus, String> {
     match provider.as_str() {
         "anthropic" => {
             let configured = pi_auth_entry_exists("anthropic")?;
