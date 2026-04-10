@@ -1,10 +1,13 @@
 mod agent;
 mod agent_state;
 mod db;
+mod error;
 mod models;
 mod persistence;
 mod toolbox;
 mod ws;
+
+pub use error::MonarchError;
 
 use agent::AgentManager;
 use db::Database;
