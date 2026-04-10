@@ -75,13 +75,19 @@ Do **not** include:
 - Line-by-line diffs
 - Concrete implementation details beyond the conceptual level
 
-## 5. Hand off
+## 5. Save the plan
+
+Write the research plan from step 4 to `thoughts/plan/<issue-id>.md` (e.g. `thoughts/plan/MON-7.md`). Use the Linear issue identifier as the filename. Create the `thoughts/plan/` directory if it doesn't exist.
+
+The file should contain the full plan exactly as produced in step 4 (summary, relevant files, what needs to change, open questions, out of scope).
+
+## 6. Hand off
 
 Report back to the user with:
 
 - The Linear issue URL and identifier (e.g. `MON-7`).
 - The branch name you created and pushed.
-- The research plan from step 4.
+- The path to the saved plan file.
 - Any open questions from step 4 that block moving to implementation.
 
 End by telling the user they can invoke `/plan-to-impl` when they are ready to start building, or reply inline with answers to open questions.

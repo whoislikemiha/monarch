@@ -63,3 +63,16 @@ Once the user approves:
 4. Ask whether they want the Linear issue state updated (e.g. moved to `In Review`) — do not change state without asking.
 
 Do not merge the PR. The user merges.
+
+## 6. Write implementation notes
+
+After the PR is created, write a high-level implementation summary to `thoughts/impl/<issue-id>.md` (e.g. `thoughts/impl/MON-7.md`). Create the `thoughts/impl/` directory if it doesn't exist.
+
+The file should be a concise, high-level record of what was done — not a changelog or diff. Include:
+
+- **What was implemented** — a brief description of the feature/fix/change in plain language.
+- **Key decisions** — any notable design choices, trade-offs, or deviations from the original plan.
+- **Files touched** — list the main files that were created or modified (no need to be exhaustive with trivial edits).
+- **What was left out** — anything deferred, descoped, or intentionally skipped.
+
+Keep it short — this is a reference for future context, not documentation.
