@@ -59,7 +59,7 @@ async function handleCommand(cmd: SidecarCommand): Promise<void> {
 			await manager.abort(cmd.agentId);
 			break;
 		case "set_model":
-			await manager.setModel(cmd.agentId, cmd.provider, cmd.modelId);
+			await manager.setModel(cmd.agentId, cmd.provider, cmd.modelId, cmd.contextWindow);
 			break;
 		case "set_thinking_level":
 			manager.setThinkingLevel(cmd.agentId, cmd.level);

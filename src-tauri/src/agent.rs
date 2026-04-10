@@ -585,6 +585,7 @@ pub fn spawn_agent(
     shadow_name: Option<String>,
     shadow_title: Option<String>,
     shadow_grade: Option<String>,
+    context_window: Option<i32>,
 ) -> Result<(), String> {
     // Ensure sidecar is running
     state.ensure_sidecar(&app, &db)?;
@@ -600,6 +601,16 @@ pub fn spawn_agent(
 
     // Persist the agent/session on the backend as the source of truth for FK-safe
     // message logging, even if the frontend-side write was skipped or failed.
+    // If the caller didn't supply a context window (e.g. restore flow),
+    // reuse the one persisted on the agent row so we don't silently lose it.
+    let effective_context_window = match context_window {
+        Some(cw) => Some(cw),
+        None => db
+            .get_agent_context_window_internal(&id)
+            .ok()
+            .flatten(),
+    };
+
     db.upsert_agent_internal(&AgentRow {
         id: id.clone(),
         name: shadow_name
@@ -615,6 +626,7 @@ pub fn spawn_agent(
         thinking_level: thinking_value.clone(),
         cwd: cwd.clone(),
         custom_prompt: None,
+        context_window: effective_context_window,
         created_at: now.clone(),
         updated_at: now.clone(),
     })?;
@@ -664,6 +676,7 @@ pub fn spawn_agent(
         "customPrompt": read_agent_prompt_file(&id)?
             .filter(|prompt| !prompt.trim().is_empty()),
         "projectInstructions": project_instructions,
+        "contextWindow": effective_context_window,
     });
 
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
@@ -843,6 +856,7 @@ pub fn new_agent_session(
         thinking_level: None,
         cwd: None,
         custom_prompt: None,
+        context_window: None,
         created_at: chrono_now(),
         updated_at: chrono_now(),
     })?;

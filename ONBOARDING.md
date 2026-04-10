@@ -335,7 +335,7 @@ Subscription-backed, auth from `~/.pi/agent/auth.json` (checked by `get_provider
 
 Dynamic providers built in the sidecar by `buildDynamicModel` in [`sidecar/src/runtime-manager.ts`](./sidecar/src/runtime-manager.ts):
 - `openrouter` — any model routed via `https://openrouter.ai/api/v1`. Requires `OPENROUTER_API_KEY` in the sidecar's environment.
-- `lmstudio` — local OpenAI-compatible server at `http://127.0.0.1:1234/v1` (override with `LMSTUDIO_BASE_URL`). The sidecar registers the provider on first use with a dummy API key, since LM Studio accepts any.
+- `lmstudio` — local OpenAI-compatible server at `http://127.0.0.1:1234/v1` (override with `LMSTUDIO_BASE_URL`). The sidecar registers the provider on first use with a dummy API key, since LM Studio accepts any. LM Studio doesn't expose the context length a model was loaded with, so the spawn dialog asks for it as a per-agent number; the value is persisted on the `agents.context_window` column and forwarded to the sidecar as `CreateSessionCommand.contextWindow`, with a 32k fallback if unset.
 
 Model discovery lives in [`src-tauri/src/models.rs`](./src-tauri/src/models.rs) and is exposed as `get_models` and `get_provider_auth_status` Tauri commands. For `openrouter` and `lmstudio`, `get_models` hits the provider's `/models` endpoint directly; the LM Studio arm returns `Err(...)` when the local server is unreachable so the UI can show a distinct "provider unreachable" state.
 

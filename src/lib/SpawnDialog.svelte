@@ -18,6 +18,19 @@
   let modelInput = $state("");
   let thinkingLevel = $state("off");
   let cwd = $state("/home/miha");
+  // LM Studio users must tell us what context length they loaded their model
+  // with — we can't detect it via the OpenAI-compatible API. Stored in tokens.
+  let lmStudioContextWindow: number = $state(8192);
+  const LMSTUDIO_CTX_MIN = 1024;
+  const LMSTUDIO_CTX_MAX = 262144;
+  const LMSTUDIO_CTX_STEP = 1024;
+  const LMSTUDIO_CTX_PRESETS = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
+
+  function formatCtxTokens(n: number): string {
+    if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + "M";
+    if (n >= 1024) return (n / 1024).toFixed(n % 1024 === 0 ? 0 : 1) + "k";
+    return String(n);
+  }
 
   // Shadow identity
   let shadowName = $state("");
@@ -300,11 +313,16 @@
     const provider = selectedProvider;
     const model = fixedModelId || trimmed || undefined;
 
+    const ctxNum = Number(lmStudioContextWindow);
     const config: AgentConfig = {
       provider,
       model,
       thinkingLevel: thinkingLevel !== "off" ? thinkingLevel : undefined,
       cwd: cwd || undefined,
+      contextWindow:
+        provider === "lmstudio" && Number.isFinite(ctxNum) && ctxNum > 0
+          ? Math.floor(ctxNum)
+          : undefined,
     };
 
     // Attach shadow identity if a name is provided
@@ -469,6 +487,40 @@
       {:else if !fixedModelId && !modelsLoading && allModels.length === 0}
         <div class="field-hint">
           No models found for this provider.
+        </div>
+      {/if}
+      {#if selectedProvider === "lmstudio"}
+        <div class="lmstudio-context">
+          <label class="label" for="lmstudio-ctx">
+            Context window
+            <span class="lmstudio-ctx-value">{formatCtxTokens(lmStudioContextWindow)}</span>
+          </label>
+          <input
+            id="lmstudio-ctx"
+            type="range"
+            min={LMSTUDIO_CTX_MIN}
+            max={LMSTUDIO_CTX_MAX}
+            step={LMSTUDIO_CTX_STEP}
+            value={lmStudioContextWindow}
+            oninput={(e) => {
+              lmStudioContextWindow = Number((e.currentTarget as HTMLInputElement).value);
+            }}
+          />
+          <div class="lmstudio-ctx-presets">
+            {#each LMSTUDIO_CTX_PRESETS as preset}
+              <button
+                type="button"
+                class="lmstudio-ctx-preset"
+                class:active={lmStudioContextWindow === preset}
+                onclick={() => (lmStudioContextWindow = preset)}
+              >
+                {formatCtxTokens(preset)}
+              </button>
+            {/each}
+          </div>
+          <div class="field-hint">
+            Match the context length you loaded the model with in LM Studio — we can't auto-detect it.
+          </div>
         </div>
       {/if}
       {#if !fixedModelId && showDropdown && filteredModels().length > 0}
@@ -726,6 +778,63 @@
 
   .template-save-hint {
     color: var(--text-muted, #8f7aa8);
+  }
+
+  .lmstudio-context {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 10px;
+  }
+
+  .lmstudio-context > .label {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    justify-content: space-between;
+    text-transform: uppercase;
+  }
+
+  .lmstudio-ctx-value {
+    color: var(--accent-purple, #be95ff);
+    font-size: 12px;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .lmstudio-context input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent-purple, #be95ff);
+    cursor: pointer;
+  }
+
+  .lmstudio-ctx-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .lmstudio-ctx-preset {
+    padding: 3px 8px;
+    border: 1px solid var(--border-subtle, #35274f);
+    border-radius: 999px;
+    background: var(--bg-panel-2, #201734);
+    color: var(--text-secondary, #dde1e6);
+    font-size: 10px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+
+  .lmstudio-ctx-preset:hover {
+    background: var(--bg-panel-3, #2a1e45);
+    border-color: rgba(190, 149, 255, 0.4);
+  }
+
+  .lmstudio-ctx-preset.active {
+    border-color: var(--accent-purple, #be95ff);
+    color: var(--accent-purple, #be95ff);
+    background: rgba(190, 149, 255, 0.1);
   }
 
   .preset-grid {
