@@ -43,6 +43,34 @@
     persistWidth(toolboxWidth);
   });
 
+  /**
+   * Build a user-facing stderr line from a spawn_agent rejection. MON-31
+   * hands back a `{ kind, message, details }` DTO rather than an opaque
+   * string; branch on `kind` so the surface text is recognizable to the
+   * user. Falls back to `String(err)` for non-DTO shapes (marshalling
+   * errors, unexpected throws).
+   */
+  function formatSpawnError(err: unknown): string {
+    if (err && typeof err === "object" && "kind" in err) {
+      const dto = err as { kind: string; message?: string; details?: string | null };
+      const msg = dto.message ?? "";
+      if (dto.kind.startsWith("sidecar")) {
+        return `Sidecar unreachable — ${msg}`;
+      }
+      switch (dto.kind) {
+        case "db":
+          return `Database error: ${msg}`;
+        case "invalidInput":
+          return msg;
+        case "notFound":
+          return `Not found: ${msg}`;
+        default:
+          return msg || String(err);
+      }
+    }
+    return String(err);
+  }
+
   function toggleTool(id: string) {
     openToolIds = openToolIds.includes(id)
       ? openToolIds.filter((t) => t !== id)
@@ -304,9 +332,10 @@
       })
       .catch((err) => {
         console.error("Failed to spawn agent:", err);
+        const line = formatSpawnError(err);
         agents = agents.map((a) =>
           a.id === id
-            ? { ...a, status: "error" as const, stderrLines: [...a.stderrLines, String(err)] }
+            ? { ...a, status: "error" as const, stderrLines: [...a.stderrLines, line] }
             : a,
         );
       });
