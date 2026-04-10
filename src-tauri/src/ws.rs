@@ -178,21 +178,12 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
     match cmd {
         // ---- Agent lifecycle ----
         "spawn_agent" => {
-            let id = str_field(&args, "id")?;
-            let session_id = str_field(&args, "sessionId")?;
-            crate::agent::ws_spawn_agent(
-                &state.agent_mgr,
-                &state.db,
-                id,
-                session_id,
-                opt_str(&args, "provider"),
-                opt_str(&args, "model"),
-                opt_str(&args, "thinkingLevel"),
-                opt_str(&args, "cwd"),
-                opt_str(&args, "shadowName"),
-                opt_str(&args, "shadowTitle"),
-                opt_str(&args, "shadowGrade"),
-            )?;
+            // MON-35: single-shot typed decode. `SpawnAgentRequest` is the
+            // shared wire contract between the Tauri command and the WS
+            // bridge, so the serde round-trip validates the payload instead
+            // of per-field `str_field` / `opt_str` extraction.
+            let req: crate::agent::SpawnAgentRequest = serde_json::from_value(args)?;
+            crate::agent::ws_spawn_agent(&state.agent_mgr, &state.db, req)?;
             Ok(Value::Null)
         }
         "send_command" => {

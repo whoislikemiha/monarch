@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke, listen } from "$lib/api";
+  import { commands } from "./lib/bindings";
   import Sidebar from "./lib/Sidebar.svelte";
   import AgentView from "./lib/AgentView.svelte";
   import SpawnDialog from "./lib/SpawnDialog.svelte";
@@ -301,16 +302,14 @@
       console.error("Failed to persist agent:", e);
     }
 
-    invoke("spawn_agent", {
+    commands.spawnAgent({
       id,
       sessionId: sessionId,
       provider: config?.provider || null,
       model: config?.model || null,
       thinkingLevel: config?.thinkingLevel || null,
-      cwd,
-      shadowName: config?.shadow?.shadowName || null,
-      shadowTitle: config?.shadow?.shadowTitle || null,
-      shadowGrade: config?.shadow?.shadowGrade || null,
+      cwd: cwd ?? null,
+      shadow: config?.shadow ?? null,
       contextWindow: config?.contextWindow ?? null,
     })
       .then(async () => {
@@ -439,11 +438,11 @@
       } : a,
     );
     try {
-      await invoke("spawn_agent", {
+      await commands.spawnAgent({
         id, sessionId: newSessionId, provider: agent.provider || null, model: agent.model || null,
         thinkingLevel: agent.thinkingLevel || null, cwd: agent.cwd || "/home/miha",
-        shadowName: agent.shadow?.shadowName || null, shadowTitle: agent.shadow?.shadowTitle || null,
-        shadowGrade: agent.shadow?.shadowGrade || null, contextWindow: agent.contextWindow ?? null,
+        shadow: agent.shadow ?? null,
+        contextWindow: agent.contextWindow ?? null,
       });
       await loadProjects();
     } catch (err) {

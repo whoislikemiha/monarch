@@ -10,6 +10,7 @@ import { invoke as __TAURI_INVOKE } from "./api";
 
 /** Commands */
 export const commands = {
+	spawnAgent: (req: SpawnAgentRequest) => typedError<null, ErrorDto>(__TAURI_INVOKE("spawn_agent", { req })),
 	sendCommand: (id: string, commandJson: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("send_command", { id, commandJson })),
 	killAgent: (id: string, graceful: boolean | null) => typedError<null, ErrorDto>(__TAURI_INVOKE("kill_agent", { id, graceful })),
 	/**
@@ -146,9 +147,9 @@ export type AgentTemplateRow = {
 };
 
 export type Cost = {
-	input: number,
-	output: number,
-	total: number,
+	input?: number,
+	output?: number,
+	total?: number,
 };
 
 export type DisplayItem = { kind: "user"; content: string; timestamp: number | null } | { kind: "assistant"; content: ("Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Vec<Value> }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never })[]; model: string | null; usage: Usage | null; timestamp: number | null } | { kind: "tool-group"; executions: ToolExecution[]; turnComplete: boolean } | { kind: "status"; text: string } | { kind: "notification"; text: string; level: NotificationLevel };
@@ -251,6 +252,35 @@ export type SessionRow = {
 	parentSessionId: string | null,
 };
 
+/**
+ *  Shadow identity block carried inside `SpawnAgentRequest`. Mirrors the
+ *  frontend's nested `config.shadow` object (name/title/grade), which the
+ *  backend then maps into the sidecar-facing `ShadowConfig` by injecting the
+ *  synthesized agent id at command-build time.
+ */
+export type ShadowSpec = {
+	shadowName: string | null,
+	shadowTitle: string | null,
+	shadowGrade: string | null,
+};
+
+/**
+ *  Request payload for the `spawn_agent` Tauri command. Collapsing the ten
+ *  per-field params into a struct keeps the command under specta's 10-arg
+ *  `SpectaFn` cap so it can participate in typed binding generation — see
+ *  `lib.rs::specta_builder` for the registration site.
+ */
+export type SpawnAgentRequest = {
+	id: string,
+	sessionId: string,
+	provider: string | null,
+	model: string | null,
+	thinkingLevel: string | null,
+	cwd: string | null,
+	shadow: ShadowSpec | null,
+	contextWindow: number | null,
+};
+
 export type StreamingMessage = {
 	content: ("Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Vec<Value> }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never })[],
 	model: string | null,
@@ -275,12 +305,12 @@ export type ToolExecution = {
 export type ToolStatus = "running" | "done" | "error";
 
 export type Usage = {
-	input: number,
-	output: number,
-	cacheRead: number,
-	cacheWrite: number,
-	totalTokens: number,
-	cost: Cost,
+	input?: number,
+	output?: number,
+	cacheRead?: number,
+	cacheWrite?: number,
+	totalTokens?: number,
+	cost?: Cost,
 };
 
 /* Tauri Specta runtime */
