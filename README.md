@@ -4,9 +4,19 @@ Multi-agent desktop command center for running a fleet of AI coding agents (shad
 
 See [VISION.md](./VISION.md) for the broader concept.
 
-## Running in dev
+## Prerequisites
 
-Prerequisites: Node.js, pnpm or npm, Rust toolchain, and the Tauri v2 [system dependencies](https://v2.tauri.app/start/prerequisites/).
+- **Node.js** (v18+) and npm.
+- **Rust toolchain** — install via [rustup](https://rustup.rs/):
+  - Linux/macOS: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+  - Windows: download and run [`rustup-init.exe`](https://win.rustup.rs/).
+  - After install, restart your shell and verify with `rustc --version`.
+- **Tauri v2 system dependencies** — see the [official prerequisites guide](https://v2.tauri.app/start/prerequisites/):
+  - Linux: WebKitGTK, libappindicator, etc. (`apt`/`dnf`/`pacman` packages).
+  - macOS: Xcode Command Line Tools (`xcode-select --install`).
+  - Windows: Microsoft C++ Build Tools and the WebView2 runtime.
+
+## Running in dev
 
 ```bash
 # install frontend deps
