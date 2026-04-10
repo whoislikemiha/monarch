@@ -26,17 +26,20 @@ pub fn read_agent_prompt_file(agent_id: &str) -> Result<Option<String>, String> 
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_agent_prompt(agent_id: String) -> Result<Option<String>, String> {
     read_agent_prompt_file(&agent_id)
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn save_agent_prompt(agent_id: String, prompt: String) -> Result<(), String> {
     let path = prompts_dir().join(format!("{}.md", agent_id));
     std::fs::write(&path, prompt).map_err(|e| format!("Failed to save prompt: {}", e))
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_prompts_dir() -> String {
     prompts_dir().to_string_lossy().to_string()
 }

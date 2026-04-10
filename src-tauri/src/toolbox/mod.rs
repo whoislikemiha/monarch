@@ -8,7 +8,7 @@ pub mod placeholder;
 
 use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolDescriptor {
     pub id: String,
@@ -29,6 +29,7 @@ fn descriptors() -> Vec<ToolDescriptor> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn toolbox_list_tools() -> Vec<ToolDescriptor> {
     descriptors()
 }

@@ -13,6 +13,7 @@ fn ping_impl() -> String {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn toolbox_placeholder_ping() -> Result<String, String> {
     Ok(ping_impl())
 }

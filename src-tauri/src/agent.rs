@@ -877,6 +877,7 @@ fn uuid_v4_simple() -> String {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn detect_project(
     db: tauri::State<'_, Arc<Database>>,
     cwd: String,
@@ -906,6 +907,7 @@ pub fn detect_project(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn read_project_instructions(cwd: String) -> Result<Option<String>, String> {
     let cwd_path = Path::new(&cwd);
     let root = match find_project_root(cwd_path) {
@@ -918,6 +920,7 @@ pub fn read_project_instructions(cwd: String) -> Result<Option<String>, String> 
 // ---- Tauri Commands ----
 
 #[tauri::command]
+#[specta::specta]
 pub fn spawn_agent(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,
@@ -1047,6 +1050,7 @@ pub fn spawn_agent(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn send_command(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,
@@ -1066,6 +1070,7 @@ pub fn send_command(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn kill_agent(
     state: tauri::State<'_, Arc<AgentManager>>,
     id: String,
@@ -1101,6 +1106,7 @@ pub fn kill_agent(
 /// yet, or the agent was killed). Callers should treat `None` as "empty
 /// state" rather than an error.
 #[tauri::command]
+#[specta::specta]
 pub async fn get_agent_state(
     state: tauri::State<'_, Arc<AgentManager>>,
     agent_id: String,
@@ -1116,6 +1122,7 @@ pub async fn get_agent_state(
 /// Load messages from a previous SQLite session into the sidecar's agent context.
 /// This gives the LLM conversational continuity when restoring.
 #[tauri::command]
+#[specta::specta]
 pub fn load_session_context(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,
@@ -1156,6 +1163,7 @@ pub fn load_session_context(
 /// Create a new session for an existing agent.
 /// Creates a DB row, updates the agent→session mapping, and tells the sidecar to reset.
 #[tauri::command]
+#[specta::specta]
 pub fn new_agent_session(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,
@@ -1239,6 +1247,7 @@ pub fn new_agent_session(
 /// Resets the sidecar's in-memory conversation and updates DB/session routing so
 /// subsequent messages are appended to the selected session.
 #[tauri::command]
+#[specta::specta]
 pub fn switch_agent_session(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,
@@ -1283,6 +1292,7 @@ pub fn switch_agent_session(
 
 /// Forward extension UI response from frontend to sidecar
 #[tauri::command]
+#[specta::specta]
 pub fn respond_extension_ui(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,

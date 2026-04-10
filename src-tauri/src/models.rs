@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ModelInfo {
     pub id: String,
     pub name: String,
@@ -13,11 +13,11 @@ pub struct ModelInfo {
     /// Optional pre-detected context window in tokens. Only populated for
     /// LM Studio entries discovered via the native `/api/v0/models` endpoint,
     /// and only for models LM Studio reports as currently loaded.
-    #[serde(rename = "contextWindow", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "contextWindow")]
     pub context_window: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ProviderAuthStatus {
     pub provider: String,
     pub checked: bool,
@@ -274,6 +274,7 @@ async fn fetch_openrouter_models() -> Result<Vec<ModelInfo>, String> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn get_models(
     cache: tauri::State<'_, Arc<ModelCache>>,
     provider: String,
@@ -336,6 +337,7 @@ pub async fn ws_get_models(cache: &ModelCache, provider: String) -> Result<Vec<M
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_provider_auth_status(provider: String) -> Result<ProviderAuthStatus, String> {
     get_provider_auth_status_inner(provider)
 }

@@ -63,11 +63,8 @@ pub enum ToolStatus {
 pub struct ToolExecution {
     pub tool_call_id: String,
     pub tool_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub args: Option<ToolArgs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<ToolResult>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
     pub status: ToolStatus,
 }
@@ -78,11 +75,8 @@ pub struct ToolExecution {
 #[serde(rename_all = "camelCase")]
 pub struct StreamingMessage {
     pub content: ContentBlocks,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<i64>,
 }
 
@@ -92,20 +86,16 @@ pub struct StreamingMessage {
 // matches what the frontend switches on.
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase")]
 pub enum DisplayItem {
     User {
         content: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         timestamp: Option<i64>,
     },
     Assistant {
         content: ContentBlocks,
-        #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         usage: Option<Usage>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         timestamp: Option<i64>,
     },
     #[serde(rename = "tool-group")]
@@ -145,9 +135,7 @@ pub struct LiveAgentState {
     /// Phase 2's store adapter converts to a `Map` before handing to tool
     /// components so the `AgentContext.live` shape stays frozen.
     pub tool_executions: HashMap<String, ToolExecution>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub streaming_message: Option<StreamingMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_usage: Option<Usage>,
     /// Index into `items` pointing at the currently open tool-group, if any.
     /// Kept as an index rather than a ref to keep the struct `Clone`-cheap and

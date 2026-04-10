@@ -168,7 +168,7 @@ impl Database {
 
 // ---- Data types ----
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRow {
     pub id: String,
@@ -179,7 +179,7 @@ pub struct ProjectRow {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRow {
     pub id: String,
@@ -199,7 +199,7 @@ pub struct AgentRow {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRow {
     pub id: String,
@@ -216,7 +216,7 @@ pub struct SessionRow {
     pub parent_session_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageRow {
     pub id: i64,
@@ -229,7 +229,7 @@ pub struct MessageRow {
     pub timestamp: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentTemplateRow {
     pub id: String,
@@ -245,7 +245,7 @@ pub struct AgentTemplateRow {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryRow {
     pub id: i64,
@@ -528,11 +528,13 @@ impl Database {
 // ---- Tauri Commands: Agents ----
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_upsert_agent(db: tauri::State<'_, Arc<Database>>, agent: AgentRow) -> Result<(), String> {
     db.upsert_agent_internal(&agent)
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_get_agents(db: tauri::State<'_, Arc<Database>>) -> Result<Vec<AgentRow>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
@@ -562,6 +564,7 @@ pub fn db_get_agents(db: tauri::State<'_, Arc<Database>>) -> Result<Vec<AgentRow
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_delete_agent(db: tauri::State<'_, Arc<Database>>, agent_id: String) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM agents WHERE id = ?1", params![agent_id])
@@ -572,6 +575,7 @@ pub fn db_delete_agent(db: tauri::State<'_, Arc<Database>>, agent_id: String) ->
 // ---- Tauri Commands: Sessions ----
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_create_session(db: tauri::State<'_, Arc<Database>>, session: SessionRow) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
@@ -598,6 +602,7 @@ pub fn db_create_session(db: tauri::State<'_, Arc<Database>>, session: SessionRo
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_get_sessions(db: tauri::State<'_, Arc<Database>>, agent_id: String) -> Result<Vec<SessionRow>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
@@ -626,6 +631,7 @@ pub fn db_get_sessions(db: tauri::State<'_, Arc<Database>>, agent_id: String) ->
 // ---- Tauri Commands: Messages ----
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_save_message(db: tauri::State<'_, Arc<Database>>, message: MessageRow) -> Result<i64, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
@@ -641,6 +647,7 @@ pub fn db_save_message(db: tauri::State<'_, Arc<Database>>, message: MessageRow)
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_get_messages(db: tauri::State<'_, Arc<Database>>, session_id: String) -> Result<Vec<MessageRow>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
@@ -665,6 +672,7 @@ pub fn db_get_messages(db: tauri::State<'_, Arc<Database>>, session_id: String) 
 
 /// Get messages for a session, including all ancestor sessions (for continued sessions)
 #[tauri::command]
+#[specta::specta]
 pub fn db_get_messages_with_ancestry(
     db: tauri::State<'_, Arc<Database>>,
     session_id: String,
@@ -675,6 +683,7 @@ pub fn db_get_messages_with_ancestry(
 // ---- Tauri Commands: Memories ----
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_save_memory(db: tauri::State<'_, Arc<Database>>, memory: MemoryRow) -> Result<i64, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
@@ -690,6 +699,7 @@ pub fn db_save_memory(db: tauri::State<'_, Arc<Database>>, memory: MemoryRow) ->
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_get_memories(
     db: tauri::State<'_, Arc<Database>>,
     agent_id: Option<String>,
@@ -730,6 +740,7 @@ fn map_memory(row: &rusqlite::Row) -> rusqlite::Result<MemoryRow> {
 // ---- Tauri Commands: Projects ----
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_upsert_project(db: tauri::State<'_, Arc<Database>>, project: ProjectRow) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     // Check if a project with this root_path already exists (natural key).
@@ -761,6 +772,7 @@ pub fn db_upsert_project(db: tauri::State<'_, Arc<Database>>, project: ProjectRo
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_get_projects(db: tauri::State<'_, Arc<Database>>) -> Result<Vec<ProjectRow>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
@@ -782,6 +794,7 @@ pub fn db_get_projects(db: tauri::State<'_, Arc<Database>>) -> Result<Vec<Projec
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_get_project_by_path(db: tauri::State<'_, Arc<Database>>, root_path: String) -> Result<Option<ProjectRow>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let result = conn.query_row(
@@ -806,6 +819,7 @@ pub fn db_get_project_by_path(db: tauri::State<'_, Arc<Database>>, root_path: St
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_rename_project(
     db: tauri::State<'_, Arc<Database>>,
     project_id: String,
@@ -821,6 +835,7 @@ pub fn db_rename_project(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_update_project_instructions(
     db: tauri::State<'_, Arc<Database>>,
     project_id: String,
@@ -836,6 +851,7 @@ pub fn db_update_project_instructions(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_delete_project(db: tauri::State<'_, Arc<Database>>, project_id: String) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])
@@ -846,6 +862,7 @@ pub fn db_delete_project(db: tauri::State<'_, Arc<Database>>, project_id: String
 // ---- Tauri Commands: Agent Templates ----
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_list_agent_templates(
     db: tauri::State<'_, Arc<Database>>,
 ) -> Result<Vec<AgentTemplateRow>, String> {
@@ -877,6 +894,7 @@ pub fn db_list_agent_templates(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_save_agent_template(
     db: tauri::State<'_, Arc<Database>>,
     template: AgentTemplateRow,
@@ -907,6 +925,7 @@ pub fn db_save_agent_template(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_delete_agent_template(
     db: tauri::State<'_, Arc<Database>>,
     template_id: String,
@@ -923,6 +942,7 @@ pub fn db_delete_agent_template(
 // ---- Tauri Commands: Events ----
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_log_event(
     db: tauri::State<'_, Arc<Database>>,
     agent_id: Option<String>,
@@ -1126,6 +1146,7 @@ pub fn ws_delete_agent_template(db: &Database, template_id: String) -> Result<()
 // ---- Tauri Commands: UI State ----
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_get_ui_state(db: tauri::State<'_, Arc<Database>>, key: String) -> Result<Option<String>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let result = conn.query_row(
@@ -1141,6 +1162,7 @@ pub fn db_get_ui_state(db: tauri::State<'_, Arc<Database>>, key: String) -> Resu
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn db_set_ui_state(db: tauri::State<'_, Arc<Database>>, key: String, value: String) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
