@@ -24,9 +24,25 @@ export interface LiveAgentState {
   eventCount: number;
 }
 
+/**
+ * Setup-time configuration surfaced to tools alongside the event-stream state.
+ * Sourced from the parent mount site (prompt file, project instructions),
+ * not the Pi event stream — kept separate from `live` so MON-14 can swap the
+ * `live` producer to Rust without touching tool components.
+ */
+export interface AgentSetupContext {
+  customPrompt: string | null;
+  projectInstructions: string | null;
+}
+
 /** Context handed to every toolbox tool. Null when no agent is active. */
 export type AgentContext =
-  | { agentId: string; agent: Agent; live: LiveAgentState }
+  | {
+      agentId: string;
+      agent: Agent;
+      live: LiveAgentState;
+      setup: AgentSetupContext;
+    }
   | null;
 
 /** The one and only prop every toolbox tool component accepts. */

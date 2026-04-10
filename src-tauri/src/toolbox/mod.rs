@@ -16,10 +16,16 @@ pub struct ToolDescriptor {
 }
 
 fn descriptors() -> Vec<ToolDescriptor> {
-    vec![ToolDescriptor {
-        id: "placeholder".to_string(),
-        title: "Placeholder".to_string(),
-    }]
+    vec![
+        ToolDescriptor {
+            id: "context-inspector".to_string(),
+            title: "Context".to_string(),
+        },
+        ToolDescriptor {
+            id: "placeholder".to_string(),
+            title: "Placeholder".to_string(),
+        },
+    ]
 }
 
 #[tauri::command]

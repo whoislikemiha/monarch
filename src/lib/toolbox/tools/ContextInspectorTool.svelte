@@ -1,25 +1,8 @@
 <script lang="ts">
-  import type { DisplayItem, Usage, ShadowIdentity } from "./types";
+  import type { ToolProps } from "../types";
+  import type { DisplayItem, Usage } from "../../types";
 
-  let {
-    items,
-    lastUsage,
-    contextWindow,
-    sessionStats,
-    customPrompt,
-    projectInstructions,
-    shadow,
-    onclose,
-  }: {
-    items: DisplayItem[];
-    lastUsage?: Usage;
-    contextWindow?: number;
-    sessionStats?: { totalTokens: number; totalCost: number; messageCount: number; turnCount: number };
-    customPrompt?: string | null;
-    projectInstructions?: string | null;
-    shadow?: ShadowIdentity;
-    onclose: () => void;
-  } = $props();
+  let { agentContext }: ToolProps = $props();
 
   const CHARS_PER_TOKEN = 4;
 
@@ -118,7 +101,15 @@
     }
   }
 
-  let categories = $derived.by(() => {
+  let items = $derived<DisplayItem[]>(agentContext?.live.items ?? []);
+  let lastUsage = $derived<Usage | undefined>(agentContext?.live.lastUsage);
+  let contextWindow = $derived(agentContext?.agent.contextWindow);
+  let sessionStats = $derived(agentContext?.agent.sessionStats);
+  let shadow = $derived(agentContext?.agent.shadow);
+  let customPrompt = $derived(agentContext?.setup.customPrompt ?? null);
+  let projectInstructions = $derived(agentContext?.setup.projectInstructions ?? null);
+
+  let categories = $derived.by<ContextCategory[]>(() => {
     const next: ContextCategory[] = [];
 
     const setupEntries: ContextEntry[] = [];
@@ -318,153 +309,121 @@
   let usageSource = $derived(lastUsage ? "Live telemetry" : "Estimated from restored content");
 </script>
 
-<div class="inspector">
-  <div class="inspector-header">
-    <span class="inspector-title">Context Inspector</span>
-    <button class="close-btn" onclick={onclose}>&times;</button>
-  </div>
+{#if agentContext === null}
+  <p class="empty">No agent active.</p>
+{:else}
+  <div class="inspector">
+    <div class="inspector-summary">
+      <div class="summary-row">
+        <span class="summary-label">Context Snapshot</span>
+        <span class="summary-value">{formatTokens(liveContextTokens)} / {formatTokens(resolvedWindow)}</span>
+      </div>
+      <div class="summary-row sub">
+        <span class="summary-label">Headroom</span>
+        <span class="summary-value">{formatTokens(freeTokens)} free ({freePct}%)</span>
+      </div>
+      <div class="summary-row sub">
+        <span class="summary-label">Source</span>
+        <span class="summary-value">{usageSource}</span>
+      </div>
+      <div class="health-track" class:warning={healthState === "warning"} class:critical={healthState === "critical"}>
+        <div class="health-fill" style:width={`${Math.max((1 - usedRatio) * 100, 0)}%`}></div>
+      </div>
+      {#if sessionStats && sessionStats.totalTokens > 0}
+        <div class="summary-row sub">
+          <span class="summary-label">Billing Total</span>
+          <span class="summary-value">{formatTokens(sessionStats.totalTokens)} · ${sessionStats.totalCost.toFixed(4)}</span>
+        </div>
+      {/if}
+      {#if sessionStats}
+        <div class="summary-row sub">
+          <span class="summary-label">Turns</span>
+          <span class="summary-value">{sessionStats.turnCount}</span>
+        </div>
+        <div class="summary-row sub">
+          <span class="summary-label">Messages</span>
+          <span class="summary-value">{sessionStats.messageCount}</span>
+        </div>
+      {/if}
+      {#if lastUsage && (lastUsage.cacheRead ?? 0) > 0}
+        <div class="summary-row sub">
+          <span class="summary-label">Cache Read</span>
+          <span class="summary-value">{formatTokens(lastUsage.cacheRead ?? 0)}</span>
+        </div>
+      {/if}
+      {#if lastUsage && (lastUsage.cacheWrite ?? 0) > 0}
+        <div class="summary-row sub">
+          <span class="summary-label">Cache Write</span>
+          <span class="summary-value">{formatTokens(lastUsage.cacheWrite ?? 0)}</span>
+        </div>
+      {/if}
+    </div>
 
-  <div class="inspector-summary">
-    <div class="summary-row">
-      <span class="summary-label">Context Snapshot</span>
-      <span class="summary-value">{formatTokens(liveContextTokens)} / {formatTokens(resolvedWindow)}</span>
-    </div>
-    <div class="summary-row sub">
-      <span class="summary-label">Headroom</span>
-      <span class="summary-value">{formatTokens(freeTokens)} free ({freePct}%)</span>
-    </div>
-    <div class="summary-row sub">
-      <span class="summary-label">Source</span>
-      <span class="summary-value">{usageSource}</span>
-    </div>
-    <div class="health-track" class:warning={healthState === "warning"} class:critical={healthState === "critical"}>
-      <div class="health-fill" style:width={`${Math.max((1 - usedRatio) * 100, 0)}%`}></div>
-    </div>
-    {#if sessionStats && sessionStats.totalTokens > 0}
-      <div class="summary-row sub">
-        <span class="summary-label">Billing Total</span>
-        <span class="summary-value">{formatTokens(sessionStats.totalTokens)} · ${sessionStats.totalCost.toFixed(4)}</span>
-      </div>
-    {/if}
-    {#if sessionStats}
-      <div class="summary-row sub">
-        <span class="summary-label">Turns</span>
-        <span class="summary-value">{sessionStats.turnCount}</span>
-      </div>
-      <div class="summary-row sub">
-        <span class="summary-label">Messages</span>
-        <span class="summary-value">{sessionStats.messageCount}</span>
-      </div>
-    {/if}
-    {#if lastUsage && (lastUsage.cacheRead ?? 0) > 0}
-      <div class="summary-row sub">
-        <span class="summary-label">Cache Read</span>
-        <span class="summary-value">{formatTokens(lastUsage.cacheRead ?? 0)}</span>
-      </div>
-    {/if}
-    {#if lastUsage && (lastUsage.cacheWrite ?? 0) > 0}
-      <div class="summary-row sub">
-        <span class="summary-label">Cache Write</span>
-        <span class="summary-value">{formatTokens(lastUsage.cacheWrite ?? 0)}</span>
-      </div>
-    {/if}
-  </div>
+    <div class="inspector-categories">
+      {#each categories as category (category.id)}
+        <div class="category">
+          <button class="category-header" onclick={() => toggleCategory(category.id)}>
+            <span class="category-chevron">{expandedCategories[category.id] ? "▾" : "▸"}</span>
+            <span class="category-label">{category.label}</span>
+            <span class="category-count">{category.entries.length}</span>
+            <span class="category-tokens">{formatTokens(category.tokens)}</span>
+          </button>
 
-  <div class="inspector-categories">
-    {#each categories as category (category.id)}
-      <div class="category">
-        <button class="category-header" onclick={() => toggleCategory(category.id)}>
-          <span class="category-chevron">{expandedCategories[category.id] ? "▾" : "▸"}</span>
-          <span class="category-label">{category.label}</span>
-          <span class="category-count">{category.entries.length}</span>
-          <span class="category-tokens">{formatTokens(category.tokens)}</span>
-        </button>
-
-        {#if expandedCategories[category.id]}
-          <div class="category-entries">
-            {#each category.entries as entry (entry.id)}
-              <button class="entry" onclick={() => toggleEntry(entry.id)}>
-                <div class="entry-header">
-                  <span class="entry-label">{entry.label}</span>
-                  <div class="entry-meta">
-                    {#if entry.meta}
-                      <span class="entry-badge">{entry.meta}</span>
-                    {/if}
-                    <span class="entry-tokens">{formatTokens(entry.tokens)}</span>
+          {#if expandedCategories[category.id]}
+            <div class="category-entries">
+              {#each category.entries as entry (entry.id)}
+                <button class="entry" onclick={() => toggleEntry(entry.id)}>
+                  <div class="entry-header">
+                    <span class="entry-label">{entry.label}</span>
+                    <div class="entry-meta">
+                      {#if entry.meta}
+                        <span class="entry-badge">{entry.meta}</span>
+                      {/if}
+                      <span class="entry-tokens">{formatTokens(entry.tokens)}</span>
+                    </div>
                   </div>
-                </div>
-                <div class="entry-preview">{expandedEntries[entry.id] ? entry.fullText : entry.preview}</div>
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {/each}
+                  <div class="entry-preview">{expandedEntries[entry.id] ? entry.fullText : entry.preview}</div>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/each}
 
-    {#if categories.length === 0}
-      <div class="empty">No useful context has been captured yet.</div>
-    {/if}
-  </div>
+      {#if categories.length === 0}
+        <div class="empty-categories">No useful context has been captured yet.</div>
+      {/if}
+    </div>
 
-  <div class="inspector-footer">
-    <span class="footer-note">
-      Category sizes are estimated from visible content so you can compare what is actually taking up space.
-    </span>
+    <div class="inspector-footer">
+      <span class="footer-note">
+        Category sizes are estimated from visible content so you can compare what is actually taking up space.
+      </span>
+    </div>
   </div>
-</div>
+{/if}
 
 <style>
+  .empty {
+    margin: 0;
+    color: var(--text-muted, #9aa0a6);
+    font-size: 11px;
+    font-style: italic;
+  }
+
   .inspector {
-    width: 320px;
-    min-width: 280px;
-    max-width: 400px;
-    height: 100%;
     display: flex;
     flex-direction: column;
-    background: var(--bg-sidebar, #0c0816);
-    border-left: 1px solid var(--border-subtle, #35274f);
+    gap: 0;
+    margin: -12px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     font-size: 11px;
     color: var(--text-secondary, #dde1e6);
-    overflow: hidden;
-  }
-
-  .inspector-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--border-subtle, #35274f);
-    flex-shrink: 0;
-  }
-
-  .inspector-title {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-primary, #f2f4f8);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    color: var(--text-muted, #8f7aa8);
-    font-size: 16px;
-    cursor: pointer;
-    padding: 0 4px;
-    line-height: 1;
-    transition: color 0.15s;
-  }
-
-  .close-btn:hover {
-    color: var(--text-primary, #f2f4f8);
   }
 
   .inspector-summary {
     padding: 12px 14px;
     border-bottom: 1px solid var(--border-subtle, #35274f);
-    flex-shrink: 0;
   }
 
   .summary-row {
@@ -521,8 +480,6 @@
   }
 
   .inspector-categories {
-    flex: 1;
-    overflow-y: auto;
     padding: 8px 0;
   }
 
@@ -655,7 +612,7 @@
     word-break: break-word;
   }
 
-  .empty {
+  .empty-categories {
     padding: 24px 14px;
     text-align: center;
     color: var(--text-muted, #8f7aa8);
@@ -665,18 +622,11 @@
   .inspector-footer {
     padding: 8px 14px;
     border-top: 1px solid var(--border-subtle, #35274f);
-    flex-shrink: 0;
   }
 
   .footer-note {
     font-size: 9px;
     color: var(--text-muted, #8f7aa8);
     line-height: 1.5;
-  }
-
-  @media (max-width: 1180px) {
-    .inspector {
-      width: 280px;
-    }
   }
 </style>

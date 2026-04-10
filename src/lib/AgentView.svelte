@@ -5,7 +5,6 @@
   import ChatInput from "./ChatInput.svelte";
   import AgentControls from "./AgentControls.svelte";
   import AgentHeader from "./AgentHeader.svelte";
-  import ContextInspector from "./ContextInspector.svelte";
   import ExtensionDialog from "./ExtensionDialog.svelte";
   import PromptEditor from "./PromptEditor.svelte";
   import HistoryPanel from "./HistoryPanel.svelte";
@@ -29,14 +28,14 @@
   let {
     agent,
     projectName,
-    projectInstructions,
+    customPrompt = $bindable(null),
     onrestart,
     onagentchange,
     onprojectedit,
   }: {
     agent: Agent;
     projectName?: string;
-    projectInstructions?: string | null;
+    customPrompt?: string | null;
     onrestart?: (id: string) => void;
     onagentchange?: (agentId: string, updater: (agent: Agent) => Agent) => void;
     onprojectedit?: () => void;
@@ -44,13 +43,11 @@
 
   let isStreaming = $state(false);
   let pendingExtensionRequest: ExtensionUIRequest | null = $state(null);
-  let customPrompt: string | null = $state(null);
   let showStderr = $state(false);
   // Captured on mount — used when session_ready fires to replay session ancestry
   let pendingSourceSessionId: string | undefined = $state(undefined);
   let showPromptEditor = $state(false);
   let showHistory = $state(false);
-  let showContextInspector = $state(false);
 
   let unlistenEvent: UnlistenFn | undefined;
   let unlistenExit: UnlistenFn | undefined;
@@ -347,7 +344,6 @@
     entry.activityStatus = "";
     entry.eventCount = 0;
     pendingExtensionRequest = null;
-    customPrompt = null;
     showStderr = false;
     scrollToBottom();
   }
@@ -720,7 +716,6 @@
     pendingSourceSessionId = undefined;
     showPromptEditor = false;
     showHistory = false;
-    showContextInspector = false;
   }
 
   function clearListeners() {
@@ -945,7 +940,6 @@
         sessionStats={agent.sessionStats}
         onabort={abort}
         onthinking={setThinkingLevel}
-        oncontextinspect={() => (showContextInspector = !showContextInspector)}
       />
       <ChatInput
         onsend={sendPrompt}
@@ -956,18 +950,6 @@
   {/if}
 </div>
 
-{#if showContextInspector}
-  <ContextInspector
-    {items}
-    {lastUsage}
-    contextWindow={agent.contextWindow}
-    sessionStats={agent.sessionStats}
-    customPrompt={customPrompt}
-    {projectInstructions}
-    shadow={agent.shadow}
-    onclose={() => (showContextInspector = false)}
-  />
-{/if}
 </div>
 
 {#if pendingExtensionRequest}
