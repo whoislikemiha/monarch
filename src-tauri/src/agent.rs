@@ -161,20 +161,50 @@ pub struct AgentManager {
     live_states: Arc<DashMap<String, Arc<AgentStateEntry>>>,
     /// Broadcast channel for forwarding events to WebSocket clients
     pub ws_broadcast: broadcast::Sender<WsBroadcast>,
-    /// Stored AppHandle for WS-initiated commands that need sidecar access
-    app_handle: Mutex<Option<AppHandle>>,
+    /// Stored AppHandle for WS-initiated commands that need sidecar access.
+    /// Arc-wrapped so the persistence consumer task (MON-37) can share access
+    /// without needing a back-reference to the manager.
+    app_handle: Arc<Mutex<Option<AppHandle>>>,
+    /// MON-37: producer handle for the single-consumer persistence pipeline.
+    /// The reader task clones this and `send().await`s one command per
+    /// effect (event log + optional message write). A single consumer drains
+    /// the channel so writes land in FIFO order; bounded capacity of 256
+    /// provides back-pressure if SQLite stalls. Cheap to clone.
+    persist_tx: mpsc::Sender<PersistCommand>,
 }
 
 impl AgentManager {
-    pub fn new() -> Self {
+    pub fn new(db: Arc<Database>) -> Self {
         let (ws_broadcast, _) = broadcast::channel(256);
+        // MON-37: bounded channel feeding the single-consumer persistence
+        // task. 256 is well above the sidecar's human-scale event rate; if
+        // the DB falls behind, back-pressure stalls the reader before we
+        // queue unbounded memory. Not load-bearing — can be tuned.
+        let (persist_tx, persist_rx) = mpsc::channel::<PersistCommand>(256);
+        let live_states: Arc<DashMap<String, Arc<AgentStateEntry>>> =
+            Arc::new(DashMap::new());
+        let app_handle: Arc<Mutex<Option<AppHandle>>> = Arc::new(Mutex::new(None));
+
+        // MON-37: manager-lifetime persistence consumer. Spawned once in
+        // `new()`, not per sidecar respawn — we do not want to lose enqueued
+        // commands when the sidecar crashes. Exits naturally when all
+        // senders drop (process exit).
+        tauri::async_runtime::spawn(run_persist_consumer(
+            persist_rx,
+            db,
+            live_states.clone(),
+            ws_broadcast.clone(),
+            app_handle.clone(),
+        ));
+
         Self {
             sidecar: Mutex::new(None),
             agents: Mutex::new(HashMap::new()),
             session_map: Arc::new(Mutex::new(HashMap::new())),
-            live_states: Arc::new(DashMap::new()),
+            live_states,
             ws_broadcast,
-            app_handle: Mutex::new(None),
+            app_handle,
+            persist_tx,
         }
     }
 
@@ -253,7 +283,6 @@ impl AgentManager {
     fn ensure_sidecar(
         &self,
         app: &AppHandle,
-        db: &Arc<Database>,
     ) -> Result<Arc<SidecarProcess>, String> {
         let mut sidecar_lock = self.sidecar.lock().map_err(|e| e.to_string())?;
 
@@ -327,11 +356,13 @@ impl AgentManager {
 
         // Stdout reader task: async loop, one line → one handle_sidecar_event.
         // Owns clones of everything the handler needs; no `self` captured.
+        // MON-37: captures `persist_tx` instead of `db_clone` — the reader
+        // enqueues PersistCommands rather than running blocking SQL inline.
         let app_clone = app.clone();
-        let db_clone = db.clone();
         let session_map_clone = self.session_map.clone();
         let live_states_clone = self.live_states.clone();
         let ws_tx = self.ws_broadcast.clone();
+        let persist_tx = self.persist_tx.clone();
         tauri::async_runtime::spawn(async move {
             let mut lines = TokioBufReader::new(stdout).lines();
             loop {
@@ -339,7 +370,7 @@ impl AgentManager {
                     Ok(Some(line)) if !line.is_empty() => {
                         handle_sidecar_event(
                             &app_clone,
-                            &db_clone,
+                            &persist_tx,
                             &session_map_clone,
                             &live_states_clone,
                             &ws_tx,
@@ -419,7 +450,7 @@ impl AgentManager {
         app: &AppHandle,
         db: &Arc<Database>,
     ) -> Result<(), String> {
-        self.ensure_sidecar(app, db)?;
+        self.ensure_sidecar(app)?;
 
         // Snapshot agents and their session mappings
         let agents_snapshot = {
@@ -663,7 +694,7 @@ fn emit_state_event(
 /// `agent-event-{id}` only — they are not folded into `LiveAgentState`.
 async fn handle_sidecar_event(
     app: &AppHandle,
-    db: &Arc<Database>,
+    persist_tx: &mpsc::Sender<PersistCommand>,
     session_map: &AgentSessionMap,
     live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
     ws_tx: &broadcast::Sender<WsBroadcast>,
@@ -742,24 +773,19 @@ async fn handle_sidecar_event(
                 .and_then(|t| t.as_str())
                 .unwrap_or("");
 
-            // Persist to SQLite via spawn_blocking — rusqlite is blocking and
-            // we do not want to stall the async reader task.
-            // TODO(MON-27): remove spawn_blocking after migrating db.rs to
-            // tokio-rusqlite (or equivalent non-blocking SQLite).
-            let db_task = db.clone();
-            let session_map_task = session_map.clone();
-            let agent_id_task = agent_id.to_string();
-            let inner_type_task = inner_type.to_string();
-            let inner_event_task = inner_event.clone();
-            let _ = tauri::async_runtime::spawn_blocking(move || {
-                persist_event(
-                    &db_task,
-                    &session_map_task,
-                    &agent_id_task,
-                    &inner_type_task,
-                    &inner_event_task,
-                );
-            });
+            // MON-37: enqueue persistence work on the single-consumer mpsc
+            // pipeline. Session id is resolved on the producer side so the
+            // command carries its own `Option<String>` and ordering holds
+            // even if the session map mutates between enqueue and apply.
+            // `send().await` intentionally back-pressures the reader if the
+            // consumer is lagging — that is the point of a bounded channel.
+            let session_id = get_session_id(session_map, agent_id);
+            for cmd in build_persist_commands(agent_id, session_id, inner_type, inner_event) {
+                if persist_tx.send(cmd).await.is_err() {
+                    eprintln!("[monarch] persist consumer closed, dropping event");
+                    break;
+                }
+            }
 
             // Legacy raw-channel forwarding. Preserved during Phase 1 so the
             // existing frontend (which still assembles from these events)
@@ -928,29 +954,110 @@ async fn mark_agent_desynced(
     emit_state_event(app, ws_tx, &event_name, &snapshot);
 }
 
-/// Persist event data to SQLite based on event type
-fn persist_event(
-    db: &Arc<Database>,
-    session_map: &AgentSessionMap,
+// ---- MON-37: single-consumer persistence pipeline ----
+//
+// Before this change, each inbound sidecar event fanned out via a dropped
+// `spawn_blocking` JoinHandle. The default blocking pool has up to 512
+// workers, so under a burst `message_end` could race ahead of an earlier
+// `tool_execution_end` for the same message and land in SQLite out of
+// order. Errors were also silently swallowed by `let _ = ...`.
+//
+// The fix: one bounded mpsc channel, one consumer task, one command at a
+// time. The consumer still uses `spawn_blocking` around rusqlite (MON-27
+// removes that once db.rs moves to tokio-rusqlite), but awaits each call
+// before pulling the next command — so ordering is restored and errors
+// surface. On failure, the agent is marked desynced so the dev indicator
+// flips the same way it does for parser failures.
+
+/// A persistence effect to apply in FIFO order by the single consumer.
+/// Producer-built on the sidecar reader task; consumer-applied inside a
+/// `spawn_blocking` closure because rusqlite is synchronous.
+#[derive(Debug)]
+enum PersistCommand {
+    /// Log one event row. Always emitted for every sidecar `event` arrival,
+    /// matching the pre-MON-37 behaviour.
+    LogEvent {
+        agent_id: String,
+        session_id: Option<String>,
+        event_type: String,
+        data: Option<String>,
+    },
+    /// Persist an assistant `message_end`. Applying this variant performs
+    /// both the `save_message_internal` and the
+    /// `increment_session_message_count` call in that order, so the stats
+    /// update cannot race the insert.
+    SaveAssistantMessage {
+        agent_id: String,
+        message: MessageRow,
+    },
+    /// Persist a `tool_execution_end` as a synthesized `toolResult` row.
+    SaveToolResult {
+        agent_id: String,
+        message: MessageRow,
+    },
+}
+
+impl PersistCommand {
+    fn agent_id(&self) -> &str {
+        match self {
+            Self::LogEvent { agent_id, .. }
+            | Self::SaveAssistantMessage { agent_id, .. }
+            | Self::SaveToolResult { agent_id, .. } => agent_id,
+        }
+    }
+
+    fn apply(self, db: &Database) -> Result<(), String> {
+        match self {
+            Self::LogEvent {
+                agent_id,
+                session_id,
+                event_type,
+                data,
+                ..
+            } => db.log_event_internal(
+                Some(&agent_id),
+                session_id.as_deref(),
+                &event_type,
+                data.as_deref(),
+            ),
+            Self::SaveAssistantMessage { message, .. } => {
+                let session_id = message.session_id.clone();
+                let tokens = message.tokens;
+                let cost = message.cost;
+                db.save_message_internal(&message)?;
+                db.increment_session_message_count(&session_id, tokens, cost)
+            }
+            Self::SaveToolResult { message, .. } => {
+                db.save_message_internal(&message).map(|_| ())
+            }
+        }
+    }
+}
+
+/// Build zero-to-two `PersistCommand`s for one inbound sidecar event.
+/// Always produces a `LogEvent`; additionally produces a save-message
+/// command for `message_end` / `tool_execution_end` when a session id is
+/// known. Session id is resolved on the producer side, so the command
+/// carries its own `Option<String>` — ordering guarantees would be
+/// meaningless if the consumer re-resolved after a later mutation.
+fn build_persist_commands(
     agent_id: &str,
+    session_id: Option<String>,
     event_type: &str,
     event: &serde_json::Value,
-) {
-    let session_id = get_session_id(session_map, agent_id);
+) -> Vec<PersistCommand> {
+    let mut cmds: Vec<PersistCommand> = Vec::with_capacity(2);
 
-    // Log all events to the events table
     let data = serde_json::to_string(event).ok();
-    let _ = db.log_event_internal(
-        Some(agent_id),
-        session_id.as_deref(),
-        event_type,
-        data.as_deref(),
-    );
+    cmds.push(PersistCommand::LogEvent {
+        agent_id: agent_id.to_string(),
+        session_id: session_id.clone(),
+        event_type: event_type.to_string(),
+        data,
+    });
 
-    // Only persist messages if we have a valid session_id
-    let session_id = match session_id {
-        Some(sid) => sid,
-        None => return, // Can't persist without a session
+    let Some(session_id) = session_id else {
+        return cmds;
     };
 
     match event_type {
@@ -986,47 +1093,107 @@ fn persist_event(
                     })
                     .unwrap_or(0.0);
 
-                let _ = db.save_message_internal(&MessageRow {
-                    id: 0,
-                    session_id: session_id.clone(),
-                    role: role.to_string(),
-                    content,
-                    model,
-                    tokens,
-                    cost,
-                    timestamp: chrono_now(),
+                cmds.push(PersistCommand::SaveAssistantMessage {
+                    agent_id: agent_id.to_string(),
+                    message: MessageRow {
+                        id: 0,
+                        session_id,
+                        role: role.to_string(),
+                        content,
+                        model,
+                        tokens,
+                        cost,
+                        timestamp: chrono_now(),
+                    },
                 });
-
-                // Update session stats
-                let _ = db.increment_session_message_count(&session_id, tokens, cost);
             }
         }
         "tool_execution_end" => {
-            let tool_call_id = event.get("toolCallId").and_then(|n| n.as_str()).unwrap_or("");
-            let tool_name = event.get("toolName").and_then(|n| n.as_str()).unwrap_or("unknown");
-            let result = event.get("result").map(|r| serde_json::to_string(r).unwrap_or_default()).unwrap_or_default();
-            let is_error = event.get("isError").and_then(|e| e.as_bool()).unwrap_or(false);
+            let tool_call_id = event
+                .get("toolCallId")
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+            let tool_name = event
+                .get("toolName")
+                .and_then(|n| n.as_str())
+                .unwrap_or("unknown");
+            let result = event
+                .get("result")
+                .map(|r| serde_json::to_string(r).unwrap_or_default())
+                .unwrap_or_default();
+            let is_error = event
+                .get("isError")
+                .and_then(|e| e.as_bool())
+                .unwrap_or(false);
 
             let content = serde_json::json!({
                 "toolCallId": tool_call_id,
                 "toolName": tool_name,
                 "result": result,
                 "isError": is_error,
-            }).to_string();
+            })
+            .to_string();
 
-            let _ = db.save_message_internal(&MessageRow {
-                id: 0,
-                session_id,
-                role: "toolResult".to_string(),
-                content,
-                model: None,
-                tokens: 0,
-                cost: 0.0,
-                timestamp: chrono_now(),
+            cmds.push(PersistCommand::SaveToolResult {
+                agent_id: agent_id.to_string(),
+                message: MessageRow {
+                    id: 0,
+                    session_id,
+                    role: "toolResult".to_string(),
+                    content,
+                    model: None,
+                    tokens: 0,
+                    cost: 0.0,
+                    timestamp: chrono_now(),
+                },
             });
         }
         _ => {}
     }
+
+    cmds
+}
+
+/// MON-37: the single-consumer persistence task. Drains the bounded mpsc
+/// in FIFO order and applies each command inside `spawn_blocking` (await-ed
+/// so one command finishes before the next starts — that is what restores
+/// ordering). Errors are logged and flip `mark_agent_desynced` so the
+/// dev-only indicator surfaces DB problems the same way it surfaces
+/// parser failures. The loop never panics on error; it keeps draining.
+///
+/// Pure-async, Tauri-free at the type level: `AppHandle` is reached via
+/// the `Arc<Mutex<Option<_>>>` slot and is `None` until Tauri setup wires
+/// it, so failures that happen before setup simply skip the desync emit.
+/// This shape lets a future `#[cfg(test)]` harness drive the loop with a
+/// stub receiver once Rust tests run on Windows.
+async fn run_persist_consumer(
+    mut rx: mpsc::Receiver<PersistCommand>,
+    db: Arc<Database>,
+    live_states: Arc<DashMap<String, Arc<AgentStateEntry>>>,
+    ws_tx: broadcast::Sender<WsBroadcast>,
+    app_handle: Arc<Mutex<Option<AppHandle>>>,
+) {
+    while let Some(cmd) = rx.recv().await {
+        let agent_id = cmd.agent_id().to_string();
+        let db_for_cmd = db.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || cmd.apply(&db_for_cmd)).await;
+
+        let err = match result {
+            Ok(Ok(())) => continue,
+            Ok(Err(e)) => e,
+            Err(join_err) => format!("persist join error: {}", join_err),
+        };
+        eprintln!("[monarch] persist failed: {}", err);
+
+        if agent_id.is_empty() {
+            continue;
+        }
+        let app_opt = app_handle.lock().ok().and_then(|g| g.clone());
+        if let Some(app) = app_opt {
+            mark_agent_desynced(&app, &ws_tx, &live_states, &agent_id).await;
+        }
+    }
+    eprintln!("[monarch] persist consumer exited");
 }
 
 fn chrono_now() -> String {
@@ -1186,7 +1353,7 @@ pub fn spawn_agent(
     context_window: Option<i32>,
 ) -> Result<(), String> {
     // Ensure sidecar is running
-    state.ensure_sidecar(&app, &db)?;
+    state.ensure_sidecar(&app)?;
 
     let now = chrono_now();
     let provider_value = provider.clone();
@@ -1603,7 +1770,7 @@ pub fn ws_spawn_agent(
     shadow_grade: Option<String>,
 ) -> Result<(), String> {
     let app = mgr.get_app_handle()?;
-    mgr.ensure_sidecar(&app, db)?;
+    mgr.ensure_sidecar(&app)?;
 
     let now = chrono_now();
     let effective_cwd = cwd.as_deref().unwrap_or(".");
