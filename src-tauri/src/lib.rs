@@ -4,6 +4,7 @@ mod db;
 mod error;
 mod models;
 mod persistence;
+mod sidecar_protocol;
 mod toolbox;
 mod ws;
 

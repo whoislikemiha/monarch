@@ -18,6 +18,7 @@ use crate::agent_state::{
 use crate::db::{AgentRow, Database, MessageRow, ProjectRow};
 use crate::error::{lock_poisoned, MonarchError};
 use crate::persistence::read_agent_prompt_file;
+use crate::sidecar_protocol::{LoadSessionMessage, ShadowConfig, SidecarCommand};
 use std::path::{Path, PathBuf};
 
 /// Debounce window for streaming `message_update` events. Token-rate chunks
@@ -53,8 +54,10 @@ pub struct AgentState {
     pub thinking_level: Option<String>,
     pub is_streaming: bool,
     pub session_id: String,
-    /// The original create_session JSON, replayed on sidecar crash recovery
-    pub create_cmd_json: String,
+    /// The original create_session command, replayed on sidecar crash
+    /// recovery. Typed `SidecarCommand::CreateSession` since MON-32 — the
+    /// recovery resend path serializes once via `serde_json::to_string`.
+    pub create_cmd: SidecarCommand,
 }
 
 /// Shared agent→session mapping, accessible from both Tauri commands and the reader thread.
@@ -465,7 +468,9 @@ impl AgentManager {
 
         for (agent_id, state) in &agents_snapshot {
             // Replay the original create_session command (includes cwd, shadow, etc.)
-            let _ = self.send_to_sidecar(&state.create_cmd_json);
+            if let Ok(json) = serde_json::to_string(&state.create_cmd) {
+                let _ = self.send_to_sidecar(&json);
+            }
 
             // Replay session context from SQLite
             let messages_opt = if let Some(session_id) = session_snapshot.get(agent_id) {
@@ -476,27 +481,22 @@ impl AgentManager {
 
             if let Some(messages) = &messages_opt {
                 if !messages.is_empty() {
-                    let msg_array: Vec<serde_json::Value> = messages
-                        .iter()
-                        .filter(|m| {
-                            m.role == "user"
-                                || m.role == "assistant"
-                                || m.role == "toolResult"
-                        })
-                        .map(|m| {
-                            serde_json::json!({
-                                "role": m.role,
-                                "content": m.content,
-                                "model": m.model,
+                    let load_cmd = SidecarCommand::LoadSession {
+                        agent_id: agent_id.clone(),
+                        messages: messages
+                            .iter()
+                            .filter(|m| {
+                                m.role == "user"
+                                    || m.role == "assistant"
+                                    || m.role == "toolResult"
                             })
-                        })
-                        .collect();
-
-                    let load_cmd = serde_json::json!({
-                        "type": "load_session",
-                        "agentId": agent_id,
-                        "messages": msg_array,
-                    });
+                            .map(|m| LoadSessionMessage {
+                                role: m.role.clone(),
+                                content: m.content.clone(),
+                                model: m.model.clone(),
+                            })
+                            .collect(),
+                    };
                     if let Ok(json) = serde_json::to_string(&load_cmd) {
                         let _ = self.send_to_sidecar(&json);
                     }
@@ -1421,32 +1421,30 @@ pub fn spawn_agent(
 
     // Build create_session command
     let shadow = if shadow_name.is_some() || shadow_title.is_some() || shadow_grade.is_some() {
-        Some(serde_json::json!({
-            "name": shadow_name.as_deref().unwrap_or("Shadow"),
-            "title": shadow_title.as_deref().unwrap_or("Shadow Soldier"),
-            "grade": shadow_grade.as_deref().unwrap_or("Knight"),
-            "id": &id,
-        }))
+        Some(ShadowConfig {
+            name: shadow_name.clone().unwrap_or_else(|| "Shadow".to_string()),
+            title: shadow_title.clone().unwrap_or_else(|| "Shadow Soldier".to_string()),
+            grade: shadow_grade.clone().unwrap_or_else(|| "Knight".to_string()),
+            id: id.clone(),
+        })
     } else {
         None
     };
 
-    let cmd = serde_json::json!({
-        "type": "create_session",
-        "agentId": id,
-        "cwd": effective_cwd,
-        "provider": provider.as_deref().unwrap_or("anthropic"),
-        "model": model.as_deref().unwrap_or("claude-sonnet-4-5"),
-        "thinkingLevel": thinking_level.as_deref().unwrap_or("medium"),
-        "shadow": shadow,
-        "customPrompt": read_agent_prompt_file(&id)?
+    let cmd = SidecarCommand::CreateSession {
+        agent_id: id.clone(),
+        cwd: effective_cwd.to_string(),
+        provider: provider.clone().unwrap_or_else(|| "anthropic".to_string()),
+        model: model.clone().unwrap_or_else(|| "claude-sonnet-4-5".to_string()),
+        thinking_level: thinking_level.clone().unwrap_or_else(|| "medium".to_string()),
+        shadow,
+        custom_prompt: read_agent_prompt_file(&id)?
             .filter(|prompt| !prompt.trim().is_empty()),
-        "projectInstructions": project_instructions,
-        "contextWindow": effective_context_window,
-    });
+        project_instructions,
+        context_window: effective_context_window,
+    };
 
-    let json = serde_json::to_string(&cmd)?;
-    state.send_to_sidecar(&json)?;
+    state.send_to_sidecar(&serde_json::to_string(&cmd)?)?;
 
     // Track agent state with the full create command for crash recovery
     let mut agents = state.agents.lock().map_err(lock_poisoned("agents"))?;
@@ -1459,7 +1457,7 @@ pub fn spawn_agent(
             thinking_level,
             is_streaming: false,
             session_id,
-            create_cmd_json: json,
+            create_cmd: cmd,
         },
     );
 
@@ -1493,12 +1491,8 @@ pub fn kill_agent(
     id: String,
     _graceful: Option<bool>,
 ) -> Result<(), MonarchError> {
-    let cmd = serde_json::json!({
-        "type": "destroy_session",
-        "agentId": id,
-    });
-    let json = serde_json::to_string(&cmd)?;
-    let _ = state.send_to_sidecar(&json);
+    let cmd = SidecarCommand::DestroySession { agent_id: id.clone() };
+    let _ = state.send_to_sidecar(&serde_json::to_string(&cmd)?);
 
     // Clean up state
     let mut agents = state.agents.lock().map_err(lock_poisoned("agents"))?;
@@ -1581,26 +1575,20 @@ pub fn load_session_context(
     }
 
     // Convert to sidecar format — include all message types for full context
-    let msg_array: Vec<serde_json::Value> = messages
-        .iter()
-        .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
-        .map(|m| {
-            serde_json::json!({
-                "role": m.role,
-                "content": m.content,
-                "model": m.model,
+    let cmd = SidecarCommand::LoadSession {
+        agent_id,
+        messages: messages
+            .iter()
+            .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
+            .map(|m| LoadSessionMessage {
+                role: m.role.clone(),
+                content: m.content.clone(),
+                model: m.model.clone(),
             })
-        })
-        .collect();
+            .collect(),
+    };
 
-    let cmd = serde_json::json!({
-        "type": "load_session",
-        "agentId": agent_id,
-        "messages": msg_array,
-    });
-
-    let json = serde_json::to_string(&cmd)?;
-    state.send_with_recovery(&app, &db, &json)
+    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
 }
 
 /// Create a new session for an existing agent.
@@ -1678,12 +1666,8 @@ pub fn new_agent_session(
     }
 
     // Tell the sidecar to reset its in-memory session
-    let cmd = serde_json::json!({
-        "type": "new_session",
-        "agentId": agent_id,
-    });
-    let json = serde_json::to_string(&cmd)?;
-    state.send_with_recovery(&app, &db, &json)
+    let cmd = SidecarCommand::NewSession { agent_id };
+    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
 }
 
 /// Switch an agent to an existing persisted session instead of creating a new one.
@@ -1725,12 +1709,8 @@ pub fn switch_agent_session(
         }
     }
 
-    let cmd = serde_json::json!({
-        "type": "new_session",
-        "agentId": agent_id,
-    });
-    let json = serde_json::to_string(&cmd)?;
-    state.send_with_recovery(&app, &db, &json)
+    let cmd = SidecarCommand::NewSession { agent_id };
+    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
 }
 
 /// Forward extension UI response from frontend to sidecar
@@ -1744,14 +1724,12 @@ pub fn respond_extension_ui(
     request_id: String,
     value: serde_json::Value,
 ) -> Result<(), MonarchError> {
-    let cmd = serde_json::json!({
-        "type": "extension_ui_response",
-        "agentId": agent_id,
-        "requestId": request_id,
-        "value": value,
-    });
-    let json = serde_json::to_string(&cmd)?;
-    state.send_with_recovery(&app, &db, &json)
+    let cmd = SidecarCommand::ExtensionUiResponse {
+        agent_id,
+        request_id,
+        value,
+    };
+    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
 }
 
 // ---- WebSocket wrappers ----
@@ -1816,30 +1794,29 @@ pub fn ws_spawn_agent(
     }
 
     let shadow = if shadow_name.is_some() || shadow_title.is_some() || shadow_grade.is_some() {
-        Some(serde_json::json!({
-            "name": shadow_name.as_deref().unwrap_or("Shadow"),
-            "title": shadow_title.as_deref().unwrap_or("Shadow Soldier"),
-            "grade": shadow_grade.as_deref().unwrap_or("Knight"),
-            "id": &id,
-        }))
+        Some(ShadowConfig {
+            name: shadow_name.clone().unwrap_or_else(|| "Shadow".to_string()),
+            title: shadow_title.clone().unwrap_or_else(|| "Shadow Soldier".to_string()),
+            grade: shadow_grade.clone().unwrap_or_else(|| "Knight".to_string()),
+            id: id.clone(),
+        })
     } else {
         None
     };
 
-    let cmd = serde_json::json!({
-        "type": "create_session",
-        "agentId": id,
-        "cwd": effective_cwd,
-        "provider": provider.as_deref().unwrap_or("anthropic"),
-        "model": model.as_deref().unwrap_or("claude-sonnet-4-5"),
-        "thinkingLevel": thinking_level.as_deref().unwrap_or("medium"),
-        "shadow": shadow,
-        "customPrompt": read_agent_prompt_file(&id)?.filter(|p| !p.trim().is_empty()),
-        "projectInstructions": project_instructions,
-    });
+    let cmd = SidecarCommand::CreateSession {
+        agent_id: id.clone(),
+        cwd: effective_cwd.to_string(),
+        provider: provider.clone().unwrap_or_else(|| "anthropic".to_string()),
+        model: model.clone().unwrap_or_else(|| "claude-sonnet-4-5".to_string()),
+        thinking_level: thinking_level.clone().unwrap_or_else(|| "medium".to_string()),
+        shadow,
+        custom_prompt: read_agent_prompt_file(&id)?.filter(|p| !p.trim().is_empty()),
+        project_instructions,
+        context_window: None,
+    };
 
-    let json = serde_json::to_string(&cmd)?;
-    mgr.send_to_sidecar(&json)?;
+    mgr.send_to_sidecar(&serde_json::to_string(&cmd)?)?;
 
     let mut agents = mgr.agents.lock().map_err(lock_poisoned("agents"))?;
     agents.insert(id, AgentState {
@@ -1849,7 +1826,7 @@ pub fn ws_spawn_agent(
         thinking_level,
         is_streaming: false,
         session_id,
-        create_cmd_json: json,
+        create_cmd: cmd,
     });
 
     Ok(())
@@ -1871,9 +1848,8 @@ pub fn ws_send_command(
 }
 
 pub fn ws_kill_agent(mgr: &AgentManager, id: String) -> Result<(), MonarchError> {
-    let cmd = serde_json::json!({ "type": "destroy_session", "agentId": id });
-    let json = serde_json::to_string(&cmd)?;
-    let _ = mgr.send_to_sidecar(&json);
+    let cmd = SidecarCommand::DestroySession { agent_id: id.clone() };
+    let _ = mgr.send_to_sidecar(&serde_json::to_string(&cmd)?);
     let mut agents = mgr.agents.lock().map_err(lock_poisoned("agents"))?;
     agents.remove(&id);
     drop(agents);
@@ -1893,13 +1869,19 @@ pub fn ws_load_session_context(
     let app = mgr.get_app_handle()?;
     let messages = db.get_messages_with_ancestry(&source_session_id)?;
     if messages.is_empty() { return Ok(()); }
-    let msg_array: Vec<serde_json::Value> = messages.iter()
-        .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
-        .map(|m| serde_json::json!({ "role": m.role, "content": m.content, "model": m.model }))
-        .collect();
-    let cmd = serde_json::json!({ "type": "load_session", "agentId": agent_id, "messages": msg_array });
-    let json = serde_json::to_string(&cmd)?;
-    mgr.send_with_recovery(&app, db, &json)
+    let cmd = SidecarCommand::LoadSession {
+        agent_id,
+        messages: messages
+            .iter()
+            .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
+            .map(|m| LoadSessionMessage {
+                role: m.role.clone(),
+                content: m.content.clone(),
+                model: m.model.clone(),
+            })
+            .collect(),
+    };
+    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
 }
 
 pub fn ws_new_agent_session(
@@ -1941,9 +1923,8 @@ pub fn ws_new_agent_session(
         let mut map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
         map.insert(agent_id.clone(), new_session_id);
     }
-    let cmd = serde_json::json!({ "type": "new_session", "agentId": agent_id });
-    let json = serde_json::to_string(&cmd)?;
-    mgr.send_with_recovery(&app, db, &json)
+    let cmd = SidecarCommand::NewSession { agent_id };
+    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
 }
 
 pub fn ws_switch_agent_session(
@@ -1975,9 +1956,8 @@ pub fn ws_switch_agent_session(
             agent.session_id = session_id.clone();
         }
     }
-    let cmd = serde_json::json!({ "type": "new_session", "agentId": agent_id });
-    let json = serde_json::to_string(&cmd)?;
-    mgr.send_with_recovery(&app, db, &json)
+    let cmd = SidecarCommand::NewSession { agent_id };
+    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
 }
 
 pub fn ws_respond_extension_ui(
@@ -1988,14 +1968,12 @@ pub fn ws_respond_extension_ui(
     value: serde_json::Value,
 ) -> Result<(), MonarchError> {
     let app = mgr.get_app_handle()?;
-    let cmd = serde_json::json!({
-        "type": "extension_ui_response",
-        "agentId": agent_id,
-        "requestId": request_id,
-        "value": value,
-    });
-    let json = serde_json::to_string(&cmd)?;
-    mgr.send_with_recovery(&app, db, &json)
+    let cmd = SidecarCommand::ExtensionUiResponse {
+        agent_id,
+        request_id,
+        value,
+    };
+    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
 }
 
 pub fn ws_detect_project(db: &Arc<Database>, cwd: String) -> Result<Option<serde_json::Value>, MonarchError> {
