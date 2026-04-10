@@ -482,9 +482,18 @@
   let currentLive = $derived(
     activeId ? liveAgentStore.byAgent.get(activeId) ?? null : null,
   );
+  let activeCustomPrompt: string | null = $state(null);
   let agentContext: AgentContext = $derived(
     !councilMode && activeAgent && currentLive
-      ? { agentId: activeAgent.id, agent: activeAgent, live: currentLive }
+      ? {
+          agentId: activeAgent.id,
+          agent: activeAgent,
+          live: currentLive,
+          setup: {
+            customPrompt: activeCustomPrompt,
+            projectInstructions: activeProject?.instructions ?? null,
+          },
+        }
       : null,
   );
 </script>
@@ -551,10 +560,10 @@
         <AgentView
           agent={activeAgent}
           projectName={activeProject?.name}
-          projectInstructions={activeProject?.instructions}
           onrestart={restartAgent}
           onagentchange={(agentId, updater) => updateAgent(agentId, updater)}
           onprojectedit={() => { if (activeProject) editingProject = activeProject; }}
+          bind:customPrompt={activeCustomPrompt}
           bind:this={agentViewRef}
         />
       {/key}
