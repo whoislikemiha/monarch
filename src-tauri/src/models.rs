@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::error::{lock_poisoned, MonarchError};
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ModelInfo {
     pub id: String,
@@ -45,7 +47,7 @@ fn pi_auth_path() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(".pi").join("agent").join("auth.json"))
 }
 
-fn pi_auth_entry_exists(provider: &str) -> Result<bool, String> {
+fn pi_auth_entry_exists(provider: &str) -> Result<bool, MonarchError> {
     let path = match pi_auth_path() {
         Some(path) => path,
         None => return Ok(false),
@@ -55,10 +57,8 @@ fn pi_auth_entry_exists(provider: &str) -> Result<bool, String> {
         return Ok(false);
     }
 
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-    let parsed: Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
+    let content = fs::read_to_string(&path)?;
+    let parsed: Value = serde_json::from_str(&content)?;
 
     Ok(parsed
         .as_object()
@@ -148,50 +148,42 @@ fn lmstudio_host_root() -> String {
         .unwrap_or_else(|| trimmed.to_string())
 }
 
-async fn fetch_lmstudio_models() -> Result<Vec<ModelInfo>, String> {
+async fn fetch_lmstudio_models() -> Result<Vec<ModelInfo>, MonarchError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
-        .build()
-        .map_err(|e| e.to_string())?;
+        .build()?;
 
     // Prefer the native endpoint — it exposes per-model context sizing.
     // Fall back to the OpenAI-compatible endpoint if the user is running
     // an older LM Studio build that doesn't expose `/api/v0`.
     match fetch_lmstudio_models_native(&client).await {
         Ok(models) => Ok(models),
-        Err(native_err) => {
-            match fetch_lmstudio_models_openai(&client).await {
-                Ok(models) => Ok(models),
-                Err(openai_err) => Err(format!("{} / {}", native_err, openai_err)),
-            }
-        }
+        Err(native_err) => match fetch_lmstudio_models_openai(&client).await {
+            Ok(models) => Ok(models),
+            Err(openai_err) => Err(MonarchError::persistence(format!(
+                "LM Studio unavailable: native={native_err} / openai={openai_err}"
+            ))),
+        },
     }
 }
 
 async fn fetch_lmstudio_models_native(
     client: &reqwest::Client,
-) -> Result<Vec<ModelInfo>, String> {
+) -> Result<Vec<ModelInfo>, MonarchError> {
     let host = lmstudio_host_root();
     let url = format!("{}/api/v0/models", host);
 
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("LM Studio not reachable at {}: {}", host, e))?;
+    let resp = client.get(&url).send().await?;
 
     if !resp.status().is_success() {
-        return Err(format!(
+        return Err(MonarchError::persistence(format!(
             "LM Studio native API returned HTTP {} at {}",
             resp.status(),
             url
-        ));
+        )));
     }
 
-    let parsed: LmStudioNativeResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse LM Studio native response: {}", e))?;
+    let parsed: LmStudioNativeResponse = resp.json().await?;
 
     // Only surface models LM Studio reports as currently loaded — matches
     // the scope of the OpenAI-compatible /v1/models endpoint, so the picker
@@ -211,28 +203,21 @@ async fn fetch_lmstudio_models_native(
 
 async fn fetch_lmstudio_models_openai(
     client: &reqwest::Client,
-) -> Result<Vec<ModelInfo>, String> {
+) -> Result<Vec<ModelInfo>, MonarchError> {
     let host = lmstudio_host_root();
     let url = format!("{}/v1/models", host);
 
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("LM Studio not reachable at {}: {}", host, e))?;
+    let resp = client.get(&url).send().await?;
 
     if !resp.status().is_success() {
-        return Err(format!(
+        return Err(MonarchError::persistence(format!(
             "LM Studio returned HTTP {} at {}",
             resp.status(),
             url
-        ));
+        )));
     }
 
-    let parsed: LmStudioResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse LM Studio response: {}", e))?;
+    let parsed: LmStudioResponse = resp.json().await?;
 
     Ok(parsed
         .data
@@ -246,20 +231,17 @@ async fn fetch_lmstudio_models_openai(
         .collect())
 }
 
-async fn fetch_openrouter_models() -> Result<Vec<ModelInfo>, String> {
+async fn fetch_openrouter_models() -> Result<Vec<ModelInfo>, MonarchError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|e| e.to_string())?;
+        .build()?;
 
     let resp: OpenRouterResponse = client
         .get("https://openrouter.ai/api/v1/models")
         .send()
-        .await
-        .map_err(|e| format!("Failed to fetch OpenRouter models: {}", e))?
+        .await?
         .json()
-        .await
-        .map_err(|e| format!("Failed to parse OpenRouter response: {}", e))?;
+        .await?;
 
     Ok(resp
         .data
@@ -278,14 +260,14 @@ async fn fetch_openrouter_models() -> Result<Vec<ModelInfo>, String> {
 pub async fn get_models(
     cache: tauri::State<'_, Arc<ModelCache>>,
     provider: String,
-) -> Result<Vec<ModelInfo>, String> {
+) -> Result<Vec<ModelInfo>, MonarchError> {
     match provider.as_str() {
         "anthropic" => Ok(anthropic_models()),
         "openai-codex" => Ok(openai_codex_models()),
         "openrouter" => {
             // Check cache
             {
-                let cached = cache.openrouter.lock().map_err(|e| e.to_string())?;
+                let cached = cache.openrouter.lock().map_err(lock_poisoned("openrouter cache"))?;
                 if let Some((ref models, ref fetched_at)) = *cached {
                     if fetched_at.elapsed() < CACHE_TTL {
                         return Ok(models.clone());
@@ -298,7 +280,7 @@ pub async fn get_models(
 
             // Update cache
             {
-                let mut cached = cache.openrouter.lock().map_err(|e| e.to_string())?;
+                let mut cached = cache.openrouter.lock().map_err(lock_poisoned("openrouter cache"))?;
                 *cached = Some((models.clone(), Instant::now()));
             }
 
@@ -311,13 +293,13 @@ pub async fn get_models(
 
 // ---- WebSocket wrappers ----
 
-pub async fn ws_get_models(cache: &ModelCache, provider: String) -> Result<Vec<ModelInfo>, String> {
+pub async fn ws_get_models(cache: &ModelCache, provider: String) -> Result<Vec<ModelInfo>, MonarchError> {
     match provider.as_str() {
         "anthropic" => Ok(anthropic_models()),
         "openai-codex" => Ok(openai_codex_models()),
         "openrouter" => {
             {
-                let cached = cache.openrouter.lock().map_err(|e| e.to_string())?;
+                let cached = cache.openrouter.lock().map_err(lock_poisoned("openrouter cache"))?;
                 if let Some((ref models, ref fetched_at)) = *cached {
                     if fetched_at.elapsed() < CACHE_TTL {
                         return Ok(models.clone());
@@ -326,7 +308,7 @@ pub async fn ws_get_models(cache: &ModelCache, provider: String) -> Result<Vec<M
             }
             let models = fetch_openrouter_models().await?;
             {
-                let mut cached = cache.openrouter.lock().map_err(|e| e.to_string())?;
+                let mut cached = cache.openrouter.lock().map_err(lock_poisoned("openrouter cache"))?;
                 *cached = Some((models.clone(), Instant::now()));
             }
             Ok(models)
@@ -338,15 +320,15 @@ pub async fn ws_get_models(cache: &ModelCache, provider: String) -> Result<Vec<M
 
 #[tauri::command]
 #[specta::specta]
-pub fn get_provider_auth_status(provider: String) -> Result<ProviderAuthStatus, String> {
+pub fn get_provider_auth_status(provider: String) -> Result<ProviderAuthStatus, MonarchError> {
     get_provider_auth_status_inner(provider)
 }
 
-pub fn ws_get_provider_auth_status(provider: String) -> Result<ProviderAuthStatus, String> {
+pub fn ws_get_provider_auth_status(provider: String) -> Result<ProviderAuthStatus, MonarchError> {
     get_provider_auth_status_inner(provider)
 }
 
-fn get_provider_auth_status_inner(provider: String) -> Result<ProviderAuthStatus, String> {
+fn get_provider_auth_status_inner(provider: String) -> Result<ProviderAuthStatus, MonarchError> {
     match provider.as_str() {
         "anthropic" => {
             let configured = pi_auth_entry_exists("anthropic")?;

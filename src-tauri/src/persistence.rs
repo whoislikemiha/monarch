@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::error::MonarchError;
+
 fn monarch_dir() -> PathBuf {
     let dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
@@ -14,12 +16,10 @@ fn prompts_dir() -> PathBuf {
     dir
 }
 
-pub fn read_agent_prompt_file(agent_id: &str) -> Result<Option<String>, String> {
+pub fn read_agent_prompt_file(agent_id: &str) -> Result<Option<String>, MonarchError> {
     let path = prompts_dir().join(format!("{}.md", agent_id));
     if path.exists() {
-        std::fs::read_to_string(&path)
-            .map(Some)
-            .map_err(|e| e.to_string())
+        Ok(Some(std::fs::read_to_string(&path)?))
     } else {
         Ok(None)
     }
@@ -27,15 +27,16 @@ pub fn read_agent_prompt_file(agent_id: &str) -> Result<Option<String>, String> 
 
 #[tauri::command]
 #[specta::specta]
-pub fn get_agent_prompt(agent_id: String) -> Result<Option<String>, String> {
+pub fn get_agent_prompt(agent_id: String) -> Result<Option<String>, MonarchError> {
     read_agent_prompt_file(&agent_id)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn save_agent_prompt(agent_id: String, prompt: String) -> Result<(), String> {
+pub fn save_agent_prompt(agent_id: String, prompt: String) -> Result<(), MonarchError> {
     let path = prompts_dir().join(format!("{}.md", agent_id));
-    std::fs::write(&path, prompt).map_err(|e| format!("Failed to save prompt: {}", e))
+    std::fs::write(&path, prompt)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -46,9 +47,10 @@ pub fn get_prompts_dir() -> String {
 
 // ---- WebSocket wrappers ----
 
-pub fn ws_save_agent_prompt(agent_id: String, prompt: String) -> Result<(), String> {
+pub fn ws_save_agent_prompt(agent_id: String, prompt: String) -> Result<(), MonarchError> {
     let path = prompts_dir().join(format!("{}.md", agent_id));
-    std::fs::write(&path, prompt).map_err(|e| format!("Failed to save prompt: {}", e))
+    std::fs::write(&path, prompt)?;
+    Ok(())
 }
 
 pub fn ws_get_prompts_dir() -> String {

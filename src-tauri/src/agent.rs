@@ -16,6 +16,7 @@ use crate::agent_state::{
     display_items_from_messages, ApplyOutcome, DisplayItem, LiveAgentState,
 };
 use crate::db::{AgentRow, Database, MessageRow, ProjectRow};
+use crate::error::{lock_poisoned, MonarchError};
 use crate::persistence::read_agent_prompt_file;
 use std::path::{Path, PathBuf};
 
@@ -85,17 +86,17 @@ struct SidecarProcess {
 }
 
 impl SidecarProcess {
-    fn write_command(&self, json: &str) -> Result<(), String> {
+    fn write_command(&self, json: &str) -> Result<(), MonarchError> {
         let mut line = json.to_string();
         if !line.ends_with('\n') {
             line.push('\n');
         }
-        let guard = self.stdin_tx.lock().map_err(|e| e.to_string())?;
+        let guard = self.stdin_tx.lock().map_err(lock_poisoned("sidecar stdin"))?;
         guard
             .as_ref()
-            .ok_or_else(|| "sidecar stdin closed".to_string())?
+            .ok_or_else(MonarchError::sidecar_process_down)?
             .send(line)
-            .map_err(|e| format!("sidecar writer closed: {}", e))
+            .map_err(|e| MonarchError::sidecar_stdin_write(e.to_string()))
     }
 }
 
@@ -215,12 +216,12 @@ impl AgentManager {
         }
     }
 
-    fn get_app_handle(&self) -> Result<AppHandle, String> {
+    fn get_app_handle(&self) -> Result<AppHandle, MonarchError> {
         self.app_handle
             .lock()
-            .map_err(|e| e.to_string())?
+            .map_err(lock_poisoned("app handle"))?
             .clone()
-            .ok_or_else(|| "AppHandle not initialized".to_string())
+            .ok_or_else(|| MonarchError::invalid_input("AppHandle not initialized"))
     }
 
     /// Graceful-then-hard sidecar teardown, invoked from the Tauri
@@ -283,8 +284,8 @@ impl AgentManager {
     fn ensure_sidecar(
         &self,
         app: &AppHandle,
-    ) -> Result<Arc<SidecarProcess>, String> {
-        let mut sidecar_lock = self.sidecar.lock().map_err(|e| e.to_string())?;
+    ) -> Result<Arc<SidecarProcess>, MonarchError> {
+        let mut sidecar_lock = self.sidecar.lock().map_err(lock_poisoned("sidecar"))?;
 
         // Check if existing sidecar is still alive. `tokio::process::Child::try_wait`
         // is synchronous and does not require a runtime context, so this is safe
@@ -313,22 +314,20 @@ impl AgentManager {
             .stderr(Stdio::piped())
             .kill_on_drop(false);
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;
+        let mut child = cmd.spawn()?;
 
         let stdout = child
             .stdout
             .take()
-            .ok_or("Failed to capture sidecar stdout")?;
+            .ok_or_else(|| MonarchError::persistence("Failed to capture sidecar stdout"))?;
         let stderr = child
             .stderr
             .take()
-            .ok_or("Failed to capture sidecar stderr")?;
+            .ok_or_else(|| MonarchError::persistence("Failed to capture sidecar stderr"))?;
         let stdin = child
             .stdin
             .take()
-            .ok_or("Failed to capture sidecar stdin")?;
+            .ok_or_else(|| MonarchError::persistence("Failed to capture sidecar stdin"))?;
 
         // Writer task: drains the mpsc and writes each line to the tokio
         // ChildStdin. Sync callers enqueue via `stdin_tx.send(..)`.
@@ -431,9 +430,11 @@ impl AgentManager {
         }
     }
 
-    fn send_to_sidecar(&self, json: &str) -> Result<(), String> {
-        let sidecar_lock = self.sidecar.lock().map_err(|e| e.to_string())?;
-        let sc = sidecar_lock.as_ref().ok_or("Sidecar not running")?;
+    fn send_to_sidecar(&self, json: &str) -> Result<(), MonarchError> {
+        let sidecar_lock = self.sidecar.lock().map_err(lock_poisoned("sidecar"))?;
+        let sc = sidecar_lock
+            .as_ref()
+            .ok_or_else(MonarchError::sidecar_process_down)?;
         sc.write_command(json)
     }
 
@@ -449,16 +450,16 @@ impl AgentManager {
         &self,
         app: &AppHandle,
         db: &Arc<Database>,
-    ) -> Result<(), String> {
+    ) -> Result<(), MonarchError> {
         self.ensure_sidecar(app)?;
 
         // Snapshot agents and their session mappings
         let agents_snapshot = {
-            let agents = self.agents.lock().map_err(|e| e.to_string())?;
+            let agents = self.agents.lock().map_err(lock_poisoned("agents"))?;
             agents.clone()
         };
         let session_snapshot = {
-            let map = self.session_map.lock().map_err(|e| e.to_string())?;
+            let map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
             map.clone()
         };
 
@@ -550,7 +551,7 @@ impl AgentManager {
         app: &AppHandle,
         db: &Arc<Database>,
         json: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), MonarchError> {
         // Fast path
         match self.send_to_sidecar(json) {
             Ok(()) => return Ok(()),
@@ -580,7 +581,7 @@ impl AgentManager {
         agent_id: &str,
         session_id: Option<&str>,
         status_text: &str,
-    ) -> Result<LiveAgentState, String> {
+    ) -> Result<LiveAgentState, MonarchError> {
         let items: Vec<DisplayItem> = match session_id {
             Some(sid) => {
                 let messages = db.get_messages_with_ancestry(sid).unwrap_or_default();
@@ -623,7 +624,7 @@ impl AgentManager {
 }
 
 /// Resolve the sidecar script path
-fn resolve_sidecar_path() -> Result<String, String> {
+fn resolve_sidecar_path() -> Result<String, MonarchError> {
     let candidates = [
         std::env::var("MONARCH_SIDECAR_PATH").ok().map(std::path::PathBuf::from),
         std::env::current_dir().ok().map(|d| d.join("sidecar/dist/index.js")),
@@ -637,7 +638,7 @@ fn resolve_sidecar_path() -> Result<String, String> {
         .flatten()
         .find(|p| p.exists())
         .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| "Could not find sidecar/dist/index.js".to_string())
+        .ok_or_else(|| MonarchError::not_found("sidecar/dist/index.js"))
 }
 
 /// Look up the session_id for an agent from the shared map
@@ -1006,7 +1007,7 @@ impl PersistCommand {
         }
     }
 
-    fn apply(self, db: &Database) -> Result<(), String> {
+    fn apply(self, db: &Database) -> Result<(), MonarchError> {
         match self {
             Self::LogEvent {
                 agent_id,
@@ -1178,9 +1179,9 @@ async fn run_persist_consumer(
         let db_for_cmd = db.clone();
         let result = tauri::async_runtime::spawn_blocking(move || cmd.apply(&db_for_cmd)).await;
 
-        let err = match result {
+        let err: String = match result {
             Ok(Ok(())) => continue,
-            Ok(Err(e)) => e,
+            Ok(Err(e)) => e.to_string(),
             Err(join_err) => format!("persist join error: {}", join_err),
         };
         eprintln!("[monarch] persist failed: {}", err);
@@ -1246,7 +1247,7 @@ fn read_instructions_from_root(root: &Path) -> Option<String> {
 fn resolve_project(
     db: &Database,
     cwd: &str,
-) -> Result<(Option<String>, Option<String>), String> {
+) -> Result<(Option<String>, Option<String>), MonarchError> {
     let cwd_path = Path::new(cwd);
     let root = match find_project_root(cwd_path) {
         Some(r) => r,
@@ -1297,7 +1298,7 @@ fn uuid_v4_simple() -> String {
 pub fn detect_project(
     db: tauri::State<'_, Arc<Database>>,
     cwd: String,
-) -> Result<Option<serde_json::Value>, String> {
+) -> Result<Option<serde_json::Value>, MonarchError> {
     let cwd_path = Path::new(&cwd);
     let root = match find_project_root(cwd_path) {
         Some(r) => r,
@@ -1324,7 +1325,7 @@ pub fn detect_project(
 
 #[tauri::command]
 #[specta::specta]
-pub fn read_project_instructions(cwd: String) -> Result<Option<String>, String> {
+pub fn read_project_instructions(cwd: String) -> Result<Option<String>, MonarchError> {
     let cwd_path = Path::new(&cwd);
     let root = match find_project_root(cwd_path) {
         Some(r) => r,
@@ -1351,7 +1352,7 @@ pub fn spawn_agent(
     shadow_title: Option<String>,
     shadow_grade: Option<String>,
     context_window: Option<i32>,
-) -> Result<(), String> {
+) -> Result<(), MonarchError> {
     // Ensure sidecar is running
     state.ensure_sidecar(&app)?;
 
@@ -1414,7 +1415,7 @@ pub fn spawn_agent(
 
     // Register the agent→session mapping so the reader thread can persist events
     {
-        let mut map = state.session_map.lock().map_err(|e| e.to_string())?;
+        let mut map = state.session_map.lock().map_err(lock_poisoned("session map"))?;
         map.insert(id.clone(), session_id.clone());
     }
 
@@ -1444,11 +1445,11 @@ pub fn spawn_agent(
         "contextWindow": effective_context_window,
     });
 
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     state.send_to_sidecar(&json)?;
 
     // Track agent state with the full create command for crash recovery
-    let mut agents = state.agents.lock().map_err(|e| e.to_string())?;
+    let mut agents = state.agents.lock().map_err(lock_poisoned("agents"))?;
     agents.insert(
         id.clone(),
         AgentState {
@@ -1473,15 +1474,15 @@ pub fn send_command(
     db: tauri::State<'_, Arc<Database>>,
     id: String,
     command_json: String,
-) -> Result<(), String> {
+) -> Result<(), MonarchError> {
     let mut cmd: serde_json::Value =
-        serde_json::from_str(&command_json).map_err(|e| e.to_string())?;
+        serde_json::from_str(&command_json)?;
 
     if let Some(obj) = cmd.as_object_mut() {
         obj.insert("agentId".to_string(), serde_json::Value::String(id));
     }
 
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     state.send_with_recovery(&app, &db, &json)
 }
 
@@ -1491,20 +1492,20 @@ pub fn kill_agent(
     state: tauri::State<'_, Arc<AgentManager>>,
     id: String,
     _graceful: Option<bool>,
-) -> Result<(), String> {
+) -> Result<(), MonarchError> {
     let cmd = serde_json::json!({
         "type": "destroy_session",
         "agentId": id,
     });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     let _ = state.send_to_sidecar(&json);
 
     // Clean up state
-    let mut agents = state.agents.lock().map_err(|e| e.to_string())?;
+    let mut agents = state.agents.lock().map_err(lock_poisoned("agents"))?;
     agents.remove(&id);
     drop(agents);
 
-    let mut map = state.session_map.lock().map_err(|e| e.to_string())?;
+    let mut map = state.session_map.lock().map_err(lock_poisoned("session map"))?;
     map.remove(&id);
     drop(map);
 
@@ -1526,7 +1527,7 @@ pub fn kill_agent(
 pub async fn get_agent_state(
     state: tauri::State<'_, Arc<AgentManager>>,
     agent_id: String,
-) -> Result<Option<LiveAgentState>, String> {
+) -> Result<Option<LiveAgentState>, MonarchError> {
     let entry = match state.live_states.get(&agent_id) {
         Some(e) => e.clone(),
         None => return Ok(None),
@@ -1549,7 +1550,7 @@ pub async fn rebuild_agent_state_from_session(
     agent_id: String,
     session_id: Option<String>,
     status_text: String,
-) -> Result<LiveAgentState, String> {
+) -> Result<LiveAgentState, MonarchError> {
     state
         .rebuild_state_from_session(
             &app,
@@ -1571,7 +1572,7 @@ pub fn load_session_context(
     db: tauri::State<'_, Arc<Database>>,
     agent_id: String,
     source_session_id: String,
-) -> Result<(), String> {
+) -> Result<(), MonarchError> {
     // Load messages from DB, following parent session chain for full context
     let messages = db.get_messages_with_ancestry(&source_session_id)?;
 
@@ -1598,7 +1599,7 @@ pub fn load_session_context(
         "messages": msg_array,
     });
 
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     state.send_with_recovery(&app, &db, &json)
 }
 
@@ -1613,10 +1614,10 @@ pub fn new_agent_session(
     agent_id: String,
     new_session_id: String,
     parent_session_id: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), MonarchError> {
     // End the old session
     let old_session_id = {
-        let map = state.session_map.lock().map_err(|e| e.to_string())?;
+        let map = state.session_map.lock().map_err(lock_poisoned("session map"))?;
         map.get(&agent_id).cloned()
     };
     if let Some(old_sid) = &old_session_id {
@@ -1625,7 +1626,7 @@ pub fn new_agent_session(
 
     // Create new session row in DB with optional parent link
     let agent_state = {
-        let agents = state.agents.lock().map_err(|e| e.to_string())?;
+        let agents = state.agents.lock().map_err(lock_poisoned("agents"))?;
         agents.get(&agent_id).cloned()
     };
     let (model, provider) = agent_state
@@ -1672,7 +1673,7 @@ pub fn new_agent_session(
 
     // Update the agent→session mapping
     {
-        let mut map = state.session_map.lock().map_err(|e| e.to_string())?;
+        let mut map = state.session_map.lock().map_err(lock_poisoned("session map"))?;
         map.insert(agent_id.clone(), new_session_id);
     }
 
@@ -1681,7 +1682,7 @@ pub fn new_agent_session(
         "type": "new_session",
         "agentId": agent_id,
     });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     state.send_with_recovery(&app, &db, &json)
 }
 
@@ -1696,13 +1697,13 @@ pub fn switch_agent_session(
     db: tauri::State<'_, Arc<Database>>,
     agent_id: String,
     session_id: String,
-) -> Result<(), String> {
+) -> Result<(), MonarchError> {
     if !db.session_exists_internal(&session_id)? {
-        return Err(format!("Session not found: {}", session_id));
+        return Err(MonarchError::not_found(format!("session {}", session_id)));
     }
 
     let old_session_id = {
-        let map = state.session_map.lock().map_err(|e| e.to_string())?;
+        let map = state.session_map.lock().map_err(lock_poisoned("session map"))?;
         map.get(&agent_id).cloned()
     };
 
@@ -1713,12 +1714,12 @@ pub fn switch_agent_session(
     }
 
     {
-        let mut map = state.session_map.lock().map_err(|e| e.to_string())?;
+        let mut map = state.session_map.lock().map_err(lock_poisoned("session map"))?;
         map.insert(agent_id.clone(), session_id.clone());
     }
 
     {
-        let mut agents = state.agents.lock().map_err(|e| e.to_string())?;
+        let mut agents = state.agents.lock().map_err(lock_poisoned("agents"))?;
         if let Some(agent) = agents.get_mut(&agent_id) {
             agent.session_id = session_id.clone();
         }
@@ -1728,7 +1729,7 @@ pub fn switch_agent_session(
         "type": "new_session",
         "agentId": agent_id,
     });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     state.send_with_recovery(&app, &db, &json)
 }
 
@@ -1742,14 +1743,14 @@ pub fn respond_extension_ui(
     agent_id: String,
     request_id: String,
     value: serde_json::Value,
-) -> Result<(), String> {
+) -> Result<(), MonarchError> {
     let cmd = serde_json::json!({
         "type": "extension_ui_response",
         "agentId": agent_id,
         "requestId": request_id,
         "value": value,
     });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     state.send_with_recovery(&app, &db, &json)
 }
 
@@ -1768,7 +1769,7 @@ pub fn ws_spawn_agent(
     shadow_name: Option<String>,
     shadow_title: Option<String>,
     shadow_grade: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), MonarchError> {
     let app = mgr.get_app_handle()?;
     mgr.ensure_sidecar(&app)?;
 
@@ -1810,7 +1811,7 @@ pub fn ws_spawn_agent(
     }
 
     {
-        let mut map = mgr.session_map.lock().map_err(|e| e.to_string())?;
+        let mut map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
         map.insert(id.clone(), session_id.clone());
     }
 
@@ -1837,10 +1838,10 @@ pub fn ws_spawn_agent(
         "projectInstructions": project_instructions,
     });
 
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     mgr.send_to_sidecar(&json)?;
 
-    let mut agents = mgr.agents.lock().map_err(|e| e.to_string())?;
+    let mut agents = mgr.agents.lock().map_err(lock_poisoned("agents"))?;
     agents.insert(id, AgentState {
         lifecycle: AgentLifecycleState::Idle,
         provider,
@@ -1859,24 +1860,24 @@ pub fn ws_send_command(
     db: &Arc<Database>,
     id: String,
     command_json: String,
-) -> Result<(), String> {
+) -> Result<(), MonarchError> {
     let app = mgr.get_app_handle()?;
-    let mut cmd: serde_json::Value = serde_json::from_str(&command_json).map_err(|e| e.to_string())?;
+    let mut cmd: serde_json::Value = serde_json::from_str(&command_json)?;
     if let Some(obj) = cmd.as_object_mut() {
         obj.insert("agentId".to_string(), serde_json::Value::String(id));
     }
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     mgr.send_with_recovery(&app, db, &json)
 }
 
-pub fn ws_kill_agent(mgr: &AgentManager, id: String) -> Result<(), String> {
+pub fn ws_kill_agent(mgr: &AgentManager, id: String) -> Result<(), MonarchError> {
     let cmd = serde_json::json!({ "type": "destroy_session", "agentId": id });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     let _ = mgr.send_to_sidecar(&json);
-    let mut agents = mgr.agents.lock().map_err(|e| e.to_string())?;
+    let mut agents = mgr.agents.lock().map_err(lock_poisoned("agents"))?;
     agents.remove(&id);
     drop(agents);
-    let mut map = mgr.session_map.lock().map_err(|e| e.to_string())?;
+    let mut map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
     map.remove(&id);
     drop(map);
     mgr.remove_live_entry(&id);
@@ -1888,7 +1889,7 @@ pub fn ws_load_session_context(
     db: &Arc<Database>,
     agent_id: String,
     source_session_id: String,
-) -> Result<(), String> {
+) -> Result<(), MonarchError> {
     let app = mgr.get_app_handle()?;
     let messages = db.get_messages_with_ancestry(&source_session_id)?;
     if messages.is_empty() { return Ok(()); }
@@ -1897,7 +1898,7 @@ pub fn ws_load_session_context(
         .map(|m| serde_json::json!({ "role": m.role, "content": m.content, "model": m.model }))
         .collect();
     let cmd = serde_json::json!({ "type": "load_session", "agentId": agent_id, "messages": msg_array });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     mgr.send_with_recovery(&app, db, &json)
 }
 
@@ -1907,17 +1908,17 @@ pub fn ws_new_agent_session(
     agent_id: String,
     new_session_id: String,
     parent_session_id: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), MonarchError> {
     let app = mgr.get_app_handle()?;
     let old_session_id = {
-        let map = mgr.session_map.lock().map_err(|e| e.to_string())?;
+        let map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
         map.get(&agent_id).cloned()
     };
     if let Some(old_sid) = &old_session_id {
         let _ = db.update_session_internal(old_sid, None, None, None, Some(&chrono_now()));
     }
     let agent_state = {
-        let agents = mgr.agents.lock().map_err(|e| e.to_string())?;
+        let agents = mgr.agents.lock().map_err(lock_poisoned("agents"))?;
         agents.get(&agent_id).cloned()
     };
     let (model, provider) = agent_state.map(|s| (s.model.clone(), s.provider.clone())).unwrap_or((None, None));
@@ -1937,11 +1938,11 @@ pub fn ws_new_agent_session(
         message_count: 0, total_tokens: 0, total_cost: 0.0, parent_session_id: valid_parent,
     })?;
     {
-        let mut map = mgr.session_map.lock().map_err(|e| e.to_string())?;
+        let mut map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
         map.insert(agent_id.clone(), new_session_id);
     }
     let cmd = serde_json::json!({ "type": "new_session", "agentId": agent_id });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     mgr.send_with_recovery(&app, db, &json)
 }
 
@@ -1950,13 +1951,13 @@ pub fn ws_switch_agent_session(
     db: &Arc<Database>,
     agent_id: String,
     session_id: String,
-) -> Result<(), String> {
+) -> Result<(), MonarchError> {
     let app = mgr.get_app_handle()?;
     if !db.session_exists_internal(&session_id)? {
-        return Err(format!("Session not found: {}", session_id));
+        return Err(MonarchError::not_found(format!("session {}", session_id)));
     }
     let old_session_id = {
-        let map = mgr.session_map.lock().map_err(|e| e.to_string())?;
+        let map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
         map.get(&agent_id).cloned()
     };
     if let Some(old_sid) = &old_session_id {
@@ -1965,17 +1966,17 @@ pub fn ws_switch_agent_session(
         }
     }
     {
-        let mut map = mgr.session_map.lock().map_err(|e| e.to_string())?;
+        let mut map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
         map.insert(agent_id.clone(), session_id.clone());
     }
     {
-        let mut agents = mgr.agents.lock().map_err(|e| e.to_string())?;
+        let mut agents = mgr.agents.lock().map_err(lock_poisoned("agents"))?;
         if let Some(agent) = agents.get_mut(&agent_id) {
             agent.session_id = session_id.clone();
         }
     }
     let cmd = serde_json::json!({ "type": "new_session", "agentId": agent_id });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     mgr.send_with_recovery(&app, db, &json)
 }
 
@@ -1985,7 +1986,7 @@ pub fn ws_respond_extension_ui(
     agent_id: String,
     request_id: String,
     value: serde_json::Value,
-) -> Result<(), String> {
+) -> Result<(), MonarchError> {
     let app = mgr.get_app_handle()?;
     let cmd = serde_json::json!({
         "type": "extension_ui_response",
@@ -1993,11 +1994,11 @@ pub fn ws_respond_extension_ui(
         "requestId": request_id,
         "value": value,
     });
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(&cmd)?;
     mgr.send_with_recovery(&app, db, &json)
 }
 
-pub fn ws_detect_project(db: &Arc<Database>, cwd: String) -> Result<Option<serde_json::Value>, String> {
+pub fn ws_detect_project(db: &Arc<Database>, cwd: String) -> Result<Option<serde_json::Value>, MonarchError> {
     let cwd_path = Path::new(&cwd);
     let root = match find_project_root(cwd_path) {
         Some(r) => r,
@@ -2018,7 +2019,7 @@ pub fn ws_detect_project(db: &Arc<Database>, cwd: String) -> Result<Option<serde
     })))
 }
 
-pub fn ws_read_project_instructions(cwd: String) -> Result<Option<String>, String> {
+pub fn ws_read_project_instructions(cwd: String) -> Result<Option<String>, MonarchError> {
     let cwd_path = Path::new(&cwd);
     let root = match find_project_root(cwd_path) {
         Some(r) => r,

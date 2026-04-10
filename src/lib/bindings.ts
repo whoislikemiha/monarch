@@ -10,8 +10,8 @@ import { invoke as __TAURI_INVOKE } from "./api";
 
 /** Commands */
 export const commands = {
-	sendCommand: (id: string, commandJson: string) => typedError<null, string>(__TAURI_INVOKE("send_command", { id, commandJson })),
-	killAgent: (id: string, graceful: boolean | null) => typedError<null, string>(__TAURI_INVOKE("kill_agent", { id, graceful })),
+	sendCommand: (id: string, commandJson: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("send_command", { id, commandJson })),
+	killAgent: (id: string, graceful: boolean | null) => typedError<null, ErrorDto>(__TAURI_INVOKE("kill_agent", { id, graceful })),
 	/**
 	 *  Return the current assembled live state for an agent. This is the "pull"
 	 *  half of the pull-then-subscribe pattern: Phase 2's frontend calls this on
@@ -44,7 +44,7 @@ export const commands = {
 	 *  any incoming snapshot whose version is <= its current entry version.
 	 */
 	stateVersion: number,
-} | null, string>(__TAURI_INVOKE("get_agent_state", { agentId })),
+} | null, ErrorDto>(__TAURI_INVOKE("get_agent_state", { agentId })),
 	/**
 	 *  Rebuild the assembled `LiveAgentState` for an agent from a SQLite session
 	 *  and publish a snapshot on `agent-state-{id}`. Returns the new state so the
@@ -52,47 +52,47 @@ export const commands = {
 	 * 
 	 *  `session_id = None` clears the state (used for "new session" flows).
 	 */
-	rebuildAgentStateFromSession: (agentId: string, sessionId: string | null, statusText: string) => typedError<LiveAgentState, string>(__TAURI_INVOKE("rebuild_agent_state_from_session", { agentId, sessionId, statusText })),
+	rebuildAgentStateFromSession: (agentId: string, sessionId: string | null, statusText: string) => typedError<LiveAgentState, ErrorDto>(__TAURI_INVOKE("rebuild_agent_state_from_session", { agentId, sessionId, statusText })),
 	/**
 	 *  Load messages from a previous SQLite session into the sidecar's agent context.
 	 *  This gives the LLM conversational continuity when restoring.
 	 */
-	loadSessionContext: (agentId: string, sourceSessionId: string) => typedError<null, string>(__TAURI_INVOKE("load_session_context", { agentId, sourceSessionId })),
+	loadSessionContext: (agentId: string, sourceSessionId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("load_session_context", { agentId, sourceSessionId })),
 	/**
 	 *  Create a new session for an existing agent.
 	 *  Creates a DB row, updates the agent→session mapping, and tells the sidecar to reset.
 	 */
-	newAgentSession: (agentId: string, newSessionId: string, parentSessionId: string | null) => typedError<null, string>(__TAURI_INVOKE("new_agent_session", { agentId, newSessionId, parentSessionId })),
+	newAgentSession: (agentId: string, newSessionId: string, parentSessionId: string | null) => typedError<null, ErrorDto>(__TAURI_INVOKE("new_agent_session", { agentId, newSessionId, parentSessionId })),
 	/**
 	 *  Switch an agent to an existing persisted session instead of creating a new one.
 	 *  Resets the sidecar's in-memory conversation and updates DB/session routing so
 	 *  subsequent messages are appended to the selected session.
 	 */
-	switchAgentSession: (agentId: string, sessionId: string) => typedError<null, string>(__TAURI_INVOKE("switch_agent_session", { agentId, sessionId })),
+	switchAgentSession: (agentId: string, sessionId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("switch_agent_session", { agentId, sessionId })),
 	// Forward extension UI response from frontend to sidecar
-	respondExtensionUi: (agentId: string, requestId: string, value: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never }) => typedError<null, string>(__TAURI_INVOKE("respond_extension_ui", { agentId, requestId, value })),
-	getModels: (provider: string) => typedError<ModelInfo[], string>(__TAURI_INVOKE("get_models", { provider })),
-	getProviderAuthStatus: (provider: string) => typedError<ProviderAuthStatus, string>(__TAURI_INVOKE("get_provider_auth_status", { provider })),
-	getAgentPrompt: (agentId: string) => typedError<string | null, string>(__TAURI_INVOKE("get_agent_prompt", { agentId })),
-	saveAgentPrompt: (agentId: string, prompt: string) => typedError<null, string>(__TAURI_INVOKE("save_agent_prompt", { agentId, prompt })),
+	respondExtensionUi: (agentId: string, requestId: string, value: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never }) => typedError<null, ErrorDto>(__TAURI_INVOKE("respond_extension_ui", { agentId, requestId, value })),
+	getModels: (provider: string) => typedError<ModelInfo[], ErrorDto>(__TAURI_INVOKE("get_models", { provider })),
+	getProviderAuthStatus: (provider: string) => typedError<ProviderAuthStatus, ErrorDto>(__TAURI_INVOKE("get_provider_auth_status", { provider })),
+	getAgentPrompt: (agentId: string) => typedError<string | null, ErrorDto>(__TAURI_INVOKE("get_agent_prompt", { agentId })),
+	saveAgentPrompt: (agentId: string, prompt: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("save_agent_prompt", { agentId, prompt })),
 	getPromptsDir: () => __TAURI_INVOKE<string>("get_prompts_dir"),
-	dbUpsertAgent: (agent: AgentRow) => typedError<null, string>(__TAURI_INVOKE("db_upsert_agent", { agent })),
-	dbGetAgents: () => typedError<AgentRow[], string>(__TAURI_INVOKE("db_get_agents")),
-	dbDeleteAgent: (agentId: string) => typedError<null, string>(__TAURI_INVOKE("db_delete_agent", { agentId })),
-	dbCreateSession: (session: SessionRow) => typedError<null, string>(__TAURI_INVOKE("db_create_session", { session })),
-	dbGetSessions: (agentId: string) => typedError<SessionRow[], string>(__TAURI_INVOKE("db_get_sessions", { agentId })),
-	dbSaveMessage: (message: MessageRow) => typedError<number, string>(__TAURI_INVOKE("db_save_message", { message })),
-	dbGetMessages: (sessionId: string) => typedError<MessageRow[], string>(__TAURI_INVOKE("db_get_messages", { sessionId })),
+	dbUpsertAgent: (agent: AgentRow) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_upsert_agent", { agent })),
+	dbGetAgents: () => typedError<AgentRow[], ErrorDto>(__TAURI_INVOKE("db_get_agents")),
+	dbDeleteAgent: (agentId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_delete_agent", { agentId })),
+	dbCreateSession: (session: SessionRow) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_create_session", { session })),
+	dbGetSessions: (agentId: string) => typedError<SessionRow[], ErrorDto>(__TAURI_INVOKE("db_get_sessions", { agentId })),
+	dbSaveMessage: (message: MessageRow) => typedError<number, ErrorDto>(__TAURI_INVOKE("db_save_message", { message })),
+	dbGetMessages: (sessionId: string) => typedError<MessageRow[], ErrorDto>(__TAURI_INVOKE("db_get_messages", { sessionId })),
 	// Get messages for a session, including all ancestor sessions (for continued sessions)
-	dbGetMessagesWithAncestry: (sessionId: string) => typedError<MessageRow[], string>(__TAURI_INVOKE("db_get_messages_with_ancestry", { sessionId })),
-	dbSaveMemory: (memory: MemoryRow) => typedError<number, string>(__TAURI_INVOKE("db_save_memory", { memory })),
-	dbGetMemories: (agentId: string | null, layer: string | null) => typedError<MemoryRow[], string>(__TAURI_INVOKE("db_get_memories", { agentId, layer })),
-	dbLogEvent: (agentId: string | null, sessionId: string | null, eventType: string, data: string | null) => typedError<null, string>(__TAURI_INVOKE("db_log_event", { agentId, sessionId, eventType, data })),
-	dbListAgentTemplates: () => typedError<AgentTemplateRow[], string>(__TAURI_INVOKE("db_list_agent_templates")),
-	dbSaveAgentTemplate: (template: AgentTemplateRow) => typedError<null, string>(__TAURI_INVOKE("db_save_agent_template", { template })),
-	dbDeleteAgentTemplate: (templateId: string) => typedError<null, string>(__TAURI_INVOKE("db_delete_agent_template", { templateId })),
-	dbUpsertProject: (project: ProjectRow) => typedError<null, string>(__TAURI_INVOKE("db_upsert_project", { project })),
-	dbGetProjects: () => typedError<ProjectRow[], string>(__TAURI_INVOKE("db_get_projects")),
+	dbGetMessagesWithAncestry: (sessionId: string) => typedError<MessageRow[], ErrorDto>(__TAURI_INVOKE("db_get_messages_with_ancestry", { sessionId })),
+	dbSaveMemory: (memory: MemoryRow) => typedError<number, ErrorDto>(__TAURI_INVOKE("db_save_memory", { memory })),
+	dbGetMemories: (agentId: string | null, layer: string | null) => typedError<MemoryRow[], ErrorDto>(__TAURI_INVOKE("db_get_memories", { agentId, layer })),
+	dbLogEvent: (agentId: string | null, sessionId: string | null, eventType: string, data: string | null) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_log_event", { agentId, sessionId, eventType, data })),
+	dbListAgentTemplates: () => typedError<AgentTemplateRow[], ErrorDto>(__TAURI_INVOKE("db_list_agent_templates")),
+	dbSaveAgentTemplate: (template: AgentTemplateRow) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_save_agent_template", { template })),
+	dbDeleteAgentTemplate: (templateId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_delete_agent_template", { templateId })),
+	dbUpsertProject: (project: ProjectRow) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_upsert_project", { project })),
+	dbGetProjects: () => typedError<ProjectRow[], ErrorDto>(__TAURI_INVOKE("db_get_projects")),
 	dbGetProjectByPath: (rootPath: string) => typedError<{
 	id: string,
 	name: string,
@@ -100,16 +100,16 @@ export const commands = {
 	instructions: string | null,
 	createdAt: string,
 	updatedAt: string,
-} | null, string>(__TAURI_INVOKE("db_get_project_by_path", { rootPath })),
-	dbRenameProject: (projectId: string, name: string) => typedError<null, string>(__TAURI_INVOKE("db_rename_project", { projectId, name })),
-	dbUpdateProjectInstructions: (projectId: string, instructions: string | null) => typedError<null, string>(__TAURI_INVOKE("db_update_project_instructions", { projectId, instructions })),
-	dbDeleteProject: (projectId: string) => typedError<null, string>(__TAURI_INVOKE("db_delete_project", { projectId })),
-	detectProject: (cwd: string) => typedError<"Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: ("Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Vec<Value> }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never })[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: Map<string, Value> }) & { Array?: never; Bool?: never; Number?: never; String?: never } } }) & { Array?: never; Bool?: never; Number?: never; String?: never } | null, string>(__TAURI_INVOKE("detect_project", { cwd })),
-	readProjectInstructions: (cwd: string) => typedError<string | null, string>(__TAURI_INVOKE("read_project_instructions", { cwd })),
-	dbGetUiState: (key: string) => typedError<string | null, string>(__TAURI_INVOKE("db_get_ui_state", { key })),
-	dbSetUiState: (key: string, value: string) => typedError<null, string>(__TAURI_INVOKE("db_set_ui_state", { key, value })),
+} | null, ErrorDto>(__TAURI_INVOKE("db_get_project_by_path", { rootPath })),
+	dbRenameProject: (projectId: string, name: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_rename_project", { projectId, name })),
+	dbUpdateProjectInstructions: (projectId: string, instructions: string | null) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_project_instructions", { projectId, instructions })),
+	dbDeleteProject: (projectId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_delete_project", { projectId })),
+	detectProject: (cwd: string) => typedError<"Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: ("Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Vec<Value> }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never })[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: Map<string, Value> }) & { Array?: never; Bool?: never; Number?: never; String?: never } } }) & { Array?: never; Bool?: never; Number?: never; String?: never } | null, ErrorDto>(__TAURI_INVOKE("detect_project", { cwd })),
+	readProjectInstructions: (cwd: string) => typedError<string | null, ErrorDto>(__TAURI_INVOKE("read_project_instructions", { cwd })),
+	dbGetUiState: (key: string) => typedError<string | null, ErrorDto>(__TAURI_INVOKE("db_get_ui_state", { key })),
+	dbSetUiState: (key: string, value: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_set_ui_state", { key, value })),
 	toolboxListTools: () => __TAURI_INVOKE<ToolDescriptor[]>("toolbox_list_tools"),
-	toolboxPlaceholderPing: () => typedError<string, string>(__TAURI_INVOKE("toolbox_placeholder_ping")),
+	toolboxPlaceholderPing: () => typedError<string, ErrorDto>(__TAURI_INVOKE("toolbox_placeholder_ping")),
 };
 
 /* Types */
@@ -152,6 +152,12 @@ export type Cost = {
 };
 
 export type DisplayItem = { kind: "user"; content: string; timestamp: number | null } | { kind: "assistant"; content: ("Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Vec<Value> }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never })[]; model: string | null; usage: Usage | null; timestamp: number | null } | { kind: "tool-group"; executions: ToolExecution[]; turnComplete: boolean } | { kind: "status"; text: string } | { kind: "notification"; text: string; level: NotificationLevel };
+
+export type ErrorDto = {
+	kind: string,
+	message: string,
+	details: string | null,
+};
 
 export type LiveAgentState = {
 	items: DisplayItem[],
