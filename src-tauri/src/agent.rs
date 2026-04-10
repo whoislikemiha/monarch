@@ -220,7 +220,7 @@ impl AgentManager {
         }
     }
 
-    fn get_app_handle(&self) -> Result<AppHandle, MonarchError> {
+    pub fn get_app_handle(&self) -> Result<AppHandle, MonarchError> {
         self.app_handle
             .lock()
             .map_err(lock_poisoned("app handle"))?
@@ -621,6 +621,313 @@ impl AgentManager {
         emit_state_event(app, &self.ws_broadcast, &event_name, &snapshot);
 
         Ok(snapshot)
+    }
+
+    // ---- Shared agent-lifecycle methods (MON-33) ----
+    //
+    // Each method owns the full business logic for one agent lifecycle
+    // operation. The `#[tauri::command]` entry points and the `ws::dispatch_command`
+    // arms are thin adapters that only translate transport-specific arguments
+    // and delegate here. `ensure_sidecar` is called inside the method, not the
+    // adapter, so neither transport can forget it.
+
+    pub fn spawn(
+        &self,
+        app: &AppHandle,
+        db: &Arc<Database>,
+        req: SpawnAgentRequest,
+    ) -> Result<(), MonarchError> {
+        self.ensure_sidecar(app)?;
+
+        let SpawnAgentRequest {
+            id,
+            session_id,
+            provider,
+            model,
+            thinking_level,
+            cwd,
+            shadow: shadow_spec,
+            context_window,
+        } = req;
+
+        let now = chrono_now();
+        let effective_cwd = cwd.as_deref().unwrap_or(".");
+        let (project_id, project_instructions) = crate::project::resolve_project(db, effective_cwd)?;
+
+        let shadow_name = shadow_spec.as_ref().and_then(|s| s.shadow_name.clone());
+        let shadow_title = shadow_spec.as_ref().and_then(|s| s.shadow_title.clone());
+        let shadow_grade = shadow_spec.as_ref().and_then(|s| s.shadow_grade.clone());
+
+        // If the caller didn't supply a context window (restore flow), reuse
+        // the one persisted on the agent row so we don't silently lose it.
+        let effective_context_window = match context_window {
+            Some(cw) => Some(cw),
+            None => db.get_agent_context_window_internal(&id).ok().flatten(),
+        };
+
+        db.upsert_agent_internal(&AgentRow {
+            id: id.clone(),
+            name: shadow_name
+                .clone()
+                .or_else(|| shadow_title.clone())
+                .unwrap_or_else(|| id.clone()),
+            project_id: project_id.clone(),
+            shadow_name: shadow_name.clone(),
+            shadow_title: shadow_title.clone(),
+            shadow_grade: shadow_grade.clone(),
+            provider: provider.clone(),
+            model: model.clone(),
+            thinking_level: thinking_level.clone(),
+            cwd: cwd.clone(),
+            custom_prompt: None,
+            context_window: effective_context_window,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        })?;
+
+        if !db.session_exists_internal(&session_id)? {
+            db.create_session_internal(&crate::db::SessionRow {
+                id: session_id.clone(),
+                agent_id: id.clone(),
+                pi_session_file: None,
+                model: model.clone(),
+                provider: provider.clone(),
+                started_at: now.clone(),
+                ended_at: None,
+                message_count: 0,
+                total_tokens: 0,
+                total_cost: 0.0,
+                parent_session_id: None,
+            })?;
+        }
+
+        {
+            let mut map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
+            map.insert(id.clone(), session_id.clone());
+        }
+
+        let shadow = shadow_spec.as_ref().map(|_| ShadowConfig {
+            name: shadow_name.clone().unwrap_or_else(|| "Shadow".to_string()),
+            title: shadow_title.clone().unwrap_or_else(|| "Shadow Soldier".to_string()),
+            grade: shadow_grade.clone().unwrap_or_else(|| "Knight".to_string()),
+            id: id.clone(),
+        });
+
+        let cmd = SidecarCommand::CreateSession {
+            agent_id: id.clone(),
+            cwd: effective_cwd.to_string(),
+            provider: provider.clone().unwrap_or_else(|| "anthropic".to_string()),
+            model: model.clone().unwrap_or_else(|| "claude-sonnet-4-5".to_string()),
+            thinking_level: thinking_level.clone().unwrap_or_else(|| "medium".to_string()),
+            shadow,
+            custom_prompt: read_agent_prompt_file(&id)?.filter(|p| !p.trim().is_empty()),
+            project_instructions,
+            context_window: effective_context_window,
+        };
+
+        self.send_to_sidecar(&serde_json::to_string(&cmd)?)?;
+
+        let mut agents = self.agents.lock().map_err(lock_poisoned("agents"))?;
+        agents.insert(
+            id,
+            AgentState {
+                lifecycle: AgentLifecycleState::Idle,
+                provider,
+                model,
+                thinking_level,
+                is_streaming: false,
+                session_id,
+                create_cmd: cmd,
+            },
+        );
+
+        Ok(())
+    }
+
+    pub fn send_command(
+        &self,
+        app: &AppHandle,
+        db: &Arc<Database>,
+        id: String,
+        command_json: String,
+    ) -> Result<(), MonarchError> {
+        // MON-32: narrow typed passthrough. Parse the frontend's payload as a
+        // Value, inject `agentId`, then re-deserialize into SidecarCommand so
+        // the shape is validated against the canonical wire contract.
+        let mut value: serde_json::Value = serde_json::from_str(&command_json)?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("agentId".to_string(), serde_json::Value::String(id));
+        }
+        let cmd: SidecarCommand = serde_json::from_value(value)?;
+        self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
+    }
+
+    pub fn kill(&self, id: &str) -> Result<(), MonarchError> {
+        let cmd = SidecarCommand::DestroySession { agent_id: id.to_string() };
+        let _ = self.send_to_sidecar(&serde_json::to_string(&cmd)?);
+
+        {
+            let mut agents = self.agents.lock().map_err(lock_poisoned("agents"))?;
+            agents.remove(id);
+        }
+        {
+            let mut map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
+            map.remove(id);
+        }
+        self.remove_live_entry(id);
+        Ok(())
+    }
+
+    pub fn load_session_context(
+        &self,
+        app: &AppHandle,
+        db: &Arc<Database>,
+        agent_id: String,
+        source_session_id: String,
+    ) -> Result<(), MonarchError> {
+        let messages = db.get_messages_with_ancestry(&source_session_id)?;
+        if messages.is_empty() {
+            return Ok(());
+        }
+
+        let cmd = SidecarCommand::LoadSession {
+            agent_id,
+            messages: messages
+                .iter()
+                .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
+                .map(|m| LoadSessionMessage {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                    model: m.model.clone(),
+                })
+                .collect(),
+        };
+
+        self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
+    }
+
+    pub fn new_session(
+        &self,
+        app: &AppHandle,
+        db: &Arc<Database>,
+        agent_id: String,
+        new_session_id: String,
+        parent_session_id: Option<String>,
+    ) -> Result<(), MonarchError> {
+        let old_session_id = {
+            let map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
+            map.get(&agent_id).cloned()
+        };
+        if let Some(old_sid) = &old_session_id {
+            let _ = db.update_session_internal(old_sid, None, None, None, Some(&chrono_now()));
+        }
+
+        let agent_state = {
+            let agents = self.agents.lock().map_err(lock_poisoned("agents"))?;
+            agents.get(&agent_id).cloned()
+        };
+        let (model, provider) = agent_state
+            .map(|s| (s.model.clone(), s.provider.clone()))
+            .unwrap_or((None, None));
+
+        // Recreate a minimal agent row if the DB entry was pruned or never
+        // persisted so the new session insert doesn't trip the FK.
+        db.ensure_agent_exists_internal(&AgentRow {
+            id: agent_id.clone(),
+            name: agent_id.clone(),
+            project_id: None,
+            shadow_name: None,
+            shadow_title: None,
+            shadow_grade: None,
+            provider: provider.clone(),
+            model: model.clone(),
+            thinking_level: None,
+            cwd: None,
+            custom_prompt: None,
+            context_window: None,
+            created_at: chrono_now(),
+            updated_at: chrono_now(),
+        })?;
+
+        let valid_parent_session_id = match parent_session_id {
+            Some(parent_id) if db.session_exists_internal(&parent_id)? => Some(parent_id),
+            _ => None,
+        };
+
+        db.create_session_internal(&crate::db::SessionRow {
+            id: new_session_id.clone(),
+            agent_id: agent_id.clone(),
+            pi_session_file: None,
+            model,
+            provider,
+            started_at: chrono_now(),
+            ended_at: None,
+            message_count: 0,
+            total_tokens: 0,
+            total_cost: 0.0,
+            parent_session_id: valid_parent_session_id,
+        })?;
+
+        {
+            let mut map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
+            map.insert(agent_id.clone(), new_session_id);
+        }
+
+        let cmd = SidecarCommand::NewSession { agent_id };
+        self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
+    }
+
+    pub fn switch_session(
+        &self,
+        app: &AppHandle,
+        db: &Arc<Database>,
+        agent_id: String,
+        session_id: String,
+    ) -> Result<(), MonarchError> {
+        if !db.session_exists_internal(&session_id)? {
+            return Err(MonarchError::not_found(format!("session {}", session_id)));
+        }
+
+        let old_session_id = {
+            let map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
+            map.get(&agent_id).cloned()
+        };
+        if let Some(old_sid) = &old_session_id {
+            if old_sid != &session_id {
+                let _ = db.update_session_internal(old_sid, None, None, None, Some(&chrono_now()));
+            }
+        }
+
+        {
+            let mut map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
+            map.insert(agent_id.clone(), session_id.clone());
+        }
+
+        {
+            let mut agents = self.agents.lock().map_err(lock_poisoned("agents"))?;
+            if let Some(agent) = agents.get_mut(&agent_id) {
+                agent.session_id = session_id.clone();
+            }
+        }
+
+        let cmd = SidecarCommand::NewSession { agent_id };
+        self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
+    }
+
+    pub fn respond_extension_ui(
+        &self,
+        app: &AppHandle,
+        db: &Arc<Database>,
+        agent_id: String,
+        request_id: String,
+        value: serde_json::Value,
+    ) -> Result<(), MonarchError> {
+        let cmd = SidecarCommand::ExtensionUiResponse {
+            agent_id,
+            request_id,
+            value,
+        };
+        self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
     }
 }
 
@@ -1310,126 +1617,7 @@ pub fn spawn_agent(
     db: tauri::State<'_, Arc<Database>>,
     req: SpawnAgentRequest,
 ) -> Result<(), MonarchError> {
-    // Ensure sidecar is running
-    state.ensure_sidecar(&app)?;
-
-    let SpawnAgentRequest {
-        id,
-        session_id,
-        provider,
-        model,
-        thinking_level,
-        cwd,
-        shadow: shadow_spec,
-        context_window,
-    } = req;
-
-    let now = chrono_now();
-    let provider_value = provider.clone();
-    let model_value = model.clone();
-    let thinking_value = thinking_level.clone();
-
-    // Detect project from cwd and read instruction files
-    let effective_cwd = cwd.as_deref().unwrap_or(".");
-    let (project_id, project_instructions) = crate::project::resolve_project(&db, effective_cwd)?;
-
-    let shadow_name = shadow_spec.as_ref().and_then(|s| s.shadow_name.clone());
-    let shadow_title = shadow_spec.as_ref().and_then(|s| s.shadow_title.clone());
-    let shadow_grade = shadow_spec.as_ref().and_then(|s| s.shadow_grade.clone());
-
-    // Persist the agent/session on the backend as the source of truth for FK-safe
-    // message logging, even if the frontend-side write was skipped or failed.
-    // If the caller didn't supply a context window (e.g. restore flow),
-    // reuse the one persisted on the agent row so we don't silently lose it.
-    let effective_context_window = match context_window {
-        Some(cw) => Some(cw),
-        None => db
-            .get_agent_context_window_internal(&id)
-            .ok()
-            .flatten(),
-    };
-
-    db.upsert_agent_internal(&AgentRow {
-        id: id.clone(),
-        name: shadow_name
-            .clone()
-            .or_else(|| shadow_title.clone())
-            .unwrap_or_else(|| id.clone()),
-        project_id: project_id.clone(),
-        shadow_name: shadow_name.clone(),
-        shadow_title: shadow_title.clone(),
-        shadow_grade: shadow_grade.clone(),
-        provider: provider_value.clone(),
-        model: model_value.clone(),
-        thinking_level: thinking_value.clone(),
-        cwd: cwd.clone(),
-        custom_prompt: None,
-        context_window: effective_context_window,
-        created_at: now.clone(),
-        updated_at: now.clone(),
-    })?;
-
-    if !db.session_exists_internal(&session_id)? {
-        db.create_session_internal(&crate::db::SessionRow {
-            id: session_id.clone(),
-            agent_id: id.clone(),
-            pi_session_file: None,
-            model: model_value.clone(),
-            provider: provider_value.clone(),
-            started_at: now.clone(),
-            ended_at: None,
-            message_count: 0,
-            total_tokens: 0,
-            total_cost: 0.0,
-            parent_session_id: None,
-        })?;
-    }
-
-    // Register the agent→session mapping so the reader thread can persist events
-    {
-        let mut map = state.session_map.lock().map_err(lock_poisoned("session map"))?;
-        map.insert(id.clone(), session_id.clone());
-    }
-
-    // Build create_session command
-    let shadow = shadow_spec.as_ref().map(|_| ShadowConfig {
-        name: shadow_name.clone().unwrap_or_else(|| "Shadow".to_string()),
-        title: shadow_title.clone().unwrap_or_else(|| "Shadow Soldier".to_string()),
-        grade: shadow_grade.clone().unwrap_or_else(|| "Knight".to_string()),
-        id: id.clone(),
-    });
-
-    let cmd = SidecarCommand::CreateSession {
-        agent_id: id.clone(),
-        cwd: effective_cwd.to_string(),
-        provider: provider.clone().unwrap_or_else(|| "anthropic".to_string()),
-        model: model.clone().unwrap_or_else(|| "claude-sonnet-4-5".to_string()),
-        thinking_level: thinking_level.clone().unwrap_or_else(|| "medium".to_string()),
-        shadow,
-        custom_prompt: read_agent_prompt_file(&id)?
-            .filter(|prompt| !prompt.trim().is_empty()),
-        project_instructions,
-        context_window: effective_context_window,
-    };
-
-    state.send_to_sidecar(&serde_json::to_string(&cmd)?)?;
-
-    // Track agent state with the full create command for crash recovery
-    let mut agents = state.agents.lock().map_err(lock_poisoned("agents"))?;
-    agents.insert(
-        id.clone(),
-        AgentState {
-            lifecycle: AgentLifecycleState::Idle,
-            provider,
-            model,
-            thinking_level,
-            is_streaming: false,
-            session_id,
-            create_cmd: cmd,
-        },
-    );
-
-    Ok(())
+    state.spawn(&app, &db, req)
 }
 
 #[tauri::command]
@@ -1441,19 +1629,7 @@ pub fn send_command(
     id: String,
     command_json: String,
 ) -> Result<(), MonarchError> {
-    // MON-32: narrow typed passthrough. Parse the frontend's payload as a
-    // Value, inject `agentId`, then re-deserialize into SidecarCommand so
-    // the shape is validated against the canonical wire contract. Any
-    // payload that doesn't fit a known variant hits serde_json::Error →
-    // MonarchError::Serde and propagates to the frontend — no silent
-    // escape hatch. The one-shot-to-Value pre-pass lets the frontend omit
-    // agentId without bloating every variant with #[serde(default)].
-    let mut value: serde_json::Value = serde_json::from_str(&command_json)?;
-    if let Some(obj) = value.as_object_mut() {
-        obj.insert("agentId".to_string(), serde_json::Value::String(id));
-    }
-    let cmd: SidecarCommand = serde_json::from_value(value)?;
-    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
+    state.send_command(&app, &db, id, command_json)
 }
 
 #[tauri::command]
@@ -1463,21 +1639,7 @@ pub fn kill_agent(
     id: String,
     _graceful: Option<bool>,
 ) -> Result<(), MonarchError> {
-    let cmd = SidecarCommand::DestroySession { agent_id: id.clone() };
-    let _ = state.send_to_sidecar(&serde_json::to_string(&cmd)?);
-
-    // Clean up state
-    let mut agents = state.agents.lock().map_err(lock_poisoned("agents"))?;
-    agents.remove(&id);
-    drop(agents);
-
-    let mut map = state.session_map.lock().map_err(lock_poisoned("session map"))?;
-    map.remove(&id);
-    drop(map);
-
-    state.remove_live_entry(&id);
-
-    Ok(())
+    state.kill(&id)
 }
 
 /// Return the current assembled live state for an agent. This is the "pull"
@@ -1539,28 +1701,7 @@ pub fn load_session_context(
     agent_id: String,
     source_session_id: String,
 ) -> Result<(), MonarchError> {
-    // Load messages from DB, following parent session chain for full context
-    let messages = db.get_messages_with_ancestry(&source_session_id)?;
-
-    if messages.is_empty() {
-        return Ok(()); // Nothing to replay
-    }
-
-    // Convert to sidecar format — include all message types for full context
-    let cmd = SidecarCommand::LoadSession {
-        agent_id,
-        messages: messages
-            .iter()
-            .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
-            .map(|m| LoadSessionMessage {
-                role: m.role.clone(),
-                content: m.content.clone(),
-                model: m.model.clone(),
-            })
-            .collect(),
-    };
-
-    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
+    state.load_session_context(&app, &db, agent_id, source_session_id)
 }
 
 /// Create a new session for an existing agent.
@@ -1575,71 +1716,7 @@ pub fn new_agent_session(
     new_session_id: String,
     parent_session_id: Option<String>,
 ) -> Result<(), MonarchError> {
-    // End the old session
-    let old_session_id = {
-        let map = state.session_map.lock().map_err(lock_poisoned("session map"))?;
-        map.get(&agent_id).cloned()
-    };
-    if let Some(old_sid) = &old_session_id {
-        let _ = db.update_session_internal(old_sid, None, None, None, Some(&chrono_now()));
-    }
-
-    // Create new session row in DB with optional parent link
-    let agent_state = {
-        let agents = state.agents.lock().map_err(lock_poisoned("agents"))?;
-        agents.get(&agent_id).cloned()
-    };
-    let (model, provider) = agent_state
-        .map(|s| (s.model.clone(), s.provider.clone()))
-        .unwrap_or((None, None));
-
-    // Recreate a minimal agent row if the DB entry was pruned or never persisted.
-    // This prevents the new session insert from tripping the sessions.agent_id FK.
-    db.ensure_agent_exists_internal(&AgentRow {
-        id: agent_id.clone(),
-        name: agent_id.clone(),
-        project_id: None,
-        shadow_name: None,
-        shadow_title: None,
-        shadow_grade: None,
-        provider: provider.clone(),
-        model: model.clone(),
-        thinking_level: None,
-        cwd: None,
-        custom_prompt: None,
-        context_window: None,
-        created_at: chrono_now(),
-        updated_at: chrono_now(),
-    })?;
-
-    let valid_parent_session_id = match parent_session_id {
-        Some(parent_id) if db.session_exists_internal(&parent_id)? => Some(parent_id),
-        _ => None,
-    };
-
-    db.create_session_internal(&crate::db::SessionRow {
-        id: new_session_id.clone(),
-        agent_id: agent_id.clone(),
-        pi_session_file: None,
-        model,
-        provider,
-        started_at: chrono_now(),
-        ended_at: None,
-        message_count: 0,
-        total_tokens: 0,
-        total_cost: 0.0,
-        parent_session_id: valid_parent_session_id,
-    })?;
-
-    // Update the agent→session mapping
-    {
-        let mut map = state.session_map.lock().map_err(lock_poisoned("session map"))?;
-        map.insert(agent_id.clone(), new_session_id);
-    }
-
-    // Tell the sidecar to reset its in-memory session
-    let cmd = SidecarCommand::NewSession { agent_id };
-    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
+    state.new_session(&app, &db, agent_id, new_session_id, parent_session_id)
 }
 
 /// Switch an agent to an existing persisted session instead of creating a new one.
@@ -1654,35 +1731,7 @@ pub fn switch_agent_session(
     agent_id: String,
     session_id: String,
 ) -> Result<(), MonarchError> {
-    if !db.session_exists_internal(&session_id)? {
-        return Err(MonarchError::not_found(format!("session {}", session_id)));
-    }
-
-    let old_session_id = {
-        let map = state.session_map.lock().map_err(lock_poisoned("session map"))?;
-        map.get(&agent_id).cloned()
-    };
-
-    if let Some(old_sid) = &old_session_id {
-        if old_sid != &session_id {
-            let _ = db.update_session_internal(old_sid, None, None, None, Some(&chrono_now()));
-        }
-    }
-
-    {
-        let mut map = state.session_map.lock().map_err(lock_poisoned("session map"))?;
-        map.insert(agent_id.clone(), session_id.clone());
-    }
-
-    {
-        let mut agents = state.agents.lock().map_err(lock_poisoned("agents"))?;
-        if let Some(agent) = agents.get_mut(&agent_id) {
-            agent.session_id = session_id.clone();
-        }
-    }
-
-    let cmd = SidecarCommand::NewSession { agent_id };
-    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
+    state.switch_session(&app, &db, agent_id, session_id)
 }
 
 /// Forward extension UI response from frontend to sidecar
@@ -1696,270 +1745,6 @@ pub fn respond_extension_ui(
     request_id: String,
     value: serde_json::Value,
 ) -> Result<(), MonarchError> {
-    let cmd = SidecarCommand::ExtensionUiResponse {
-        agent_id,
-        request_id,
-        value,
-    };
-    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
-}
-
-// ---- WebSocket wrappers ----
-// These mirror the Tauri commands but take raw state instead of tauri::State extractors.
-
-pub fn ws_spawn_agent(
-    mgr: &AgentManager,
-    db: &Arc<Database>,
-    req: SpawnAgentRequest,
-) -> Result<(), MonarchError> {
-    let app = mgr.get_app_handle()?;
-    mgr.ensure_sidecar(&app)?;
-
-    let SpawnAgentRequest {
-        id,
-        session_id,
-        provider,
-        model,
-        thinking_level,
-        cwd,
-        shadow: shadow_spec,
-        context_window,
-    } = req;
-
-    let now = chrono_now();
-    let effective_cwd = cwd.as_deref().unwrap_or(".");
-    let (project_id, project_instructions) = crate::project::resolve_project(db, effective_cwd)?;
-
-    let shadow_name = shadow_spec.as_ref().and_then(|s| s.shadow_name.clone());
-    let shadow_title = shadow_spec.as_ref().and_then(|s| s.shadow_title.clone());
-    let shadow_grade = shadow_spec.as_ref().and_then(|s| s.shadow_grade.clone());
-
-    // MON-35: reuse the persisted context window on restore paths, matching
-    // `spawn_agent`. Previously the WS path silently dropped the caller's
-    // value; collapsing to `SpawnAgentRequest` fixes that along the way.
-    let effective_context_window = match context_window {
-        Some(cw) => Some(cw),
-        None => db
-            .get_agent_context_window_internal(&id)
-            .ok()
-            .flatten(),
-    };
-
-    db.upsert_agent_internal(&AgentRow {
-        id: id.clone(),
-        name: shadow_name.clone().or_else(|| shadow_title.clone()).unwrap_or_else(|| id.clone()),
-        project_id: project_id.clone(),
-        shadow_name: shadow_name.clone(),
-        shadow_title: shadow_title.clone(),
-        shadow_grade: shadow_grade.clone(),
-        provider: provider.clone(),
-        model: model.clone(),
-        thinking_level: thinking_level.clone(),
-        cwd: cwd.clone(),
-        custom_prompt: None,
-        context_window: effective_context_window,
-        created_at: now.clone(),
-        updated_at: now.clone(),
-    })?;
-
-    if !db.session_exists_internal(&session_id)? {
-        db.create_session_internal(&crate::db::SessionRow {
-            id: session_id.clone(),
-            agent_id: id.clone(),
-            pi_session_file: None,
-            model: model.clone(),
-            provider: provider.clone(),
-            started_at: now,
-            ended_at: None,
-            message_count: 0,
-            total_tokens: 0,
-            total_cost: 0.0,
-            parent_session_id: None,
-        })?;
-    }
-
-    {
-        let mut map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
-        map.insert(id.clone(), session_id.clone());
-    }
-
-    let shadow = shadow_spec.as_ref().map(|_| ShadowConfig {
-        name: shadow_name.clone().unwrap_or_else(|| "Shadow".to_string()),
-        title: shadow_title.clone().unwrap_or_else(|| "Shadow Soldier".to_string()),
-        grade: shadow_grade.clone().unwrap_or_else(|| "Knight".to_string()),
-        id: id.clone(),
-    });
-
-    let cmd = SidecarCommand::CreateSession {
-        agent_id: id.clone(),
-        cwd: effective_cwd.to_string(),
-        provider: provider.clone().unwrap_or_else(|| "anthropic".to_string()),
-        model: model.clone().unwrap_or_else(|| "claude-sonnet-4-5".to_string()),
-        thinking_level: thinking_level.clone().unwrap_or_else(|| "medium".to_string()),
-        shadow,
-        custom_prompt: read_agent_prompt_file(&id)?.filter(|p| !p.trim().is_empty()),
-        project_instructions,
-        context_window: effective_context_window,
-    };
-
-    mgr.send_to_sidecar(&serde_json::to_string(&cmd)?)?;
-
-    let mut agents = mgr.agents.lock().map_err(lock_poisoned("agents"))?;
-    agents.insert(id, AgentState {
-        lifecycle: AgentLifecycleState::Idle,
-        provider,
-        model,
-        thinking_level,
-        is_streaming: false,
-        session_id,
-        create_cmd: cmd,
-    });
-
-    Ok(())
-}
-
-pub fn ws_send_command(
-    mgr: &AgentManager,
-    db: &Arc<Database>,
-    id: String,
-    command_json: String,
-) -> Result<(), MonarchError> {
-    let app = mgr.get_app_handle()?;
-    // MON-32: narrow typed passthrough, see send_command for rationale.
-    let mut value: serde_json::Value = serde_json::from_str(&command_json)?;
-    if let Some(obj) = value.as_object_mut() {
-        obj.insert("agentId".to_string(), serde_json::Value::String(id));
-    }
-    let cmd: SidecarCommand = serde_json::from_value(value)?;
-    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
-}
-
-pub fn ws_kill_agent(mgr: &AgentManager, id: String) -> Result<(), MonarchError> {
-    let cmd = SidecarCommand::DestroySession { agent_id: id.clone() };
-    let _ = mgr.send_to_sidecar(&serde_json::to_string(&cmd)?);
-    let mut agents = mgr.agents.lock().map_err(lock_poisoned("agents"))?;
-    agents.remove(&id);
-    drop(agents);
-    let mut map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
-    map.remove(&id);
-    drop(map);
-    mgr.remove_live_entry(&id);
-    Ok(())
-}
-
-pub fn ws_load_session_context(
-    mgr: &AgentManager,
-    db: &Arc<Database>,
-    agent_id: String,
-    source_session_id: String,
-) -> Result<(), MonarchError> {
-    let app = mgr.get_app_handle()?;
-    let messages = db.get_messages_with_ancestry(&source_session_id)?;
-    if messages.is_empty() { return Ok(()); }
-    let cmd = SidecarCommand::LoadSession {
-        agent_id,
-        messages: messages
-            .iter()
-            .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
-            .map(|m| LoadSessionMessage {
-                role: m.role.clone(),
-                content: m.content.clone(),
-                model: m.model.clone(),
-            })
-            .collect(),
-    };
-    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
-}
-
-pub fn ws_new_agent_session(
-    mgr: &AgentManager,
-    db: &Arc<Database>,
-    agent_id: String,
-    new_session_id: String,
-    parent_session_id: Option<String>,
-) -> Result<(), MonarchError> {
-    let app = mgr.get_app_handle()?;
-    let old_session_id = {
-        let map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
-        map.get(&agent_id).cloned()
-    };
-    if let Some(old_sid) = &old_session_id {
-        let _ = db.update_session_internal(old_sid, None, None, None, Some(&chrono_now()));
-    }
-    let agent_state = {
-        let agents = mgr.agents.lock().map_err(lock_poisoned("agents"))?;
-        agents.get(&agent_id).cloned()
-    };
-    let (model, provider) = agent_state.map(|s| (s.model.clone(), s.provider.clone())).unwrap_or((None, None));
-    db.ensure_agent_exists_internal(&AgentRow {
-        id: agent_id.clone(), name: agent_id.clone(), project_id: None,
-        shadow_name: None, shadow_title: None, shadow_grade: None,
-        provider: provider.clone(), model: model.clone(), thinking_level: None,
-        cwd: None, custom_prompt: None, context_window: None, created_at: chrono_now(), updated_at: chrono_now(),
-    })?;
-    let valid_parent = match parent_session_id {
-        Some(pid) if db.session_exists_internal(&pid)? => Some(pid),
-        _ => None,
-    };
-    db.create_session_internal(&crate::db::SessionRow {
-        id: new_session_id.clone(), agent_id: agent_id.clone(), pi_session_file: None,
-        model, provider, started_at: chrono_now(), ended_at: None,
-        message_count: 0, total_tokens: 0, total_cost: 0.0, parent_session_id: valid_parent,
-    })?;
-    {
-        let mut map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
-        map.insert(agent_id.clone(), new_session_id);
-    }
-    let cmd = SidecarCommand::NewSession { agent_id };
-    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
-}
-
-pub fn ws_switch_agent_session(
-    mgr: &AgentManager,
-    db: &Arc<Database>,
-    agent_id: String,
-    session_id: String,
-) -> Result<(), MonarchError> {
-    let app = mgr.get_app_handle()?;
-    if !db.session_exists_internal(&session_id)? {
-        return Err(MonarchError::not_found(format!("session {}", session_id)));
-    }
-    let old_session_id = {
-        let map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
-        map.get(&agent_id).cloned()
-    };
-    if let Some(old_sid) = &old_session_id {
-        if old_sid != &session_id {
-            let _ = db.update_session_internal(old_sid, None, None, None, Some(&chrono_now()));
-        }
-    }
-    {
-        let mut map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
-        map.insert(agent_id.clone(), session_id.clone());
-    }
-    {
-        let mut agents = mgr.agents.lock().map_err(lock_poisoned("agents"))?;
-        if let Some(agent) = agents.get_mut(&agent_id) {
-            agent.session_id = session_id.clone();
-        }
-    }
-    let cmd = SidecarCommand::NewSession { agent_id };
-    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
-}
-
-pub fn ws_respond_extension_ui(
-    mgr: &AgentManager,
-    db: &Arc<Database>,
-    agent_id: String,
-    request_id: String,
-    value: serde_json::Value,
-) -> Result<(), MonarchError> {
-    let app = mgr.get_app_handle()?;
-    let cmd = SidecarCommand::ExtensionUiResponse {
-        agent_id,
-        request_id,
-        value,
-    };
-    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
+    state.respond_extension_ui(&app, &db, agent_id, request_id, value)
 }
 

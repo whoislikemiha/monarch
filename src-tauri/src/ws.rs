@@ -183,44 +183,50 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
             // bridge, so the serde round-trip validates the payload instead
             // of per-field `str_field` / `opt_str` extraction.
             let req: crate::agent::SpawnAgentRequest = serde_json::from_value(args)?;
-            crate::agent::ws_spawn_agent(&state.agent_mgr, &state.db, req)?;
+            let app = state.agent_mgr.get_app_handle()?;
+            state.agent_mgr.spawn(&app, &state.db, req)?;
             Ok(Value::Null)
         }
         "send_command" => {
             let id = str_field(&args, "id")?;
             let command_json = str_field(&args, "commandJson")?;
-            crate::agent::ws_send_command(&state.agent_mgr, &state.db, id, command_json)?;
+            let app = state.agent_mgr.get_app_handle()?;
+            state.agent_mgr.send_command(&app, &state.db, id, command_json)?;
             Ok(Value::Null)
         }
         "kill_agent" => {
             let id = str_field(&args, "id")?;
-            crate::agent::ws_kill_agent(&state.agent_mgr, id)?;
+            state.agent_mgr.kill(&id)?;
             Ok(Value::Null)
         }
         "load_session_context" => {
             let agent_id = str_field(&args, "agentId")?;
             let source_session_id = str_field(&args, "sourceSessionId")?;
-            crate::agent::ws_load_session_context(&state.agent_mgr, &state.db, agent_id, source_session_id)?;
+            let app = state.agent_mgr.get_app_handle()?;
+            state.agent_mgr.load_session_context(&app, &state.db, agent_id, source_session_id)?;
             Ok(Value::Null)
         }
         "new_agent_session" => {
             let agent_id = str_field(&args, "agentId")?;
             let new_session_id = str_field(&args, "newSessionId")?;
             let parent_session_id = opt_str(&args, "parentSessionId");
-            crate::agent::ws_new_agent_session(&state.agent_mgr, &state.db, agent_id, new_session_id, parent_session_id)?;
+            let app = state.agent_mgr.get_app_handle()?;
+            state.agent_mgr.new_session(&app, &state.db, agent_id, new_session_id, parent_session_id)?;
             Ok(Value::Null)
         }
         "switch_agent_session" => {
             let agent_id = str_field(&args, "agentId")?;
             let session_id = str_field(&args, "sessionId")?;
-            crate::agent::ws_switch_agent_session(&state.agent_mgr, &state.db, agent_id, session_id)?;
+            let app = state.agent_mgr.get_app_handle()?;
+            state.agent_mgr.switch_session(&app, &state.db, agent_id, session_id)?;
             Ok(Value::Null)
         }
         "respond_extension_ui" => {
             let agent_id = str_field(&args, "agentId")?;
             let request_id = str_field(&args, "requestId")?;
             let value = args.get("value").cloned().unwrap_or(Value::Null);
-            crate::agent::ws_respond_extension_ui(&state.agent_mgr, &state.db, agent_id, request_id, value)?;
+            let app = state.agent_mgr.get_app_handle()?;
+            state.agent_mgr.respond_extension_ui(&app, &state.db, agent_id, request_id, value)?;
             Ok(Value::Null)
         }
         "detect_project" => {
