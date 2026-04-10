@@ -10,6 +10,7 @@
     sessionStats,
     onabort,
     onthinking,
+    oncontextinspect,
   }: {
     isStreaming: boolean;
     lastUsage?: Usage;
@@ -19,6 +20,7 @@
     sessionStats?: SessionStats;
     onabort: () => void;
     onthinking: (level: string) => void;
+    oncontextinspect?: () => void;
   } = $props();
 
   const DEFAULT_CONTEXT_WINDOW = 128000;
@@ -103,11 +105,15 @@
     </div>
 
     {#if hasContextMeter}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="context-meter"
+        class:clickable={!!oncontextinspect}
         class:warning={contextState === "warning"}
         class:critical={contextState === "critical"}
-        title={`Context used: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens (${usedPct}%)${isEstimatedContextWindow ? " — window is estimated, set it in the spawn dialog for LM Studio" : ""}`}
+        title={`Context used: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens (${usedPct}%)${isEstimatedContextWindow ? " — window is estimated, set it in the spawn dialog for LM Studio" : ""} — click to inspect`}
+        onclick={oncontextinspect}
       >
         <span class="context-label">ctx</span>
         <div class="context-track">
@@ -189,6 +195,14 @@
       linear-gradient(180deg, rgba(66, 190, 101, 0.08), rgba(66, 190, 101, 0.02)),
       var(--bg-panel-2);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  .context-meter.clickable {
+    cursor: pointer;
+  }
+
+  .context-meter.clickable:hover {
+    border-color: var(--accent-purple, #be95ff);
   }
 
   .context-meter.warning {
