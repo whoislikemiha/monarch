@@ -49,3 +49,31 @@ body {
   -webkit-user-select: text;
   user-select: text;
 }
+
+/* Custom scrollbars — thin, theme-consistent, fade-on-interact */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(53, 39, 79, 0.3);
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: var(--text-muted);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
