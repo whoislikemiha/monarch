@@ -15,13 +15,12 @@ type TaskHandle = tauri::async_runtime::JoinHandle<()>;
 use crate::agent_state::{
     display_items_from_messages, ApplyOutcome, DisplayItem, LiveAgentState,
 };
-use crate::db::{AgentRow, Database, MessageRow, ProjectRow};
+use crate::db::{AgentRow, Database, MessageRow};
 use crate::error::{lock_poisoned, MonarchError};
 use crate::persistence::read_agent_prompt_file;
 use crate::sidecar_protocol::{
     apply_event, InnerEvent, LoadSessionMessage, ShadowConfig, SidecarCommand, SidecarEvent,
 };
-use std::path::{Path, PathBuf};
 
 /// Debounce window for streaming `message_update` events. Token-rate chunks
 /// would otherwise clone + serialize the full snapshot per token; 16ms caps
@@ -1240,7 +1239,7 @@ async fn run_persist_consumer(
     eprintln!("[monarch] persist consumer exited");
 }
 
-fn chrono_now() -> String {
+pub(crate) fn chrono_now() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
@@ -1248,86 +1247,7 @@ fn chrono_now() -> String {
     format!("{}", secs)
 }
 
-// ---- Project Detection ----
-
-/// Walk up from `start` looking for a `.git` directory. Returns the directory containing `.git`.
-fn find_project_root(start: &Path) -> Option<PathBuf> {
-    let mut current = start.to_path_buf();
-    loop {
-        if current.join(".git").exists() {
-            return Some(current);
-        }
-        if !current.pop() {
-            return None;
-        }
-    }
-}
-
-/// Read instruction files from a project root.
-/// Reads both AGENTS.md and CLAUDE.md if present, concatenating them.
-fn read_instructions_from_root(root: &Path) -> Option<String> {
-    let mut parts = Vec::new();
-    for name in &["AGENTS.md", "CLAUDE.md"] {
-        let path = root.join(name);
-        if path.is_file() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                let trimmed = content.trim();
-                if !trimmed.is_empty() {
-                    parts.push(trimmed.to_string());
-                }
-            }
-        }
-    }
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join("\n\n"))
-    }
-}
-
-/// Detect project from cwd → find or create project row → return (project_id, instructions).
-/// DB instructions take precedence. On first creation, populate from files.
-fn resolve_project(
-    db: &Database,
-    cwd: &str,
-) -> Result<(Option<String>, Option<String>), MonarchError> {
-    let cwd_path = Path::new(cwd);
-    let root = match find_project_root(cwd_path) {
-        Some(r) => r,
-        None => return Ok((None, None)),
-    };
-    let root_str = root.to_string_lossy().to_string();
-
-    // Read file-based instructions for initial population
-    let file_instructions = read_instructions_from_root(&root);
-
-    // Ensure project exists (race-safe: returns the winning row's id)
-    let name = root
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| root_str.clone());
-    let candidate_id = format!("project-{}", uuid_v4_simple());
-    let now = chrono_now();
-    let project_id = db.ensure_project_internal(&ProjectRow {
-        id: candidate_id,
-        name,
-        root_path: root_str.clone(),
-        instructions: file_instructions.clone(),
-        created_at: now.clone(),
-        updated_at: now,
-    })?;
-
-    // Prefer DB instructions (user may have edited them); fall back to files
-    let db_project = db.get_project_by_path_internal(&root_str)?;
-    let instructions = db_project
-        .and_then(|p| p.instructions)
-        .filter(|s| !s.trim().is_empty())
-        .or(file_instructions);
-
-    Ok((Some(project_id), instructions))
-}
-
-fn uuid_v4_simple() -> String {
+pub(crate) fn uuid_v4_simple() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let t = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1342,39 +1262,13 @@ pub fn detect_project(
     db: tauri::State<'_, Arc<Database>>,
     cwd: String,
 ) -> Result<Option<serde_json::Value>, MonarchError> {
-    let cwd_path = Path::new(&cwd);
-    let root = match find_project_root(cwd_path) {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-    let root_str = root.to_string_lossy().to_string();
-    let name = root
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| root_str.clone());
-    let existing = db.get_project_by_path_internal(&root_str)?;
-    let file_instructions = read_instructions_from_root(&root);
-    Ok(Some(serde_json::json!({
-        "rootPath": root_str,
-        "name": existing.as_ref().map(|p| p.name.as_str()).unwrap_or(&name),
-        "projectId": existing.as_ref().map(|p| p.id.as_str()),
-        "hasInstructions": existing.as_ref()
-            .and_then(|p| p.instructions.as_ref())
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false)
-            || file_instructions.is_some(),
-    })))
+    crate::project::detect_project(&db, &cwd)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn read_project_instructions(cwd: String) -> Result<Option<String>, MonarchError> {
-    let cwd_path = Path::new(&cwd);
-    let root = match find_project_root(cwd_path) {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-    Ok(read_instructions_from_root(&root))
+    Ok(crate::project::read_project_instructions(&cwd))
 }
 
 // ---- Tauri Commands ----
@@ -1437,7 +1331,7 @@ pub fn spawn_agent(
 
     // Detect project from cwd and read instruction files
     let effective_cwd = cwd.as_deref().unwrap_or(".");
-    let (project_id, project_instructions) = resolve_project(&db, effective_cwd)?;
+    let (project_id, project_instructions) = crate::project::resolve_project(&db, effective_cwd)?;
 
     let shadow_name = shadow_spec.as_ref().and_then(|s| s.shadow_name.clone());
     let shadow_title = shadow_spec.as_ref().and_then(|s| s.shadow_title.clone());
@@ -1834,7 +1728,7 @@ pub fn ws_spawn_agent(
 
     let now = chrono_now();
     let effective_cwd = cwd.as_deref().unwrap_or(".");
-    let (project_id, project_instructions) = resolve_project(db, effective_cwd)?;
+    let (project_id, project_instructions) = crate::project::resolve_project(db, effective_cwd)?;
 
     let shadow_name = shadow_spec.as_ref().and_then(|s| s.shadow_name.clone());
     let shadow_title = shadow_spec.as_ref().and_then(|s| s.shadow_title.clone());
@@ -2069,32 +1963,3 @@ pub fn ws_respond_extension_ui(
     mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
 }
 
-pub fn ws_detect_project(db: &Arc<Database>, cwd: String) -> Result<Option<serde_json::Value>, MonarchError> {
-    let cwd_path = Path::new(&cwd);
-    let root = match find_project_root(cwd_path) {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-    let root_str = root.to_string_lossy().to_string();
-    let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| root_str.clone());
-    let existing = db.get_project_by_path_internal(&root_str)?;
-    let file_instructions = read_instructions_from_root(&root);
-    Ok(Some(serde_json::json!({
-        "rootPath": root_str,
-        "name": existing.as_ref().map(|p| p.name.as_str()).unwrap_or(&name),
-        "projectId": existing.as_ref().map(|p| p.id.as_str()),
-        "hasInstructions": existing.as_ref()
-            .and_then(|p| p.instructions.as_ref())
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false) || file_instructions.is_some(),
-    })))
-}
-
-pub fn ws_read_project_instructions(cwd: String) -> Result<Option<String>, MonarchError> {
-    let cwd_path = Path::new(&cwd);
-    let root = match find_project_root(cwd_path) {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-    Ok(read_instructions_from_root(&root))
-}

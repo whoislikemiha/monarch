@@ -225,12 +225,12 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
         }
         "detect_project" => {
             let cwd = str_field(&args, "cwd")?;
-            let result = crate::agent::ws_detect_project(&state.db, cwd)?;
+            let result = crate::project::detect_project(&state.db, &cwd)?;
             Ok(result.unwrap_or(Value::Null))
         }
         "read_project_instructions" => {
             let cwd = str_field(&args, "cwd")?;
-            let result = crate::agent::ws_read_project_instructions(cwd)?;
+            let result = crate::project::read_project_instructions(&cwd);
             Ok(result.map(Value::String).unwrap_or(Value::Null))
         }
 
