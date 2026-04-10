@@ -14,7 +14,11 @@ export const liveAgentStore: { byAgent: Map<string, LiveAgentState> } = $state({
 });
 
 export function emptyLiveState(): LiveAgentState {
-  return {
+  // Each entry is its own $state proxy so that per-field writes
+  // (items = ..., streamingMessage = ..., activityStatus = ...) are tracked
+  // reactively. The outer Map only tracks add/delete; values stored inside
+  // are NOT deeply proxied by Svelte 5 unless we wrap them explicitly.
+  return $state<LiveAgentState>({
     items: [],
     toolExecutions: new Map(),
     streamingMessage: null,
@@ -22,7 +26,7 @@ export function emptyLiveState(): LiveAgentState {
     currentToolGroup: null,
     activityStatus: "",
     eventCount: 0,
-  };
+  });
 }
 
 /** Create the entry for an agent if missing and return it. */
