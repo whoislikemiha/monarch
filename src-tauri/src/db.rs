@@ -946,7 +946,7 @@ pub fn ws_get_agents(db: &Database) -> Result<Vec<AgentRow>, String> {
                 id: row.get(0)?, name: row.get(1)?, project_id: row.get(2)?,
                 shadow_name: row.get(3)?, shadow_title: row.get(4)?, shadow_grade: row.get(5)?,
                 provider: row.get(6)?, model: row.get(7)?, thinking_level: row.get(8)?,
-                cwd: row.get(9)?, custom_prompt: row.get(10)?,
+                cwd: row.get(9)?, custom_prompt: row.get(10)?, context_window: None,
                 created_at: row.get(11)?, updated_at: row.get(12)?,
             })
         })

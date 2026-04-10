@@ -1036,6 +1036,7 @@ pub fn ws_spawn_agent(
         thinking_level: thinking_level.clone(),
         cwd: cwd.clone(),
         custom_prompt: None,
+        context_window: None,
         created_at: now.clone(),
         updated_at: now.clone(),
     })?;
@@ -1188,7 +1189,7 @@ pub fn ws_new_agent_session(
         id: agent_id.clone(), name: agent_id.clone(), project_id: None,
         shadow_name: None, shadow_title: None, shadow_grade: None,
         provider: provider.clone(), model: model.clone(), thinking_level: None,
-        cwd: None, custom_prompt: None, created_at: chrono_now(), updated_at: chrono_now(),
+        cwd: None, custom_prompt: None, context_window: None, created_at: chrono_now(), updated_at: chrono_now(),
     })?;
     let valid_parent = match parent_session_id {
         Some(pid) if db.session_exists_internal(&pid)? => Some(pid),
