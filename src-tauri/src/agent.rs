@@ -74,9 +74,14 @@ type AgentSessionMap = Arc<Mutex<HashMap<String, String>>>;
 struct SidecarProcess {
     /// Kept so we can observe liveness via `try_wait()` and kill on shutdown.
     child: Mutex<TokioChild>,
-    /// Sync send into the dedicated writer task. Dropping this closes the
-    /// channel, which stops the writer task and closes the pipe.
-    stdin_tx: mpsc::UnboundedSender<String>,
+    /// Sync send into the dedicated writer task. Wrapped in `Mutex<Option<_>>`
+    /// so the shutdown path (`AgentManager::shutdown_sidecar`) can `take()`
+    /// the sender from the outside: dropping it closes the mpsc channel →
+    /// writer task exits → `ChildStdin` drops → sidecar's `rl.on("close")`
+    /// fires graceful `disposeAll()` + `process.exit(0)`. That stdin-close
+    /// path is the sidecar's graceful-shutdown protocol, so we don't need a
+    /// dedicated `SidecarCommand::Shutdown` wire message.
+    stdin_tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
 }
 
 impl SidecarProcess {
@@ -85,9 +90,33 @@ impl SidecarProcess {
         if !line.ends_with('\n') {
             line.push('\n');
         }
-        self.stdin_tx
+        let guard = self.stdin_tx.lock().map_err(|e| e.to_string())?;
+        guard
+            .as_ref()
+            .ok_or_else(|| "sidecar stdin closed".to_string())?
             .send(line)
             .map_err(|e| format!("sidecar writer closed: {}", e))
+    }
+}
+
+impl Drop for SidecarProcess {
+    /// Panic-unwind safety net. If the child is still running when the last
+    /// `Arc<SidecarProcess>` drops — e.g. on a Rust panic unwind that bypasses
+    /// the normal `ExitRequested` shutdown path — best-effort `start_kill()`
+    /// so we don't orphan the Node process.
+    ///
+    /// `start_kill()` is synchronous and does not await the reaper, so it is
+    /// safe to call from `Drop` even when the tokio runtime is mid-teardown.
+    /// We use `Mutex::get_mut` rather than `.lock()` because `&mut self` in
+    /// `drop` gives us exclusive access without risking a poisoned-lock no-op.
+    fn drop(&mut self) {
+        let Ok(child) = self.child.get_mut() else { return };
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        if let Err(e) = child.start_kill() {
+            eprintln!("[monarch] SidecarProcess Drop: start_kill failed: {}", e);
+        }
     }
 }
 
@@ -164,6 +193,63 @@ impl AgentManager {
             .ok_or_else(|| "AppHandle not initialized".to_string())
     }
 
+    /// Graceful-then-hard sidecar teardown, invoked from the Tauri
+    /// `RunEvent::ExitRequested` hook on window close.
+    ///
+    /// Sequence:
+    /// 1. Take the sidecar `Arc` out of the manager slot.
+    /// 2. Drop the stdin sender — closes the mpsc → writer task exits →
+    ///    `ChildStdin` drops → sidecar's `rl.on("close")` fires graceful
+    ///    `disposeAll()` + `process.exit(0)`.
+    /// 3. Poll `try_wait()` until the child reports exit or the deadline
+    ///    elapses.
+    /// 4. If still alive at the deadline, `start_kill()` as the hard-kill
+    ///    fallback. `SidecarProcess::drop` running later is then a no-op.
+    ///
+    /// Sync by design so it can be called directly from Tauri's sync
+    /// `RunEvent` closure without `block_on` from inside the runtime thread.
+    /// The worst-case close latency is bounded by `timeout` (typically 1.5s),
+    /// which is acceptable during shutdown.
+    pub fn shutdown_sidecar(&self, timeout: Duration) {
+        let sidecar = match self.sidecar.lock() {
+            Ok(mut slot) => slot.take(),
+            Err(_) => return,
+        };
+        let Some(sc) = sidecar else { return };
+
+        // (2) Close stdin to trigger the sidecar's graceful-shutdown path.
+        if let Ok(mut guard) = sc.stdin_tx.lock() {
+            *guard = None;
+        }
+
+        // (3) Bounded wait for the child to exit on its own.
+        let deadline = std::time::Instant::now() + timeout;
+        let poll_interval = Duration::from_millis(25);
+        loop {
+            let exited = match sc.child.lock() {
+                Ok(mut c) => matches!(c.try_wait(), Ok(Some(_))),
+                // Poisoned lock — treat as terminal so we don't spin.
+                Err(_) => true,
+            };
+            if exited {
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(poll_interval);
+        }
+
+        // (4) Hard-kill fallback.
+        if let Ok(mut c) = sc.child.lock() {
+            if let Err(e) = c.start_kill() {
+                eprintln!("[monarch] shutdown_sidecar: start_kill failed: {}", e);
+            }
+        };
+        // `sc` drops here; `SidecarProcess::drop` sees the already-killed
+        // child via `try_wait()` and no-ops.
+    }
+
     fn ensure_sidecar(
         &self,
         app: &AppHandle,
@@ -236,7 +322,7 @@ impl AgentManager {
 
         let sc = Arc::new(SidecarProcess {
             child: Mutex::new(child),
-            stdin_tx,
+            stdin_tx: Mutex::new(Some(stdin_tx)),
         });
 
         // Stdout reader task: async loop, one line → one handle_sidecar_event.
