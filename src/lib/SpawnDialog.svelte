@@ -45,8 +45,7 @@
 
   // Agent templates
   let templates: AgentTemplate[] = $state([]);
-  let showSaveTemplate = $state(false);
-  let newTemplateName = $state("");
+  let saveAsTemplate = $state(false);
 
   // Model list from backend
   interface ModelInfo {
@@ -180,8 +179,8 @@
     });
   }
 
-  async function saveAsTemplate() {
-    const name = newTemplateName.trim();
+  async function persistCurrentAsTemplate() {
+    const name = shadowName.trim();
     if (!name || !isTauri) return;
     const now = new Date().toISOString();
     const template: AgentTemplate = {
@@ -191,7 +190,7 @@
       model: (fixedModelId || modelInput.trim()) || null,
       thinkingLevel,
       cwd: cwd || null,
-      shadowName: shadowName.trim() || null,
+      shadowName: name,
       shadowTitle: shadowTitle.trim() || null,
       shadowGrade,
       createdAt: now,
@@ -199,11 +198,8 @@
     };
     try {
       await invoke("db_save_agent_template", { template });
-      newTemplateName = "";
-      showSaveTemplate = false;
-      await loadTemplates();
     } catch {
-      // Ignore — UI stays open so user can retry.
+      // Swallow — spawning should not block on template save failures.
     }
   }
 
@@ -295,7 +291,11 @@
     }
   }
 
-  function handleSpawn() {
+  async function handleSpawn() {
+    if (saveAsTemplate && shadowName.trim()) {
+      await persistCurrentAsTemplate();
+    }
+
     const trimmed = modelInput.trim();
     const provider = selectedProvider;
     const model = fixedModelId || trimmed || undefined;
@@ -577,38 +577,17 @@
     </div>
 
     {#if isTauri}
-      <div class="template-save">
-        {#if showSaveTemplate}
-          <input
-            type="text"
-            bind:value={newTemplateName}
-            placeholder="Template name"
-            onkeydown={(e) => {
-              if (e.key === "Enter") { e.preventDefault(); saveAsTemplate(); }
-              if (e.key === "Escape") { showSaveTemplate = false; newTemplateName = ""; }
-            }}
-          />
-          <button
-            class="template-save-btn"
-            onclick={saveAsTemplate}
-            disabled={!newTemplateName.trim()}
-            type="button"
-          >Save</button>
-          <button
-            class="template-save-cancel"
-            onclick={() => { showSaveTemplate = false; newTemplateName = ""; }}
-            type="button"
-          >Cancel</button>
-        {:else}
-          <button
-            class="template-save-toggle"
-            onclick={() => (showSaveTemplate = true)}
-            type="button"
-          >
-            + Save as template
-          </button>
+      <label class="template-save-check" title={shadowName.trim() ? "" : "Set a shadow name to enable"}>
+        <input
+          type="checkbox"
+          bind:checked={saveAsTemplate}
+          disabled={!shadowName.trim()}
+        />
+        <span>Save as template</span>
+        {#if saveAsTemplate && shadowName.trim()}
+          <span class="template-save-hint">&middot; uses "{shadowName.trim()}" as the name</span>
         {/if}
-      </div>
+      </label>
     {/if}
 
     <div class="actions">
@@ -719,59 +698,34 @@
     color: #ffb4b4;
   }
 
-  .template-save {
+  .template-save-check {
     display: flex;
-    gap: 6px;
     align-items: center;
-    margin-top: -4px;
-  }
-
-  .template-save input {
-    flex: 1;
-  }
-
-  .template-save-toggle {
-    padding: 6px 10px;
-    border: 1px dashed var(--border-subtle, #35274f);
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-muted, #8f7aa8);
+    gap: 6px;
     font-size: 11px;
+    color: var(--text-secondary, #dde1e6);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .template-save-check input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+    accent-color: var(--accent-purple, #be95ff);
     cursor: pointer;
   }
 
-  .template-save-toggle:hover {
-    border-color: var(--accent-purple, #be95ff);
-    color: var(--accent-purple, #be95ff);
-  }
-
-  .template-save-btn {
-    padding: 6px 12px;
-    border: none;
-    border-radius: 6px;
-    background: var(--accent-purple, #be95ff);
-    color: #140d22;
-    font-size: 11px;
-    font-weight: 600;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    cursor: pointer;
-  }
-
-  .template-save-btn:disabled {
-    opacity: 0.5;
+  .template-save-check input[type="checkbox"]:disabled {
     cursor: not-allowed;
   }
 
-  .template-save-cancel {
-    padding: 6px 10px;
-    border: 1px solid var(--border-subtle, #35274f);
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-secondary, #dde1e6);
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    cursor: pointer;
+  .template-save-check input[type="checkbox"]:disabled + span {
+    color: var(--text-muted, #8f7aa8);
+  }
+
+  .template-save-hint {
+    color: var(--text-muted, #8f7aa8);
   }
 
   .preset-grid {

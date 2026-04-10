@@ -7,6 +7,8 @@
     projectId?: string;
     provider?: string;
     model?: string;
+    thinkingLevel?: string;
+    cwd?: string;
     shadow?: ShadowIdentity;
     sessions: SessionRecord[];
   }
@@ -15,6 +17,16 @@
     project?: Project;
     agents: Agent[];
     savedAgents: SavedAgentInfo[];
+  }
+
+  /** Snapshot of the clicked row passed to onsavetemplate. */
+  export interface TemplateSource {
+    name: string;
+    provider?: string;
+    model?: string;
+    thinkingLevel?: string;
+    cwd?: string;
+    shadow?: ShadowIdentity;
   }
 
   let {
@@ -29,6 +41,7 @@
     oncouncil,
     onviewhistory,
     oneditproject,
+    onsavetemplate,
   }: {
     agents: Agent[];
     projects?: Project[];
@@ -41,7 +54,54 @@
     oncouncil?: () => void;
     onviewhistory?: (saved: SavedAgentInfo) => void;
     oneditproject?: (project: Project) => void;
+    onsavetemplate?: (source: TemplateSource) => void;
   } = $props();
+
+  // Custom themed context menu — native right-click menu is suppressed so
+  // we can render one that matches the rest of the app.
+  let contextMenu: { x: number; y: number; source: TemplateSource } | null = $state(null);
+
+  function openAgentMenu(e: MouseEvent, agent: Agent) {
+    e.preventDefault();
+    contextMenu = {
+      x: e.clientX,
+      y: e.clientY,
+      source: {
+        name: agent.shadow?.shadowName || agent.name,
+        provider: agent.provider,
+        model: agent.model,
+        thinkingLevel: agent.thinkingLevel,
+        cwd: agent.cwd,
+        shadow: agent.shadow,
+      },
+    };
+  }
+
+  function openSavedMenu(e: MouseEvent, saved: SavedAgentInfo) {
+    e.preventDefault();
+    contextMenu = {
+      x: e.clientX,
+      y: e.clientY,
+      source: {
+        name: saved.shadow?.shadowName || saved.name,
+        provider: saved.provider,
+        model: saved.model,
+        thinkingLevel: saved.thinkingLevel,
+        cwd: saved.cwd,
+        shadow: saved.shadow,
+      },
+    };
+  }
+
+  function closeContextMenu() {
+    contextMenu = null;
+  }
+
+  function handleSaveTemplate() {
+    if (!contextMenu) return;
+    onsavetemplate?.(contextMenu.source);
+    closeContextMenu();
+  }
 
   let runningCount = $derived(agents.filter((a) => a.status === "running").length);
 
@@ -116,6 +176,7 @@
           class:active={agent.id === activeId}
           onclick={() => onselect(agent.id)}
           onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') onselect(agent.id); }}
+          oncontextmenu={(e: MouseEvent) => openAgentMenu(e, agent)}
           role="button"
           tabindex="0"
         >
@@ -141,6 +202,7 @@
         <button
           class="agent-item saved"
           onclick={() => onviewhistory?.(saved)}
+          oncontextmenu={(e: MouseEvent) => openSavedMenu(e, saved)}
         >
           <span class="status-dot stopped"></span>
           <div class="agent-info">
@@ -160,6 +222,30 @@
   {#if agents.length === 0 && inactiveSaved.length === 0}
     <div class="empty-state">
       No shadows extracted.<br />Click + to extract one.
+    </div>
+  {/if}
+
+  {#if contextMenu}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div
+      class="context-menu-backdrop"
+      role="presentation"
+      onclick={closeContextMenu}
+      oncontextmenu={(e: MouseEvent) => { e.preventDefault(); closeContextMenu(); }}
+    ></div>
+    <div
+      class="context-menu"
+      style:left="{contextMenu.x}px"
+      style:top="{contextMenu.y}px"
+      role="menu"
+    >
+      <button
+        class="context-menu-item"
+        onclick={handleSaveTemplate}
+        role="menuitem"
+      >
+        Save as template
+      </button>
     </div>
   {/if}
 
@@ -424,5 +510,43 @@
   .council-shortcut {
     font-size: 9px;
     opacity: 0.5;
+  }
+
+  .context-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+  }
+
+  .context-menu {
+    position: fixed;
+    z-index: 501;
+    min-width: 160px;
+    padding: 4px;
+    background: var(--bg-panel, #171126);
+    border: 1px solid var(--border-subtle, #35274f);
+    border-radius: 6px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .context-menu-item {
+    padding: 6px 10px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-secondary, #dde1e6);
+    font-size: 11px;
+    font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .context-menu-item:hover {
+    background: var(--bg-panel-2, #201734);
+    color: var(--accent-purple, #be95ff);
   }
 </style>
