@@ -7,7 +7,20 @@
   import SpawnDialog from "./lib/SpawnDialog.svelte";
   import HistoryPanel from "./lib/HistoryPanel.svelte";
   import ProjectEditor from "./lib/ProjectEditor.svelte";
-  import type { Agent, AgentConfig, AgentViewState, Project, SessionRecord } from "./lib/types";
+  import ToolRail from "./lib/toolbox/ToolRail.svelte";
+  import ToolPanelStack from "./lib/toolbox/ToolPanelStack.svelte";
+  import {
+    liveAgentStore,
+    removeLiveState,
+  } from "./lib/toolbox/liveAgentStore";
+  import {
+    persistOpenIds,
+    persistWidth,
+    restoreOpenIds,
+    restoreWidth,
+  } from "./lib/toolbox/persistence";
+  import type { AgentContext } from "./lib/toolbox/types";
+  import type { Agent, AgentConfig, Project, SessionRecord } from "./lib/types";
 
   let agents: Agent[] = $state([]);
   let projects: Project[] = $state([]);
@@ -19,7 +32,27 @@
   let agentViewRef: AgentView | undefined = $state(undefined);
   let showRestoreBar = $state(false);
   let exitListeners: Map<string, import("$lib/api").UnlistenFn> = new Map();
-  let agentViewStates: Map<string, AgentViewState> = $state(new Map());
+
+  // --- Toolbox state ---
+  let openToolIds: string[] = $state(restoreOpenIds());
+  let toolboxWidth = $state(restoreWidth());
+
+  $effect(() => {
+    persistOpenIds(openToolIds);
+  });
+  $effect(() => {
+    persistWidth(toolboxWidth);
+  });
+
+  function toggleTool(id: string) {
+    openToolIds = openToolIds.includes(id)
+      ? openToolIds.filter((t) => t !== id)
+      : [...openToolIds, id];
+  }
+
+  function closeTool(id: string) {
+    openToolIds = openToolIds.filter((t) => t !== id);
+  }
 
   function createViewKey(agentId: string): string {
     return `${agentId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
@@ -348,26 +381,13 @@
     agents = agents.map((agent) => (agent.id === id ? updater(agent) : agent));
   }
 
-  function getAgentViewState(agentId: string): AgentViewState | undefined {
-    return agentViewStates.get(agentId);
-  }
-
-  function updateAgentViewState(agentId: string, state: AgentViewState | null) {
-    const next = new Map(agentViewStates);
-    if (state) {
-      next.set(agentId, state);
-    } else {
-      next.delete(agentId);
-    }
-    agentViewStates = next;
-  }
-
   function killAgent(id: string) {
     invoke("kill_agent", { id, graceful: true });
     // Clean up exit listener
     const unlisten = exitListeners.get(id);
     if (unlisten) { unlisten(); exitListeners.delete(id); }
     agents = agents.filter((a) => a.id !== id);
+    removeLiveState(id);
     if (activeId === id) {
       activeId = agents.length > 0 ? agents[agents.length - 1].id : null;
     }
@@ -452,6 +472,15 @@
       ? projects.find((p) => p.id === activeAgent!.projectId)
       : undefined
   );
+
+  let currentLive = $derived(
+    activeId ? liveAgentStore.byAgent.get(activeId) ?? null : null,
+  );
+  let agentContext: AgentContext = $derived(
+    !councilMode && activeAgent && currentLive
+      ? { agentId: activeAgent.id, agent: activeAgent, live: currentLive }
+      : null,
+  );
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -518,8 +547,6 @@
           projectName={activeProject?.name}
           onrestart={restartAgent}
           onagentchange={(agentId, updater) => updateAgent(agentId, updater)}
-          getcachedstate={getAgentViewState}
-          onviewstatechange={updateAgentViewState}
           onprojectedit={() => { if (activeProject) editingProject = activeProject; }}
           bind:this={agentViewRef}
         />
@@ -549,6 +576,14 @@
       </div>
     {/if}
   </div>
+  <ToolPanelStack
+    {openToolIds}
+    {agentContext}
+    width={toolboxWidth}
+    onclose={closeTool}
+    onresize={(w) => (toolboxWidth = w)}
+  />
+  <ToolRail {openToolIds} ontoggle={toggleTool} />
 </main>
 
 {#if showSpawnDialog}
