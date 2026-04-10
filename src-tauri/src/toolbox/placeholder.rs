@@ -14,10 +14,10 @@ fn ping_impl() -> String {
 
 #[tauri::command]
 #[specta::specta]
-pub fn toolbox_placeholder_ping() -> Result<String, String> {
+pub fn toolbox_placeholder_ping() -> Result<String, crate::error::MonarchError> {
     Ok(ping_impl())
 }
 
-pub fn ws_toolbox_placeholder_ping() -> Result<String, String> {
+pub fn ws_toolbox_placeholder_ping() -> Result<String, crate::error::MonarchError> {
     Ok(ping_impl())
 }
