@@ -10,7 +10,14 @@ use agent::AgentManager;
 use db::Database;
 use models::ModelCache;
 use std::sync::Arc;
+use std::time::Duration;
+use tauri::{Manager, RunEvent};
 use tauri_specta::{collect_commands, Builder};
+
+/// Upper bound on how long the `ExitRequested` hook waits for the sidecar to
+/// exit gracefully after stdin close before hard-killing. Keeps window-close
+/// latency bounded while giving `disposeAll()` room to finish.
+const SIDECAR_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(1500);
 
 /// Build the tauri-specta command collection for **type export only**.
 /// Runtime invocation still goes through `tauri::generate_handler!` in
@@ -221,6 +228,17 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // MON-36: on window close / app exit, gracefully shut down the
+            // Node sidecar before the process tears down. Closing stdin is
+            // the sidecar's graceful-shutdown protocol (see
+            // `sidecar/src/index.ts` `rl.on("close", shutdown)`); the
+            // manager handles the bounded wait + hard-kill fallback.
+            if let RunEvent::ExitRequested { .. } = event {
+                let mgr = app_handle.state::<Arc<AgentManager>>();
+                mgr.shutdown_sidecar(SIDECAR_SHUTDOWN_TIMEOUT);
+            }
+        });
 }
