@@ -98,8 +98,26 @@ and have no cross-dependencies beyond Wave 0.
 
 **Notes (Wave 1):**
 
-<!-- Each wave-1 issue should leave a one-liner here on merge: PR link,
-anything non-obvious, any new findings that went into the parking lot. -->
+- MON-38 PR: https://github.com/whoislikemiha/monarch/pull/19 — audit confirmed MON-29's refactor already moved
+  `serde_json::to_string` out from under the write guard (all emit sites now
+  use `emit_state_event(&LiveAgentState)` which serializes on the caller's
+  stack, not in the guard). The MON-38 PR codifies the invariant by
+  standardizing on the explicit `let snap = guard.state.clone(); drop(guard);
+  emit_state_event(.., &snap);` shape at every site and documenting the
+  constraint on `emit_state_event`. Sites touched: sidecar recovery emit,
+  `rebuild_state_from_session`, `apply_and_maybe_emit` (EmitNow branch),
+  `mark_agent_desynced`. Debounce task + `session_destroyed` handler already
+  had the explicit form and were left alone. `cargo check`, `cargo clippy`
+  (no new warnings), and `svelte-check` all clean.
+- Parking-lot items (a) and (b) confirmed during MON-38 setup audit and
+  filed as **MON-40** (isStreaming flag no longer toggles) and **MON-41**
+  (coarse reactivity in `applyUpdate`). Removed from the parking lot.
+- Parking-lot item (c) — duplicate emit in `rebuild_agent_state_from_session`
+  — audited and declined for folding into MON-38. The Tauri caller dedupes
+  via the `state_version` guard in `applyUpdate`; WS clients legitimately
+  need the emit; making it conditional would require `emit_state_event`
+  signature churn that the briefing explicitly forbade. Left in the
+  parking lot with a declined note.
 
 ---
 
@@ -176,34 +194,24 @@ Findings from the in-editor review pass that are **not yet filed as Linear
 sub-issues**. Each bullet is a candidate — decide during implementation
 whether to file, fold into an existing issue, or decline.
 
-- **`agent.isStreaming` no longer flips during normal operation.** Pre-MON-14
-  the `agent_start` / `agent_end` cases in `AgentView.svelte`'s
-  `handleEvent` called `updateAgent()` to toggle `isStreaming`, which drives
-  `AgentControls.svelte:187` (stop-vs-send button, input disable). Phase 2
-  deleted those cases and `LiveAgentState` does not carry an equivalent, so
-  the stop button never engages during streaming. Smallest fix: derive in
-  `AgentView.svelte` from `live.activityStatus !== ""`. Larger fix: add an
-  explicit `isStreaming: bool` to `LiveAgentState` flipped in `apply_event`.
-  → **Action:** file as a new sub-issue (MON-40?) before Wave 1 if confirmed
-  during MON-29 smoke-testing.
+- ~~**`agent.isStreaming` no longer flips during normal operation.**~~
+  Confirmed during MON-38 setup. Filed as **MON-40** (High, Bug).
+  Removed from parking lot.
 
-- **Coarse reactivity in `liveAgentStore.applyUpdate`.** Each incoming
-  snapshot calls `SvelteMap.set(id, newEntry)` with a fresh object identity,
-  so every `$derived` reading any field of `live` re-runs at ~60fps during
-  streaming. Pre-refactor did field-level writes into a `$state` entry,
-  giving fine-grained reactivity. Fix: keep a stable `$state` entry per
-  agent and mutate field-by-field in `applyUpdate`. High-impact for
-  perceived smoothness with multiple open tools.
-  → **Action:** file as a new sub-issue before Wave 1; this is the single
-  biggest "snappy and smooth" win available and the review thread did not
-  cover it.
+- ~~**Coarse reactivity in `liveAgentStore.applyUpdate`.**~~ Confirmed
+  during MON-38 setup. Filed as **MON-41** (High, performance). Removed
+  from parking lot.
 
 - **`rebuild_agent_state_from_session` both returns the snapshot and emits
   on `agent-state-{id}`.** Callers seed via `seedFromSnapshot` _and_ the
   event fires, producing a dropped duplicate via the `state_version` guard.
   Functionally correct, one wasted serialize+emit per rebuild. Minor.
-  → **Action:** probably fold into MON-38 (it is already touching the
-  emit path); if the diff grows too large there, file separately.
+  → **Declined during MON-38 implementation.** The Tauri caller dedupes via
+  the `state_version` guard in `applyUpdate` (drops equal version); WS
+  clients legitimately need the emit. A conditional-emit path would require
+  `emit_state_event` signature churn that the MON-38 briefing explicitly
+  forbade ("other Wave 1 issues are not expecting churn there"). Leaving
+  the wasted one-emit-per-rebuild as the better tradeoff.
 
 ---
 
