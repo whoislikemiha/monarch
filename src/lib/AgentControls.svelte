@@ -1,8 +1,9 @@
 <script lang="ts">
-  import type { Usage, SessionStats } from "./types";
+  import type { DisplayItem, SessionStats, Usage } from "./types";
 
   let {
     isStreaming,
+    items,
     lastUsage,
     contextWindow,
     thinkingLevel,
@@ -13,6 +14,7 @@
     oncontextinspect,
   }: {
     isStreaming: boolean;
+    items: DisplayItem[];
     lastUsage?: Usage;
     contextWindow?: number;
     thinkingLevel?: string;
@@ -24,6 +26,7 @@
   } = $props();
 
   const DEFAULT_CONTEXT_WINDOW = 128000;
+  const CHARS_PER_TOKEN = 4;
   const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
   let showThinkingPicker = $state(false);
 
@@ -33,41 +36,86 @@
     return n.toString();
   }
 
+  function estimateTokens(text: string): number {
+    return Math.ceil(text.length / CHARS_PER_TOKEN);
+  }
+
+  function stringifyResult(result: unknown): string {
+    if (result == null) return "";
+    if (typeof result === "string") return result;
+    if (typeof result === "object" && result && "content" in result && Array.isArray((result as any).content)) {
+      return (result as any).content
+        .map((part: any) => (part?.type === "text" ? part.text : `[${part?.type || "content"}]`))
+        .join("\n");
+    }
+    return JSON.stringify(result);
+  }
+
+  let estimatedContextTokens = $derived.by(() =>
+    items.reduce((total, item) => {
+      if (item.kind === "user") {
+        return total + estimateTokens(item.content);
+      }
+
+      if (item.kind === "assistant") {
+        return total + item.content.reduce((messageTotal, block) => {
+          if (block.type === "text") return messageTotal + estimateTokens(block.text);
+          if (block.type === "thinking") return messageTotal + estimateTokens(block.thinking);
+          return messageTotal;
+        }, 0);
+      }
+
+      if (item.kind === "tool-group") {
+        return total + item.executions.reduce((groupTotal, execution) => {
+          const argsText = execution.args ? JSON.stringify(execution.args) : "";
+          const resultText = stringifyResult(execution.result);
+          return groupTotal + estimateTokens(argsText) + estimateTokens(resultText);
+        }, 0);
+      }
+
+      return total;
+    }, 0)
+  );
+
   // Live context occupancy: what's sitting in the model's context right now,
   // taken from the most recent assistant message's usage. NOT session-lifetime
   // billing — that accumulates across every turn and massively overstates
   // occupancy after a few messages.
   let liveContextTokens = $derived.by(() => {
-    if (!lastUsage) return 0;
-    const cached = (lastUsage.cacheRead ?? 0) + (lastUsage.cacheWrite ?? 0);
-    if (lastUsage.input && lastUsage.input > 0) {
-      return lastUsage.input + cached;
+    if (lastUsage) {
+      const cached = (lastUsage.cacheRead ?? 0) + (lastUsage.cacheWrite ?? 0);
+      if (lastUsage.input && lastUsage.input > 0) {
+        return lastUsage.input + cached;
+      }
+      // Pi SDK / LM Studio sometimes only populates totalTokens. Back out output
+      // to get what was in the prompt, since totalTokens = input + output.
+      if (lastUsage.totalTokens) {
+        const output = lastUsage.output ?? 0;
+        return Math.max(lastUsage.totalTokens - output, 0);
+      }
     }
-    // Pi SDK / LM Studio sometimes only populates totalTokens. Back out output
-    // to get what was in the prompt, since totalTokens = input + output.
-    if (lastUsage.totalTokens) {
-      const output = lastUsage.output ?? 0;
-      return Math.max(lastUsage.totalTokens - output, 0);
-    }
-    return 0;
+    return estimatedContextTokens;
   });
 
   let displayCost = $derived(
     sessionStats?.totalCost ?? lastUsage?.cost?.total
   );
   let hasContextMeter = $derived(
-    contextWindow != null || sessionStats != null || lastUsage != null
+    contextWindow != null || sessionStats != null || lastUsage != null || items.length > 0
   );
   let resolvedContextWindow = $derived(contextWindow ?? DEFAULT_CONTEXT_WINDOW);
   let isEstimatedContextWindow = $derived(contextWindow == null);
+  let isEstimatedOccupancy = $derived(!lastUsage && estimatedContextTokens > 0);
   let usedRatio = $derived(
     resolvedContextWindow > 0
       ? Math.min(liveContextTokens / resolvedContextWindow, 1)
       : 0
   );
   let usedPct = $derived(Math.round(usedRatio * 100));
+  let freeTokens = $derived(Math.max(resolvedContextWindow - liveContextTokens, 0));
+  let freePct = $derived(Math.max(100 - usedPct, 0));
   let contextFill = $derived(
-    liveContextTokens > 0 ? Math.max(usedRatio * 100, 4) : 0
+    Math.max((1 - usedRatio) * 100, 0)
   );
   // Critical/warning thresholds on how FULL the context is (not how much is left).
   let contextState = $derived(
@@ -112,7 +160,7 @@
         class:clickable={!!oncontextinspect}
         class:warning={contextState === "warning"}
         class:critical={contextState === "critical"}
-        title={`Context used: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens (${usedPct}%)${isEstimatedContextWindow ? " — window is estimated, set it in the spawn dialog for LM Studio" : ""} — click to inspect`}
+        title={`Context snapshot: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens in context, ${freeTokens.toLocaleString()} free (${freePct}% headroom)${isEstimatedOccupancy ? " — occupancy estimated from restored content" : ""}${isEstimatedContextWindow ? " — window is estimated" : ""} — click to inspect`}
         onclick={oncontextinspect}
       >
         <span class="context-label">ctx</span>
@@ -121,7 +169,7 @@
         </div>
         <span class="context-value">
           {formatTokens(liveContextTokens)}/{formatTokens(resolvedContextWindow)}
-          ({usedPct}%)
+          · {freePct}% free
         </span>
       </div>
 

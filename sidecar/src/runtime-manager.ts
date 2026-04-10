@@ -392,6 +392,11 @@ export class RuntimeManager {
 		const managed = this.getSession(agentId);
 		if (!managed) return;
 
+		// Rebuild from a clean session state so restored/continued sessions don't
+		// accumulate stale messages from a previous in-memory run.
+		managed.session.sessionManager.newSession();
+		managed.session.agent.state.messages = [];
+
 		const agentMessages: Array<Record<string, unknown>> = [];
 
 		for (const msg of messages) {
@@ -431,10 +436,10 @@ export class RuntimeManager {
 		}
 
 		if (agentMessages.length > 0) {
-			// Clear existing state first, then inject
 			managed.session.agent.state.messages = agentMessages as any;
 
-			// Also persist to the in-memory session manager so compaction works
+			// Rebuild the session manager's persisted log from the same source so
+			// compaction and future prompts see the exact restored context.
 			for (const msg of agentMessages) {
 				managed.session.sessionManager.appendMessage(msg as any);
 			}
