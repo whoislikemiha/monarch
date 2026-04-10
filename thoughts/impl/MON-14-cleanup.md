@@ -91,7 +91,7 @@ and have no cross-dependencies beyond Wave 0.
   - Done when: Tauri shutdown or panic unwind terminates the Node sidecar.
     Verified by killing the app mid-stream and observing no orphan `node`
     process.
-- [ ] **MON-37** — Ordered persistence pipeline via single-consumer mpsc  · High · `refactor`, `Bug`
+- [ ] **MON-37** — Ordered persistence pipeline via single-consumer mpsc  · High · `refactor`, `Bug` — _In review (merged to Phase 1; awaits master)_
   - Done when: sidecar → DB writes are serialized through one mpsc consumer,
     `JoinHandle`s are observed, DB errors are logged (not silently dropped),
     and `message_end` cannot land after its own `tool_execution_end`.
@@ -230,6 +230,72 @@ because they keep tightening the type system around the same call sites.
 <!-- Wave 2 is the longest and most interdependent — leave a checkpoint note
 after each issue merges, including any assumptions the next step is making
 about the shape left behind. -->
+
+- **Handoff from Wave 1 → Wave 2 starting point.** Wave 1 is merged
+  into `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` (all
+  five PRs: MON-29 #18, MON-38 #19, MON-30 #20, MON-36 #21, MON-37 #22).
+  None have reached `master` yet — the whole Phase 1 train merges
+  together later, which is why the Wave 1 checkboxes stay `[ ]` per
+  the tracker rules. Base all Wave 2 branches on the Phase 1 branch,
+  not on `master`.
+
+- **Next task: MON-31 — Introduce `MonarchError` domain error type.**
+  Starts Wave 2 because MON-32 / MON-35 / MON-33 all touch command
+  signatures, and converting the error type once up-front is cheaper
+  than three passes over the same lines. Full ticket:
+  https://linear.app/monarch-commander/issue/MON-31
+
+  Scope reminder from the ticket: replace every `Result<T, String>` on
+  `#[tauri::command]` functions with `Result<T, MonarchError>`,
+  introduce `src-tauri/src/error.rs` using `thiserror`, serialize via a
+  DTO `{ kind, message, details }` so the specta boundary exposes a
+  typed shape, and migrate all `.map_err(|e| e.to_string())` sprinkles
+  in `agent.rs` / `db.rs` / `persistence.rs`. Acceptance requires the
+  frontend to `match` on `error.kind` in at least one call site
+  (suggest `AgentView` spawn failure handling, since spawn already has
+  the richest error surface).
+
+- **Wave 1 residue MON-31 will encounter.**
+  - MON-37 added `Result<(), String>` in `PersistCommand::apply` and
+    `run_persist_consumer` inside `agent.rs`. Those are **not** Tauri
+    command returns — they are internal to the persistence consumer
+    loop — so they are not in scope for the MON-31 "zero
+    `Result<T, String>` on `#[tauri::command]`" acceptance bullet.
+    Leave them `Result<(), String>` or convert them to
+    `Result<(), MonarchError>` as a consistency win, but do not
+    conflate them with the boundary migration.
+  - MON-37 added `eprintln!("[monarch] persist failed: ..")` on the
+    consumer's error path. The parking lot has a "migrate `agent.rs`
+    logging from `eprintln!` to `tracing`" item — MON-31 should not
+    touch that; it is Wave 2 parking-lot territory, not a MON-31 task.
+  - MON-37 changed `app_handle` to `Arc<Mutex<Option<AppHandle>>>`
+    (`std::sync::Mutex`). MON-34 is the issue that unifies the
+    `std::sync::Mutex` / `tokio::sync::RwLock` split — MON-31 should
+    leave the lock topology alone and only carve out the poisoned-lock
+    error variant (`MonarchError::Lock`).
+  - Wave 1 left two pre-existing clippy warnings on `spawn_agent` /
+    `ws_spawn_agent` (`too_many_arguments`, 13 and 11 args
+    respectively). MON-35 fixes them by collapsing shadow + model
+    fields into `SpawnAgentRequest`. MON-31 should **not** fix them —
+    touching those signatures in a pure error-type migration adds
+    diff noise that MON-35 will rewrite anyway.
+
+- **Starting state for MON-31.** Branch from
+  `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` at
+  `9c785e1` (MON-37 merge commit). `cargo check` / `cargo clippy` clean
+  modulo the two pre-existing warnings noted above. No working Rust
+  test harness on Windows — see parking lot — so acceptance verification
+  is manual: `svelte-check` for the frontend, a hand-spot-check of the
+  chosen `AgentView` error branch, and confirming `bindings.ts`
+  regenerates with the new error DTO shape via
+  `cargo run -- --export-bindings`.
+
+- **Plan-then-impl workflow is the expectation.** Previous Wave 1
+  issues each landed a `thoughts/plan/MON-XX.md` (research/plan phase)
+  and a `thoughts/impl/MON-XX.md` (notes after implementation), both
+  committed on the feature branch per the durable "always commit
+  thoughts/plan and thoughts/impl" rule. Open a MON-31 plan first,
+  get it reviewed, then implement.
 
 ---
 
