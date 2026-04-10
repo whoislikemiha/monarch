@@ -31,7 +31,8 @@ dist/
 # ~/.config/monarch/ is where runtime data lives, not in repo
 
 # Claude
-.claude/
+.claude/*
+!.claude/commands/
 
 # Local Codex scratch files
 .codex
