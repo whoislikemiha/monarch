@@ -100,6 +100,59 @@ struct OpenRouterModel {
     name: String,
 }
 
+#[derive(Deserialize)]
+struct LmStudioResponse {
+    data: Vec<LmStudioModel>,
+}
+
+#[derive(Deserialize)]
+struct LmStudioModel {
+    id: String,
+}
+
+fn lmstudio_base_url() -> String {
+    std::env::var("LMSTUDIO_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:1234/v1".to_string())
+}
+
+async fn fetch_lmstudio_models() -> Result<Vec<ModelInfo>, String> {
+    let base_url = lmstudio_base_url();
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("LM Studio not reachable at {}: {}", base_url, e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!(
+            "LM Studio returned HTTP {} at {}",
+            resp.status(),
+            base_url
+        ));
+    }
+
+    let parsed: LmStudioResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse LM Studio response: {}", e))?;
+
+    Ok(parsed
+        .data
+        .into_iter()
+        .map(|m| ModelInfo {
+            id: m.id.clone(),
+            name: m.id,
+            provider: "lmstudio".to_string(),
+        })
+        .collect())
+}
+
 async fn fetch_openrouter_models() -> Result<Vec<ModelInfo>, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -156,6 +209,7 @@ pub async fn get_models(
 
             Ok(models)
         }
+        "lmstudio" => fetch_lmstudio_models().await,
         _ => Ok(vec![]),
     }
 }

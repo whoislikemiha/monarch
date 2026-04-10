@@ -27,6 +27,8 @@ interface ManagedSession {
 }
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const LMSTUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1";
+const LMSTUDIO_DEFAULT_CONTEXT_WINDOW = 32000;
 const EMPTY_USAGE = {
 	input: 0,
 	output: 0,
@@ -79,27 +81,68 @@ function normalizeStoredAssistantContent(content: string): Array<Record<string, 
 }
 
 function buildDynamicModel(provider: string, modelId: string): Model<Api> | undefined {
-	if (provider !== "openrouter") {
-		return undefined;
+	if (provider === "openrouter") {
+		return {
+			id: modelId,
+			name: modelId,
+			api: "openai-completions",
+			provider,
+			baseUrl: OPENROUTER_BASE_URL,
+			reasoning: false,
+			input: ["text"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 128000,
+			maxTokens: 16384,
+		};
 	}
 
-	return {
-		id: modelId,
-		name: modelId,
-		api: "openai-completions",
-		provider,
-		baseUrl: OPENROUTER_BASE_URL,
-		reasoning: false,
-		input: ["text"],
-		cost: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-		},
-		contextWindow: 128000,
-		maxTokens: 16384,
-	};
+	if (provider === "lmstudio") {
+		return {
+			id: modelId,
+			name: modelId,
+			api: "openai-completions",
+			provider,
+			baseUrl: lmstudioBaseUrl(),
+			reasoning: false,
+			input: ["text"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: LMSTUDIO_DEFAULT_CONTEXT_WINDOW,
+			maxTokens: 4096,
+		};
+	}
+
+	return undefined;
+}
+
+function lmstudioBaseUrl(): string {
+	return process.env.LMSTUDIO_BASE_URL || LMSTUDIO_DEFAULT_BASE_URL;
+}
+
+/**
+ * LM Studio's OpenAI-compatible server ignores the API key, but pi-ai's
+ * openai-completions adapter requires one to be non-empty. Register the
+ * provider with a dummy key so authentication resolution succeeds.
+ */
+function ensureLmStudioProviderRegistered(session: AgentSession): void {
+	try {
+		session.modelRegistry.registerProvider("lmstudio", {
+			baseUrl: lmstudioBaseUrl(),
+			apiKey: "lm-studio",
+			api: "openai-completions",
+		} as Parameters<typeof session.modelRegistry.registerProvider>[1]);
+	} catch {
+		// Already registered or validation noop — safe to ignore.
+	}
 }
 
 function resolveModel(
@@ -154,6 +197,10 @@ export class RuntimeManager {
 			sessionManager: SessionManager.inMemory(cmd.cwd),
 			resourceLoader,
 		});
+
+		if (cmd.provider === "lmstudio") {
+			ensureLmStudioProviderRegistered(session);
+		}
 
 		// Resolve model from registry (supports known + custom models)
 		const model = resolveModel(session, cmd.provider, cmd.model);
@@ -282,6 +329,10 @@ export class RuntimeManager {
 	): Promise<void> {
 		const managed = this.getSession(agentId);
 		if (!managed) return;
+
+		if (provider === "lmstudio") {
+			ensureLmStudioProviderRegistered(managed.session);
+		}
 
 		const model = resolveModel(managed.session, provider, modelId);
 		if (!model) {
