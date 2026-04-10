@@ -12,7 +12,7 @@
   import {
     liveAgentStore,
     removeLiveState,
-  } from "./lib/toolbox/liveAgentStore";
+  } from "./lib/toolbox/liveAgentStore.svelte";
   import {
     persistOpenIds,
     persistWidth,

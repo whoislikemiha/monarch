@@ -23,7 +23,7 @@
     ensureLiveState,
     resetLiveState,
     emptyLiveState,
-  } from "./toolbox/liveAgentStore";
+  } from "./toolbox/liveAgentStore.svelte";
   import type { LiveAgentState } from "./toolbox/types";
 
   let {

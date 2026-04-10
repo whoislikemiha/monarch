@@ -33,6 +33,8 @@ dist/
 # Claude
 .claude/*
 !.claude/commands/
+.agents/
+skills-lock.json
 
 # Local Codex scratch files
 .codex
