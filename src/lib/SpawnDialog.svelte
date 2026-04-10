@@ -18,6 +18,10 @@
   let modelInput = $state("");
   let thinkingLevel = $state("off");
   let cwd = $state("/home/miha");
+  // LM Studio users must tell us what context length they loaded their model
+  // with — we can't detect it via the OpenAI-compatible API. Default is a
+  // conservative fallback that matches the sidecar's last-resort.
+  let lmStudioContextWindow = $state<number>(32000);
 
   // Shadow identity
   let shadowName = $state("");
@@ -305,6 +309,10 @@
       model,
       thinkingLevel: thinkingLevel !== "off" ? thinkingLevel : undefined,
       cwd: cwd || undefined,
+      contextWindow:
+        provider === "lmstudio" && lmStudioContextWindow > 0
+          ? Math.floor(lmStudioContextWindow)
+          : undefined,
     };
 
     // Attach shadow identity if a name is provided
@@ -469,6 +477,22 @@
       {:else if !fixedModelId && !modelsLoading && allModels.length === 0}
         <div class="field-hint">
           No models found for this provider.
+        </div>
+      {/if}
+      {#if selectedProvider === "lmstudio"}
+        <div class="lmstudio-context">
+          <label class="label" for="lmstudio-ctx">Context window (tokens)</label>
+          <input
+            id="lmstudio-ctx"
+            type="number"
+            min="1024"
+            step="1024"
+            bind:value={lmStudioContextWindow}
+            placeholder="e.g. 8192"
+          />
+          <div class="field-hint">
+            Set this to match the context length you loaded the model with in LM Studio. We can't auto-detect it.
+          </div>
         </div>
       {/if}
       {#if !fixedModelId && showDropdown && filteredModels().length > 0}
@@ -726,6 +750,17 @@
 
   .template-save-hint {
     color: var(--text-muted, #8f7aa8);
+  }
+
+  .lmstudio-context {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 8px;
+  }
+
+  .lmstudio-context input[type="number"] {
+    width: 140px;
   }
 
   .preset-grid {
