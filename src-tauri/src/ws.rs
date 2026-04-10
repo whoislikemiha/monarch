@@ -255,11 +255,11 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
         "save_agent_prompt" => {
             let agent_id = str_field(&args, "agentId")?;
             let prompt = str_field(&args, "prompt")?;
-            crate::persistence::ws_save_agent_prompt(agent_id, prompt)?;
+            crate::persistence::write_agent_prompt_file(&agent_id, &prompt)?;
             Ok(Value::Null)
         }
         "get_prompts_dir" => {
-            Ok(Value::String(crate::persistence::ws_get_prompts_dir()))
+            Ok(Value::String(crate::persistence::prompts_dir_string()))
         }
 
         // ---- DB: Agents ----
