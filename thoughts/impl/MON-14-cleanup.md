@@ -204,13 +204,19 @@ because they keep tightening the type system around the same call sites.
     replaced with a typed `SidecarCommand` serialized once. No more
     `unwrap_or("")` on event fields.
   - _Depends on MON-31_: handler returns will thread the new error type.
-- [ ] **MON-35** — Re-enable specta coverage for `spawn_agent`  · High · `refactor`
+- [ ] **MON-35** — Re-enable specta coverage for `spawn_agent`  · High · `refactor` — **PR open against phase-1 (2026-04-11)**
   - Done when: `spawn_agent` collapses its shadow + model fields into
     `SpawnAgentRequest`, fits under the 10-arg specta cap, is re-added to the
     command collection, and the `type Value = unknown; type Vec<T> = T[]`
     post-processing hack in `lib.rs` is deleted.
   - _Depends on MON-32_: the typed command surface is cleaner once the
     sidecar protocol is typed first.
+  - _Scope deviation:_ the `Value = unknown; Vec<T> = T[]` hack is **kept**,
+    not deleted. Empirical audit after regenerating bindings confirmed it is
+    still load-bearing for `respondExtensionUi`, `StreamingMessage`, and
+    `ToolExecution` (all via `serde_json::Value` in `LiveAgentState` and the
+    MON-32 typed sidecar protocol). Removing it is not within `spawn_agent`'s
+    blast radius. Follow-up item on the Wave 2 parking lot.
 - [ ] **MON-33** — Collapse `ws_*` duplication behind a shared service layer  · High · `refactor`
   - Done when: `#[tauri::command]` handlers and `ws_*` WebSocket counterparts
     both delegate to a single service-layer function per operation. Drift
@@ -454,6 +460,43 @@ about the shape left behind. -->
     same validation. Do not add `#[serde(default)]` to
     `SidecarCommand` agent_id fields — the `Value`-inject
     handles it cleanly and pollutes nothing.
+
+- **MON-35 — PR open against phase-1 (2026-04-11).** `spawn_agent` now
+  takes a single `SpawnAgentRequest` struct (+ the three state extractors),
+  fitting under specta's 10-arg `SpectaFn` cap and re-joining
+  `specta_builder`'s `collect_commands!`. `SpawnAgentRequest` is defined in
+  `agent.rs` with `Deserialize + specta::Type` and carries every prior
+  value param; the shadow identity nests into a sibling `ShadowSpec`
+  struct (`shadow_name/shadow_title/shadow_grade`) that maps 1:1 onto the
+  frontend's existing `ShadowIdentity` shape, so the nested `shadow` slot
+  flows through without a flatten/unflatten step. `ws_spawn_agent` takes
+  the same struct; `ws::dispatch_command`'s `"spawn_agent"` arm decodes
+  via a single `serde_json::from_value` instead of per-field
+  `str_field`/`opt_str` extraction. Bindings regenerated —
+  `commands.spawnAgent(req: SpawnAgentRequest)` is now typed on the
+  frontend, and both `App.svelte` sites (primary `createAgent` + lazy
+  restart) go through it. The two Wave 2 `too_many_arguments` clippy
+  warnings are gone. Full impl notes: `thoughts/impl/MON-35.md`.
+  - **Deviations from plan:** the `Value = unknown; Vec<T> = T[]` hack
+    **stays** — post-regeneration audit confirmed it is still referenced
+    by `respondExtensionUi`, `StreamingMessage`, and `ToolExecution` via
+    `serde_json::Value` in `LiveAgentState` and the typed sidecar
+    protocol. `ShadowSpec` keeps `shadow_name/title/grade` field names
+    (serializing to `shadowName/Title/Grade`) rather than the plan's
+    `name/title/grade` — this matches the frontend's existing
+    `ShadowIdentity` shape so the typed call site passes `config.shadow`
+    straight through.
+  - **Drive-by fix:** `ws_spawn_agent` previously hardcoded
+    `context_window: None`, silently dropping the caller's value on the
+    WS path. Collapsing to `SpawnAgentRequest` surfaced the
+    inconsistency; the WS path now mirrors the Tauri command's
+    restore-from-DB fallback. Flagged in the PR body.
+  - **Starting point for MON-33:** `spawn_agent` and `ws_spawn_agent`
+    are now close copies with identical `SpawnAgentRequest` args and
+    identical bodies (modulo the `state.` vs `mgr.` prefix and a couple
+    of `clone()` placements). That's the cleanest starting point for
+    collapsing the WS twin layer into a shared service function — which
+    is exactly what MON-33 wants.
 
 - **Wave 1 residue MON-31 encountered.** (Historical — MON-31 shipped
   2026-04-11, PR #24. Keeping the list for context on what MON-32 and
