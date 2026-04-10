@@ -398,6 +398,16 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
             Ok(Value::Null)
         }
 
+        // ---- Toolbox ----
+        "toolbox_list_tools" => {
+            let tools = crate::toolbox::ws_toolbox_list_tools();
+            serde_json::to_value(tools).map_err(|e| e.to_string())
+        }
+        "toolbox_placeholder_ping" => {
+            let result = crate::toolbox::placeholder::ws_toolbox_placeholder_ping()?;
+            Ok(Value::String(result))
+        }
+
         _ => Err(format!("Unknown command: {}", cmd)),
     }
 }

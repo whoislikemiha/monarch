@@ -351,19 +351,22 @@ App.svelte                       — root: agents[], activeId, session restore, 
 ├── SpawnDialog.svelte           — new agent: shadow identity + model picker
 ├── HistoryPanel.svelte          — session browser for a saved agent
 ├── CouncilView.svelte           — multi-agent broadcast mode
-└── AgentView.svelte             — main workspace per active agent
-    ├── AgentHeader.svelte       — name, model, shadow grade
-    ├── AgentControls.svelte     — thinking level, token/cost counter, abort
-    ├── MessageList.svelte       — rendered display items
-    │   ├── AssistantMessage.svelte  — text / thinking / tool call blocks
-    │   ├── ToolGroup.svelte         — groups of tool executions
-    │   └── ToolCallCard.svelte      — individual tool call + result
-    ├── ChatInput.svelte         — textarea, auto-resize, Enter to send
-    ├── PromptEditor.svelte      — modal to edit system prompt override
-    └── ExtensionDialog.svelte   — handles Pi extension UI requests
+├── AgentView.svelte             — main workspace per active agent
+│   ├── AgentHeader.svelte       — name, model, shadow grade
+│   ├── AgentControls.svelte     — thinking level, token/cost counter, abort
+│   ├── MessageList.svelte       — rendered display items
+│   │   ├── AssistantMessage.svelte  — text / thinking / tool call blocks
+│   │   ├── ToolGroup.svelte         — groups of tool executions
+│   │   └── ToolCallCard.svelte      — individual tool call + result
+│   ├── ChatInput.svelte         — textarea, auto-resize, Enter to send
+│   ├── PromptEditor.svelte      — modal to edit system prompt override
+│   └── ExtensionDialog.svelte   — handles Pi extension UI requests
+├── toolbox/ToolPanelStack.svelte — vertically stacked tool panels (resizable)
+└── toolbox/ToolRail.svelte      — right-edge vertical icon strip
 ```
 
-Shared types live in [`src/lib/types.ts`](./src/lib/types.ts).
+Shared types live in [`src/lib/types.ts`](./src/lib/types.ts). Toolbox types and
+the live-state store live in [`src/lib/toolbox/`](./src/lib/toolbox/).
 
 ### State flow (Svelte 5 runes)
 
@@ -374,28 +377,61 @@ let agents:       Agent[]              = $state([]);
 let activeId:     string | null        = $state(null);
 let savedAgents:  SavedAgentInfo[]     = $state([]);
 let councilMode:  boolean              = $state(false);
-let agentViewStates: Map<string, AgentViewState> = $state(new Map());
+let openToolIds:  string[]             = $state(restoreOpenIds());
+let toolboxWidth: number               = $state(restoreWidth());
 ```
 
-Per-agent view state is snapshotted into `agentViewStates` on unmount and restored on remount — so switching between agents doesn't rebuild the message list from scratch. See the `persistCurrentViewState()` / `getCachedState()` helpers in `AgentView.svelte`.
+Per-agent live conversation state (items, tool executions, streaming message,
+etc.) lives in [`src/lib/toolbox/liveAgentStore.ts`](./src/lib/toolbox/liveAgentStore.ts)
+— a module-level `$state({ byAgent: Map })`. AgentView writes to and reads
+from the store exclusively, so the state survives the `{#key activeAgent.viewKey}`
+remount and is visible to toolbox tools via `AgentContext.live`.
 
-Per-agent (`AgentView.svelte`):
-
-```ts
-let items:            DisplayItem[]              = $state([]);
-let streamingMessage: AssistantMessage | null    = $state(null);
-let isStreaming:      boolean                    = $state(false);
-let toolExecutions:   Map<string, ToolExecution> = $state(new Map());
-let lastUsage:        Usage | undefined          = $state(undefined);
-```
+Per-agent `AgentView.svelte` keeps only genuinely UI-local state (streaming
+flag, extension request, showStderr, modal open flags, listener handles).
 
 Event flow from backend to UI:
 
 1. Svelte calls `invoke("send_command", …)`.
 2. Rust → sidecar → Pi → Pi events → Rust.
 3. Rust persists to SQLite and emits `agent-event-{agentId}` on the Tauri event bus.
-4. `AgentView` listens on that topic and mutates `items` / `streamingMessage` / `toolExecutions`.
-5. Svelte's reactivity re-renders.
+4. `AgentView` listens on that topic and writes to `liveAgentStore.byAgent.get(id)`.
+5. Svelte's reactivity re-renders `AgentView` and any open toolbox tool.
+
+### Adding a toolbox tool
+
+The toolbox is a pluggable registry. Adding a tool = editing one registry file
+plus creating one Svelte component. If the tool needs backend access, a typed
+Tauri command is added alongside.
+
+1. **Create the component** at `src/lib/toolbox/tools/YourTool.svelte`. It must
+   accept exactly `{ agentContext }: ToolProps` — the import is
+   `import type { ToolProps } from "../types";`. Derive display from
+   `agentContext` reactively. `agentContext.live` exposes `items`,
+   `toolExecutions`, `streamingMessage`, `lastUsage`, `currentToolGroup`,
+   `activityStatus`, `eventCount` for the active agent.
+2. **Register it** by appending a `ToolDefinition` entry to
+   [`src/lib/toolbox/registry.ts`](./src/lib/toolbox/registry.ts) with a stable
+   `id`, human `title`, inline SVG `icon` string, the imported component, and
+   an optional `order` (lower = higher on the rail).
+3. **(Optional) Backend commands.** Create
+   `src-tauri/src/toolbox/your_tool.rs` with typed Tauri commands following
+   the placeholder pattern (`#[tauri::command]` wrapper + `ws_*` wrapper
+   calling a shared inner fn). Declare the submodule in
+   `src-tauri/src/toolbox/mod.rs`, add the commands to the `invoke_handler!`
+   in `src-tauri/src/lib.rs`, and add matching match arms to
+   `ws::dispatch_command` in `src-tauri/src/ws.rs`. Add a `ToolDescriptor`
+   to the list returned by `toolbox::descriptors()`.
+4. **Never import `@tauri-apps/api` directly** from a tool. All `invoke`
+   calls go through [`src/lib/api.ts`](./src/lib/api.ts) so the Tauri webview
+   and the WS browser bridge both work.
+
+**Tool-author constraint (important).** Toolbox tools stay mounted across
+agent switches — intentionally, to avoid remount flicker. Any state a tool
+keeps locally (expanded sections, scroll position, filter selections) will
+appear to leak from one agent to the next. If your tool needs per-agent
+memory, key that state by `agentContext.agentId` inside the component; the
+framework will not remount on agent switch.
 
 ---
 
@@ -514,6 +550,9 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `db.rs` | SQLite schema, CRUD, ancestry walk. |
 | `models.rs` | Provider discovery, model listing, auth status. |
 | `persistence.rs` | Prompt file I/O under `~/.config/monarch/prompts/`. |
+| `toolbox/mod.rs` | Toolbox `ToolDescriptor` list, `toolbox_list_tools` command. |
+| `toolbox/placeholder.rs` | Placeholder tool's `toolbox_placeholder_ping` command. |
+| `ws.rs` | WebSocket bridge for browser-hosted UI (mirrors the Tauri command set). |
 
 ### Sidecar — [`sidecar/src/`](./sidecar/src/)
 
@@ -546,6 +585,14 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `lib/ChatInput.svelte` | Message composer. |
 | `lib/PromptEditor.svelte` | System prompt override dialog. |
 | `lib/ExtensionDialog.svelte` | Handles Pi extension UI requests. |
+| `lib/api.ts` | Unified `invoke` / `listen` wrapper — Tauri or WebSocket. |
+| `lib/toolbox/types.ts` | `ToolDefinition`, `ToolProps`, `AgentContext`, `LiveAgentState`. |
+| `lib/toolbox/registry.ts` | The `TOOLS` array — edit to add a tool. |
+| `lib/toolbox/liveAgentStore.ts` | Shared per-agent live-state store (`byAgent` Map). |
+| `lib/toolbox/persistence.ts` | localStorage helpers for rail width + open ids. |
+| `lib/toolbox/ToolRail.svelte` | Right-edge vertical icon strip. |
+| `lib/toolbox/ToolPanelStack.svelte` | Stacked panel region left of the rail. |
+| `lib/toolbox/tools/PlaceholderTool.svelte` | Sample tool exercising the full store + backend path. |
 
 ### Config
 
