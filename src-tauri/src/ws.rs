@@ -222,11 +222,9 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
             Ok(Value::Null)
         }
         "respond_extension_ui" => {
-            let agent_id = str_field(&args, "agentId")?;
-            let request_id = str_field(&args, "requestId")?;
-            let value = args.get("value").cloned().unwrap_or(Value::Null);
+            let req: crate::agent::ExtensionUiResponseRequest = serde_json::from_value(args)?;
             let app = state.agent_mgr.get_app_handle()?;
-            state.agent_mgr.respond_extension_ui(&app, &state.db, agent_id, request_id, value)?;
+            state.agent_mgr.respond_extension_ui(&app, &state.db, req)?;
             Ok(Value::Null)
         }
         "detect_project" => {

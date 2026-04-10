@@ -918,10 +918,13 @@ impl AgentManager {
         &self,
         app: &AppHandle,
         db: &Arc<Database>,
-        agent_id: String,
-        request_id: String,
-        value: serde_json::Value,
+        req: ExtensionUiResponseRequest,
     ) -> Result<(), MonarchError> {
+        let ExtensionUiResponseRequest {
+            agent_id,
+            request_id,
+            value,
+        } = req;
         let cmd = SidecarCommand::ExtensionUiResponse {
             agent_id,
             request_id,
@@ -1609,6 +1612,20 @@ pub struct SpawnAgentRequest {
     pub context_window: Option<i32>,
 }
 
+/// Request payload for the `respond_extension_ui` Tauri command. MON-33 folds
+/// the three scattered `agent_id` / `request_id` / `value` args into a single
+/// typed struct so both the IPC and WS transports decode the same shape.
+/// `value` stays `serde_json::Value` because the extension UI contract is
+/// intentionally open-ended — different widget kinds return different payloads
+/// and the sidecar is the ultimate authority on shape validation.
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionUiResponseRequest {
+    pub agent_id: String,
+    pub request_id: String,
+    pub value: serde_json::Value,
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn spawn_agent(
@@ -1741,10 +1758,8 @@ pub fn respond_extension_ui(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
-    agent_id: String,
-    request_id: String,
-    value: serde_json::Value,
+    req: ExtensionUiResponseRequest,
 ) -> Result<(), MonarchError> {
-    state.respond_extension_ui(&app, &db, agent_id, request_id, value)
+    state.respond_extension_ui(&app, &db, req)
 }
 
