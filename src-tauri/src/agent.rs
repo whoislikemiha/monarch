@@ -18,6 +18,9 @@ use crate::agent_state::{
 use crate::db::{AgentRow, Database, MessageRow, ProjectRow};
 use crate::error::{lock_poisoned, MonarchError};
 use crate::persistence::read_agent_prompt_file;
+use crate::sidecar_protocol::{
+    apply_event, InnerEvent, LoadSessionMessage, ShadowConfig, SidecarCommand, SidecarEvent,
+};
 use std::path::{Path, PathBuf};
 
 /// Debounce window for streaming `message_update` events. Token-rate chunks
@@ -53,8 +56,10 @@ pub struct AgentState {
     pub thinking_level: Option<String>,
     pub is_streaming: bool,
     pub session_id: String,
-    /// The original create_session JSON, replayed on sidecar crash recovery
-    pub create_cmd_json: String,
+    /// The original create_session command, replayed on sidecar crash
+    /// recovery. Typed `SidecarCommand::CreateSession` since MON-32 — the
+    /// recovery resend path serializes once via `serde_json::to_string`.
+    pub create_cmd: SidecarCommand,
 }
 
 /// Shared agent→session mapping, accessible from both Tauri commands and the reader thread.
@@ -465,7 +470,9 @@ impl AgentManager {
 
         for (agent_id, state) in &agents_snapshot {
             // Replay the original create_session command (includes cwd, shadow, etc.)
-            let _ = self.send_to_sidecar(&state.create_cmd_json);
+            if let Ok(json) = serde_json::to_string(&state.create_cmd) {
+                let _ = self.send_to_sidecar(&json);
+            }
 
             // Replay session context from SQLite
             let messages_opt = if let Some(session_id) = session_snapshot.get(agent_id) {
@@ -476,27 +483,22 @@ impl AgentManager {
 
             if let Some(messages) = &messages_opt {
                 if !messages.is_empty() {
-                    let msg_array: Vec<serde_json::Value> = messages
-                        .iter()
-                        .filter(|m| {
-                            m.role == "user"
-                                || m.role == "assistant"
-                                || m.role == "toolResult"
-                        })
-                        .map(|m| {
-                            serde_json::json!({
-                                "role": m.role,
-                                "content": m.content,
-                                "model": m.model,
+                    let load_cmd = SidecarCommand::LoadSession {
+                        agent_id: agent_id.clone(),
+                        messages: messages
+                            .iter()
+                            .filter(|m| {
+                                m.role == "user"
+                                    || m.role == "assistant"
+                                    || m.role == "toolResult"
                             })
-                        })
-                        .collect();
-
-                    let load_cmd = serde_json::json!({
-                        "type": "load_session",
-                        "agentId": agent_id,
-                        "messages": msg_array,
-                    });
+                            .map(|m| LoadSessionMessage {
+                                role: m.role.clone(),
+                                content: m.content.clone(),
+                                model: m.model.clone(),
+                            })
+                            .collect(),
+                    };
                     if let Ok(json) = serde_json::to_string(&load_cmd) {
                         let _ = self.send_to_sidecar(&json);
                     }
@@ -701,7 +703,12 @@ async fn handle_sidecar_event(
     ws_tx: &broadcast::Sender<WsBroadcast>,
     line: &str,
 ) {
-    let parsed: serde_json::Value = match serde_json::from_str(line) {
+    // MON-32: parse twice — once as raw Value (for byte-fidelity LogEvent
+    // storage of the inner event) and once as typed SidecarEvent for
+    // dispatch. The Value clone is O(line-size), trivial for a JSONL line.
+    // Typed-parse failures flow through mark_agent_desynced the same way
+    // the pre-MON-32 malformed-envelope branch did.
+    let raw_value: serde_json::Value = match serde_json::from_str(line) {
         Ok(v) => v,
         Err(e) => {
             eprintln!(
@@ -711,14 +718,28 @@ async fn handle_sidecar_event(
             return;
         }
     };
+    let typed_event: SidecarEvent = match serde_json::from_value(raw_value.clone()) {
+        Ok(ev) => ev,
+        Err(e) => {
+            eprintln!(
+                "[monarch] Failed to decode sidecar event: {} — line: {}",
+                e, line
+            );
+            if let Some(agent_id) = raw_value.get("agentId").and_then(|a| a.as_str()) {
+                if !agent_id.is_empty() {
+                    mark_agent_desynced(app, ws_tx, live_states, agent_id).await;
+                }
+            }
+            return;
+        }
+    };
 
-    let event_type = parsed.get("type").and_then(|t| t.as_str()).unwrap_or("");
-    let agent_id = parsed.get("agentId").and_then(|a| a.as_str()).unwrap_or("");
-
-    match event_type {
-        "session_ready" => {
+    match typed_event {
+        SidecarEvent::SessionReady {
+            agent_id,
+            context_window,
+        } => {
             let event_name = format!("agent-event-{}", agent_id);
-            let context_window = parsed.get("contextWindow").and_then(|v| v.as_i64());
             let ready_event = serde_json::json!({
                 "type": "session_ready",
                 "agentId": agent_id,
@@ -727,7 +748,7 @@ async fn handle_sidecar_event(
             emit_event(app, ws_tx, &event_name, &ready_event.to_string());
         }
 
-        "session_destroyed" => {
+        SidecarEvent::SessionDestroyed { agent_id } => {
             let exit_event = format!("agent-exit-{}", agent_id);
             emit_event(
                 app,
@@ -736,7 +757,7 @@ async fn handle_sidecar_event(
                 &serde_json::json!(null).to_string(),
             );
             // Clear the live state for this agent so a fresh session starts clean.
-            if let Some(entry) = live_states.get(agent_id).map(|e| e.clone()) {
+            if let Some(entry) = live_states.get(&agent_id).map(|e| e.clone()) {
                 // MON-30: bump before acquiring the write lock. If a debounce
                 // task is already queued on the lock, it will observe the new
                 // generation after handoff and bail; if it's still in its
@@ -757,22 +778,29 @@ async fn handle_sidecar_event(
             }
         }
 
-        "event" => {
-            let inner_event = match parsed.get("event") {
-                Some(e) => e,
-                None => {
-                    // Malformed sidecar line: an "event" envelope with no
-                    // inner event. Surface via the dev-only desync indicator.
-                    if !agent_id.is_empty() {
-                        mark_agent_desynced(app, ws_tx, live_states, agent_id).await;
-                    }
-                    return;
+        SidecarEvent::Event {
+            agent_id,
+            event: inner_event,
+        } => {
+            // Flip desync and stop here if the sidecar shipped an event type
+            // the Rust side doesn't recognize. Pre-MON-32 this fell through
+            // the `apply_event` catch-all; keeping it explicit here lets
+            // `build_persist_commands` skip the typed match on Unknown and
+            // gives us a place to log the raw payload for forensics.
+            if let InnerEvent::Unknown { raw } = &inner_event {
+                eprintln!(
+                    "[monarch] Unknown sidecar inner event for {}: {}",
+                    agent_id, raw
+                );
+                if !agent_id.is_empty() {
+                    mark_agent_desynced(app, ws_tx, live_states, &agent_id).await;
                 }
-            };
-            let inner_type = inner_event
-                .get("type")
-                .and_then(|t| t.as_str())
-                .unwrap_or("");
+                // Still forward the raw event to the legacy channel so the
+                // existing frontend sees it — keeps Phase-1 behavior intact.
+                let event_name = format!("agent-event-{}", agent_id);
+                emit_event(app, ws_tx, &event_name, &raw.to_string());
+                return;
+            }
 
             // MON-37: enqueue persistence work on the single-consumer mpsc
             // pipeline. Session id is resolved on the producer side so the
@@ -780,8 +808,9 @@ async fn handle_sidecar_event(
             // even if the session map mutates between enqueue and apply.
             // `send().await` intentionally back-pressures the reader if the
             // consumer is lagging — that is the point of a bounded channel.
-            let session_id = get_session_id(session_map, agent_id);
-            for cmd in build_persist_commands(agent_id, session_id, inner_type, inner_event) {
+            let session_id = get_session_id(session_map, &agent_id);
+            let inner_raw = raw_value.get("event");
+            for cmd in build_persist_commands(&agent_id, session_id, &inner_event, inner_raw) {
                 if persist_tx.send(cmd).await.is_err() {
                     eprintln!("[monarch] persist consumer closed, dropping event");
                     break;
@@ -792,42 +821,41 @@ async fn handle_sidecar_event(
             // existing frontend (which still assembles from these events)
             // keeps working unchanged. Phase 2 removes the subscriber; the
             // follow-up issue removes this emit.
-            let event_name = format!("agent-event-{}", agent_id);
-            emit_event(app, ws_tx, &event_name, &inner_event.to_string());
+            if let Some(inner_raw) = raw_value.get("event") {
+                let event_name = format!("agent-event-{}", agent_id);
+                emit_event(app, ws_tx, &event_name, &inner_raw.to_string());
+            }
 
             // Apply the event to per-agent LiveAgentState and decide whether
             // to emit a snapshot now, debounce it, or skip.
-            apply_and_maybe_emit(
-                app,
-                ws_tx,
-                live_states,
-                agent_id,
-                inner_event,
-            )
-            .await;
+            apply_and_maybe_emit(app, ws_tx, live_states, &agent_id, &inner_event).await;
         }
 
-        "extension_ui_request" => {
+        SidecarEvent::ExtensionUiRequest { agent_id } => {
             let event_name = format!("agent-event-{}", agent_id);
             emit_event(app, ws_tx, &event_name, line);
         }
 
-        "error" => {
-            let error_msg = parsed
-                .get("error")
-                .and_then(|e| e.as_str())
-                .unwrap_or("Unknown error");
-            eprintln!("[monarch] Sidecar error for {}: {}", agent_id, error_msg);
+        SidecarEvent::Error { agent_id, error } => {
+            eprintln!("[monarch] Sidecar error for {}: {}", agent_id, error);
             let event_name = format!("agent-event-{}", agent_id);
             let error_event = serde_json::json!({
                 "type": "sidecar_error",
-                "error": error_msg,
+                "error": error,
             });
             emit_event(app, ws_tx, &event_name, &error_event.to_string());
         }
 
-        _ => {
-            eprintln!("[monarch] Unknown sidecar event type: {}", event_type);
+        SidecarEvent::Unknown { raw } => {
+            // Envelope-level unknown — the sidecar shipped a top-level
+            // message type the Rust side doesn't recognize. Flip desync for
+            // any agent id we can pluck out of the raw payload; otherwise
+            // just log.
+            let agent_id = raw.get("agentId").and_then(|a| a.as_str()).unwrap_or("");
+            eprintln!("[monarch] Unknown sidecar envelope: {}", raw);
+            if !agent_id.is_empty() {
+                mark_agent_desynced(app, ws_tx, live_states, agent_id).await;
+            }
         }
     }
 }
@@ -863,15 +891,16 @@ async fn try_consume_debounce_snapshot(
     Some(snapshot)
 }
 
-/// Route one inner event through `LiveAgentState::apply_event` and emit a
-/// snapshot on `agent-state-{id}` per the returned `ApplyOutcome`. No guard
-/// is held across the emit or across any await other than the lock acquire.
+/// Route one typed inner event through the free `apply_event` in
+/// `sidecar_protocol` and emit a snapshot on `agent-state-{id}` per the
+/// returned `ApplyOutcome`. No guard is held across the emit or across any
+/// await other than the lock acquire.
 async fn apply_and_maybe_emit(
     app: &AppHandle,
     ws_tx: &broadcast::Sender<WsBroadcast>,
     live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
     agent_id: &str,
-    inner_event: &serde_json::Value,
+    inner_event: &InnerEvent,
 ) {
     if agent_id.is_empty() {
         return;
@@ -886,7 +915,7 @@ async fn apply_and_maybe_emit(
     // EmitNow branch: clone inside the guard, then drop(guard) before emit so
     // serialization runs without the RwLock write guard held (MON-38).
     let mut guard = entry.inner.write().await;
-    let outcome = guard.state.apply_event(inner_event);
+    let outcome = apply_event(&mut guard.state, inner_event);
 
     let snapshot_to_emit: Option<LiveAgentState> = match outcome {
         ApplyOutcome::NoOp => None,
@@ -1041,19 +1070,26 @@ impl PersistCommand {
 /// known. Session id is resolved on the producer side, so the command
 /// carries its own `Option<String>` — ordering guarantees would be
 /// meaningless if the consumer re-resolved after a later mutation.
+///
+/// `inner_raw` is the raw `Value` payload of the inner event envelope,
+/// used for byte-fidelity storage in `LogEvent.data`. Taking the raw
+/// alongside the typed `InnerEvent` sidesteps the need for `Serialize`
+/// on `InnerEvent::Unknown { raw }` (which would be a custom impl) and
+/// preserves exact wire bytes for debugging.
 fn build_persist_commands(
     agent_id: &str,
     session_id: Option<String>,
-    event_type: &str,
-    event: &serde_json::Value,
+    event: &InnerEvent,
+    inner_raw: Option<&serde_json::Value>,
 ) -> Vec<PersistCommand> {
     let mut cmds: Vec<PersistCommand> = Vec::with_capacity(2);
 
-    let data = serde_json::to_string(event).ok();
+    let event_type = inner_event_tag(event).to_string();
+    let data = inner_raw.and_then(|v| serde_json::to_string(v).ok());
     cmds.push(PersistCommand::LogEvent {
         agent_id: agent_id.to_string(),
         session_id: session_id.clone(),
-        event_type: event_type.to_string(),
+        event_type,
         data,
     });
 
@@ -1061,77 +1097,61 @@ fn build_persist_commands(
         return cmds;
     };
 
-    match event_type {
-        "message_end" => {
-            if let Some(message) = event.get("message") {
-                let role = message
-                    .get("role")
-                    .and_then(|r| r.as_str())
-                    .unwrap_or("unknown");
-                let content = if let Some(content) = message.get("content") {
-                    serde_json::to_string(content).unwrap_or_default()
-                } else {
-                    String::new()
-                };
-                let model = message
-                    .get("model")
-                    .and_then(|m| m.as_str())
-                    .map(String::from);
+    match event {
+        InnerEvent::MessageEnd { message } => {
+            let role = if message.role.is_empty() {
+                "unknown".to_string()
+            } else {
+                message.role.clone()
+            };
+            let content = message
+                .content
+                .as_ref()
+                .map(|c| serde_json::to_string(c).unwrap_or_default())
+                .unwrap_or_default();
+            let model = message.model.clone();
+            let (tokens, cost) = match &message.usage {
+                Some(u) => (u.total_tokens as i32, u.cost.total),
+                None => (0, 0.0),
+            };
 
-                let usage = message.get("usage");
-                let tokens = usage
-                    .and_then(|u| u.get("totalTokens"))
-                    .and_then(|t| t.as_i64())
-                    .unwrap_or(0) as i32;
-                let cost = usage
-                    .and_then(|u| u.get("cost"))
-                    .and_then(|c| c.as_f64())
-                    .or_else(|| {
-                        usage
-                            .and_then(|u| u.get("cost"))
-                            .and_then(|c| c.get("total"))
-                            .and_then(|t| t.as_f64())
-                    })
-                    .unwrap_or(0.0);
-
-                cmds.push(PersistCommand::SaveAssistantMessage {
-                    agent_id: agent_id.to_string(),
-                    message: MessageRow {
-                        id: 0,
-                        session_id,
-                        role: role.to_string(),
-                        content,
-                        model,
-                        tokens,
-                        cost,
-                        timestamp: chrono_now(),
-                    },
-                });
-            }
+            cmds.push(PersistCommand::SaveAssistantMessage {
+                agent_id: agent_id.to_string(),
+                message: MessageRow {
+                    id: 0,
+                    session_id,
+                    role,
+                    content,
+                    model,
+                    tokens,
+                    cost,
+                    timestamp: chrono_now(),
+                },
+            });
         }
-        "tool_execution_end" => {
-            let tool_call_id = event
-                .get("toolCallId")
-                .and_then(|n| n.as_str())
-                .unwrap_or("");
-            let tool_name = event
-                .get("toolName")
-                .and_then(|n| n.as_str())
-                .unwrap_or("unknown");
-            let result = event
-                .get("result")
+        InnerEvent::ToolExecutionEnd {
+            tool_call_id,
+            tool_name,
+            result,
+            is_error,
+        } => {
+            // Preserve pre-MON-32 storage shape: `toolName` defaulted to
+            // "unknown" when the sidecar didn't include it, and the stored
+            // `result` field was the *stringified* value, not the raw
+            // JSON value — the outer serde_json::json! call wrapped an
+            // already-stringified payload. Keep that byte-for-byte to
+            // avoid breaking historical row parsing.
+            let tool_name = tool_name.clone().unwrap_or_else(|| "unknown".to_string());
+            let result_str = result
+                .as_ref()
                 .map(|r| serde_json::to_string(r).unwrap_or_default())
                 .unwrap_or_default();
-            let is_error = event
-                .get("isError")
-                .and_then(|e| e.as_bool())
-                .unwrap_or(false);
 
             let content = serde_json::json!({
                 "toolCallId": tool_call_id,
                 "toolName": tool_name,
-                "result": result,
-                "isError": is_error,
+                "result": result_str,
+                "isError": *is_error,
             })
             .to_string();
 
@@ -1153,6 +1173,29 @@ fn build_persist_commands(
     }
 
     cmds
+}
+
+/// Stable snake_case tag for an `InnerEvent`, used by `LogEvent.event_type`
+/// so the persisted shape matches the pre-MON-32 string dispatch.
+fn inner_event_tag(event: &InnerEvent) -> &'static str {
+    match event {
+        InnerEvent::AgentStart => "agent_start",
+        InnerEvent::AgentEnd => "agent_end",
+        InnerEvent::TurnStart => "turn_start",
+        InnerEvent::TurnEnd => "turn_end",
+        InnerEvent::MessageStart { .. } => "message_start",
+        InnerEvent::MessageUpdate { .. } => "message_update",
+        InnerEvent::MessageEnd { .. } => "message_end",
+        InnerEvent::ToolExecutionStart { .. } => "tool_execution_start",
+        InnerEvent::ToolExecutionEnd { .. } => "tool_execution_end",
+        InnerEvent::CompactionStart { .. } => "compaction_start",
+        InnerEvent::CompactionEnd { .. } => "compaction_end",
+        InnerEvent::AutoRetryStart { .. } => "auto_retry_start",
+        InnerEvent::AutoRetryEnd => "auto_retry_end",
+        InnerEvent::QueueUpdate => "queue_update",
+        InnerEvent::ToolExecutionUpdate => "tool_execution_update",
+        InnerEvent::Unknown { .. } => "unknown",
+    }
 }
 
 /// MON-37: the single-consumer persistence task. Drains the bounded mpsc
@@ -1421,32 +1464,30 @@ pub fn spawn_agent(
 
     // Build create_session command
     let shadow = if shadow_name.is_some() || shadow_title.is_some() || shadow_grade.is_some() {
-        Some(serde_json::json!({
-            "name": shadow_name.as_deref().unwrap_or("Shadow"),
-            "title": shadow_title.as_deref().unwrap_or("Shadow Soldier"),
-            "grade": shadow_grade.as_deref().unwrap_or("Knight"),
-            "id": &id,
-        }))
+        Some(ShadowConfig {
+            name: shadow_name.clone().unwrap_or_else(|| "Shadow".to_string()),
+            title: shadow_title.clone().unwrap_or_else(|| "Shadow Soldier".to_string()),
+            grade: shadow_grade.clone().unwrap_or_else(|| "Knight".to_string()),
+            id: id.clone(),
+        })
     } else {
         None
     };
 
-    let cmd = serde_json::json!({
-        "type": "create_session",
-        "agentId": id,
-        "cwd": effective_cwd,
-        "provider": provider.as_deref().unwrap_or("anthropic"),
-        "model": model.as_deref().unwrap_or("claude-sonnet-4-5"),
-        "thinkingLevel": thinking_level.as_deref().unwrap_or("medium"),
-        "shadow": shadow,
-        "customPrompt": read_agent_prompt_file(&id)?
+    let cmd = SidecarCommand::CreateSession {
+        agent_id: id.clone(),
+        cwd: effective_cwd.to_string(),
+        provider: provider.clone().unwrap_or_else(|| "anthropic".to_string()),
+        model: model.clone().unwrap_or_else(|| "claude-sonnet-4-5".to_string()),
+        thinking_level: thinking_level.clone().unwrap_or_else(|| "medium".to_string()),
+        shadow,
+        custom_prompt: read_agent_prompt_file(&id)?
             .filter(|prompt| !prompt.trim().is_empty()),
-        "projectInstructions": project_instructions,
-        "contextWindow": effective_context_window,
-    });
+        project_instructions,
+        context_window: effective_context_window,
+    };
 
-    let json = serde_json::to_string(&cmd)?;
-    state.send_to_sidecar(&json)?;
+    state.send_to_sidecar(&serde_json::to_string(&cmd)?)?;
 
     // Track agent state with the full create command for crash recovery
     let mut agents = state.agents.lock().map_err(lock_poisoned("agents"))?;
@@ -1459,7 +1500,7 @@ pub fn spawn_agent(
             thinking_level,
             is_streaming: false,
             session_id,
-            create_cmd_json: json,
+            create_cmd: cmd,
         },
     );
 
@@ -1475,15 +1516,19 @@ pub fn send_command(
     id: String,
     command_json: String,
 ) -> Result<(), MonarchError> {
-    let mut cmd: serde_json::Value =
-        serde_json::from_str(&command_json)?;
-
-    if let Some(obj) = cmd.as_object_mut() {
+    // MON-32: narrow typed passthrough. Parse the frontend's payload as a
+    // Value, inject `agentId`, then re-deserialize into SidecarCommand so
+    // the shape is validated against the canonical wire contract. Any
+    // payload that doesn't fit a known variant hits serde_json::Error →
+    // MonarchError::Serde and propagates to the frontend — no silent
+    // escape hatch. The one-shot-to-Value pre-pass lets the frontend omit
+    // agentId without bloating every variant with #[serde(default)].
+    let mut value: serde_json::Value = serde_json::from_str(&command_json)?;
+    if let Some(obj) = value.as_object_mut() {
         obj.insert("agentId".to_string(), serde_json::Value::String(id));
     }
-
-    let json = serde_json::to_string(&cmd)?;
-    state.send_with_recovery(&app, &db, &json)
+    let cmd: SidecarCommand = serde_json::from_value(value)?;
+    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
 }
 
 #[tauri::command]
@@ -1493,12 +1538,8 @@ pub fn kill_agent(
     id: String,
     _graceful: Option<bool>,
 ) -> Result<(), MonarchError> {
-    let cmd = serde_json::json!({
-        "type": "destroy_session",
-        "agentId": id,
-    });
-    let json = serde_json::to_string(&cmd)?;
-    let _ = state.send_to_sidecar(&json);
+    let cmd = SidecarCommand::DestroySession { agent_id: id.clone() };
+    let _ = state.send_to_sidecar(&serde_json::to_string(&cmd)?);
 
     // Clean up state
     let mut agents = state.agents.lock().map_err(lock_poisoned("agents"))?;
@@ -1581,26 +1622,20 @@ pub fn load_session_context(
     }
 
     // Convert to sidecar format — include all message types for full context
-    let msg_array: Vec<serde_json::Value> = messages
-        .iter()
-        .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
-        .map(|m| {
-            serde_json::json!({
-                "role": m.role,
-                "content": m.content,
-                "model": m.model,
+    let cmd = SidecarCommand::LoadSession {
+        agent_id,
+        messages: messages
+            .iter()
+            .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
+            .map(|m| LoadSessionMessage {
+                role: m.role.clone(),
+                content: m.content.clone(),
+                model: m.model.clone(),
             })
-        })
-        .collect();
+            .collect(),
+    };
 
-    let cmd = serde_json::json!({
-        "type": "load_session",
-        "agentId": agent_id,
-        "messages": msg_array,
-    });
-
-    let json = serde_json::to_string(&cmd)?;
-    state.send_with_recovery(&app, &db, &json)
+    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
 }
 
 /// Create a new session for an existing agent.
@@ -1678,12 +1713,8 @@ pub fn new_agent_session(
     }
 
     // Tell the sidecar to reset its in-memory session
-    let cmd = serde_json::json!({
-        "type": "new_session",
-        "agentId": agent_id,
-    });
-    let json = serde_json::to_string(&cmd)?;
-    state.send_with_recovery(&app, &db, &json)
+    let cmd = SidecarCommand::NewSession { agent_id };
+    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
 }
 
 /// Switch an agent to an existing persisted session instead of creating a new one.
@@ -1725,12 +1756,8 @@ pub fn switch_agent_session(
         }
     }
 
-    let cmd = serde_json::json!({
-        "type": "new_session",
-        "agentId": agent_id,
-    });
-    let json = serde_json::to_string(&cmd)?;
-    state.send_with_recovery(&app, &db, &json)
+    let cmd = SidecarCommand::NewSession { agent_id };
+    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
 }
 
 /// Forward extension UI response from frontend to sidecar
@@ -1744,14 +1771,12 @@ pub fn respond_extension_ui(
     request_id: String,
     value: serde_json::Value,
 ) -> Result<(), MonarchError> {
-    let cmd = serde_json::json!({
-        "type": "extension_ui_response",
-        "agentId": agent_id,
-        "requestId": request_id,
-        "value": value,
-    });
-    let json = serde_json::to_string(&cmd)?;
-    state.send_with_recovery(&app, &db, &json)
+    let cmd = SidecarCommand::ExtensionUiResponse {
+        agent_id,
+        request_id,
+        value,
+    };
+    state.send_with_recovery(&app, &db, &serde_json::to_string(&cmd)?)
 }
 
 // ---- WebSocket wrappers ----
@@ -1816,30 +1841,29 @@ pub fn ws_spawn_agent(
     }
 
     let shadow = if shadow_name.is_some() || shadow_title.is_some() || shadow_grade.is_some() {
-        Some(serde_json::json!({
-            "name": shadow_name.as_deref().unwrap_or("Shadow"),
-            "title": shadow_title.as_deref().unwrap_or("Shadow Soldier"),
-            "grade": shadow_grade.as_deref().unwrap_or("Knight"),
-            "id": &id,
-        }))
+        Some(ShadowConfig {
+            name: shadow_name.clone().unwrap_or_else(|| "Shadow".to_string()),
+            title: shadow_title.clone().unwrap_or_else(|| "Shadow Soldier".to_string()),
+            grade: shadow_grade.clone().unwrap_or_else(|| "Knight".to_string()),
+            id: id.clone(),
+        })
     } else {
         None
     };
 
-    let cmd = serde_json::json!({
-        "type": "create_session",
-        "agentId": id,
-        "cwd": effective_cwd,
-        "provider": provider.as_deref().unwrap_or("anthropic"),
-        "model": model.as_deref().unwrap_or("claude-sonnet-4-5"),
-        "thinkingLevel": thinking_level.as_deref().unwrap_or("medium"),
-        "shadow": shadow,
-        "customPrompt": read_agent_prompt_file(&id)?.filter(|p| !p.trim().is_empty()),
-        "projectInstructions": project_instructions,
-    });
+    let cmd = SidecarCommand::CreateSession {
+        agent_id: id.clone(),
+        cwd: effective_cwd.to_string(),
+        provider: provider.clone().unwrap_or_else(|| "anthropic".to_string()),
+        model: model.clone().unwrap_or_else(|| "claude-sonnet-4-5".to_string()),
+        thinking_level: thinking_level.clone().unwrap_or_else(|| "medium".to_string()),
+        shadow,
+        custom_prompt: read_agent_prompt_file(&id)?.filter(|p| !p.trim().is_empty()),
+        project_instructions,
+        context_window: None,
+    };
 
-    let json = serde_json::to_string(&cmd)?;
-    mgr.send_to_sidecar(&json)?;
+    mgr.send_to_sidecar(&serde_json::to_string(&cmd)?)?;
 
     let mut agents = mgr.agents.lock().map_err(lock_poisoned("agents"))?;
     agents.insert(id, AgentState {
@@ -1849,7 +1873,7 @@ pub fn ws_spawn_agent(
         thinking_level,
         is_streaming: false,
         session_id,
-        create_cmd_json: json,
+        create_cmd: cmd,
     });
 
     Ok(())
@@ -1862,18 +1886,18 @@ pub fn ws_send_command(
     command_json: String,
 ) -> Result<(), MonarchError> {
     let app = mgr.get_app_handle()?;
-    let mut cmd: serde_json::Value = serde_json::from_str(&command_json)?;
-    if let Some(obj) = cmd.as_object_mut() {
+    // MON-32: narrow typed passthrough, see send_command for rationale.
+    let mut value: serde_json::Value = serde_json::from_str(&command_json)?;
+    if let Some(obj) = value.as_object_mut() {
         obj.insert("agentId".to_string(), serde_json::Value::String(id));
     }
-    let json = serde_json::to_string(&cmd)?;
-    mgr.send_with_recovery(&app, db, &json)
+    let cmd: SidecarCommand = serde_json::from_value(value)?;
+    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
 }
 
 pub fn ws_kill_agent(mgr: &AgentManager, id: String) -> Result<(), MonarchError> {
-    let cmd = serde_json::json!({ "type": "destroy_session", "agentId": id });
-    let json = serde_json::to_string(&cmd)?;
-    let _ = mgr.send_to_sidecar(&json);
+    let cmd = SidecarCommand::DestroySession { agent_id: id.clone() };
+    let _ = mgr.send_to_sidecar(&serde_json::to_string(&cmd)?);
     let mut agents = mgr.agents.lock().map_err(lock_poisoned("agents"))?;
     agents.remove(&id);
     drop(agents);
@@ -1893,13 +1917,19 @@ pub fn ws_load_session_context(
     let app = mgr.get_app_handle()?;
     let messages = db.get_messages_with_ancestry(&source_session_id)?;
     if messages.is_empty() { return Ok(()); }
-    let msg_array: Vec<serde_json::Value> = messages.iter()
-        .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
-        .map(|m| serde_json::json!({ "role": m.role, "content": m.content, "model": m.model }))
-        .collect();
-    let cmd = serde_json::json!({ "type": "load_session", "agentId": agent_id, "messages": msg_array });
-    let json = serde_json::to_string(&cmd)?;
-    mgr.send_with_recovery(&app, db, &json)
+    let cmd = SidecarCommand::LoadSession {
+        agent_id,
+        messages: messages
+            .iter()
+            .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
+            .map(|m| LoadSessionMessage {
+                role: m.role.clone(),
+                content: m.content.clone(),
+                model: m.model.clone(),
+            })
+            .collect(),
+    };
+    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
 }
 
 pub fn ws_new_agent_session(
@@ -1941,9 +1971,8 @@ pub fn ws_new_agent_session(
         let mut map = mgr.session_map.lock().map_err(lock_poisoned("session map"))?;
         map.insert(agent_id.clone(), new_session_id);
     }
-    let cmd = serde_json::json!({ "type": "new_session", "agentId": agent_id });
-    let json = serde_json::to_string(&cmd)?;
-    mgr.send_with_recovery(&app, db, &json)
+    let cmd = SidecarCommand::NewSession { agent_id };
+    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
 }
 
 pub fn ws_switch_agent_session(
@@ -1975,9 +2004,8 @@ pub fn ws_switch_agent_session(
             agent.session_id = session_id.clone();
         }
     }
-    let cmd = serde_json::json!({ "type": "new_session", "agentId": agent_id });
-    let json = serde_json::to_string(&cmd)?;
-    mgr.send_with_recovery(&app, db, &json)
+    let cmd = SidecarCommand::NewSession { agent_id };
+    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
 }
 
 pub fn ws_respond_extension_ui(
@@ -1988,14 +2016,12 @@ pub fn ws_respond_extension_ui(
     value: serde_json::Value,
 ) -> Result<(), MonarchError> {
     let app = mgr.get_app_handle()?;
-    let cmd = serde_json::json!({
-        "type": "extension_ui_response",
-        "agentId": agent_id,
-        "requestId": request_id,
-        "value": value,
-    });
-    let json = serde_json::to_string(&cmd)?;
-    mgr.send_with_recovery(&app, db, &json)
+    let cmd = SidecarCommand::ExtensionUiResponse {
+        agent_id,
+        request_id,
+        value,
+    };
+    mgr.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
 }
 
 pub fn ws_detect_project(db: &Arc<Database>, cwd: String) -> Result<Option<serde_json::Value>, MonarchError> {
