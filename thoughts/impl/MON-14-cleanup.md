@@ -87,7 +87,7 @@ and have no cross-dependencies beyond Wave 0.
   - Done when: a killed or destroyed agent cannot emit a stale snapshot from
     a still-running debounce task. Generation / cancelled flag or `Notify`
     drop — whichever is cheaper.
-- [ ] **MON-36** — Sidecar process lifecycle: `Drop` impl and `ExitRequested` hook  · High · `Bug`
+- [ ] **MON-36** — Sidecar process lifecycle: `Drop` impl and `ExitRequested` hook  · High · `Bug` — _In review (branch based on Phase 1)_
   - Done when: Tauri shutdown or panic unwind terminates the Node sidecar.
     Verified by killing the app mid-stream and observing no orphan `node`
     process.
@@ -141,6 +141,27 @@ and have no cross-dependencies beyond Wave 0.
   the three `guard.state` / `guard.dirty` / `guard.debounce_handle` fields
   now live on the inner struct but with identical names, so the body of
   each guarded block is unchanged.
+
+- MON-36 PR: https://github.com/whoislikemiha/monarch/pull/21 — wires sidecar teardown into the
+  Tauri exit path. Key observation that shrank the diff: the sidecar's
+  `index.ts` already has `rl.on("close", shutdown)` wired to
+  `manager.disposeAll()` + `process.exit(0)`, so closing stdin *is* the
+  graceful-shutdown protocol. No new `SidecarCommand::Shutdown` wire type
+  added (would have pre-touched the types Wave 2 / MON-32 is refactoring).
+  Structure: (1) `stdin_tx` moved to `Mutex<Option<UnboundedSender>>` so
+  the shutdown path can drop it from outside the `Arc`; `write_command`
+  now returns a clean `"sidecar stdin closed"` error instead of a raw
+  `SendError` if it races shutdown. (2) `impl Drop for SidecarProcess`
+  via `Mutex::get_mut()` → `try_wait` → `start_kill` covers panic unwind.
+  (3) `AgentManager::shutdown_sidecar(timeout)` is a sync
+  graceful-then-hard teardown: take sidecar `Arc` out of the slot, drop
+  stdin sender, `std::thread::sleep(25ms)` poll `try_wait` up to 1500ms,
+  `start_kill` on deadline. Sync so the Tauri `RunEvent::ExitRequested`
+  closure in `lib.rs` calls it directly without `block_on`. `lib.rs`
+  switches `.run(ctx)` → `.build(ctx).expect(..).run(closure)` to get the
+  `RunEvent` callback. `cargo check`, `cargo clippy` (no new warnings —
+  same 3 pre-existing from MON-30), `cargo build` clean. Manual smoke
+  pending.
 
 ---
 
