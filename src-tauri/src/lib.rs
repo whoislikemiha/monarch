@@ -146,7 +146,7 @@ pub fn run() {
     }
 
     let database = Arc::new(Database::new().expect("Failed to initialize database"));
-    let agent_mgr = Arc::new(AgentManager::new());
+    let agent_mgr = Arc::new(AgentManager::new(database.clone()));
     let model_cache = Arc::new(ModelCache::new());
 
     // Clones for the WS server
