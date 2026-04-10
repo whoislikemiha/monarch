@@ -483,6 +483,25 @@
         viewingSavedAgent = savedAgents.find(s => s.id === saved.id) || null;
       }}
       oneditproject={(project) => { editingProject = project; }}
+      onsavetemplate={async (source) => {
+        const now = new Date().toISOString();
+        const template = {
+          id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: source.name,
+          provider: source.provider ?? null,
+          model: source.model ?? null,
+          thinkingLevel: source.thinkingLevel ?? null,
+          cwd: source.cwd ?? null,
+          shadowName: source.shadow?.shadowName ?? source.name,
+          shadowTitle: source.shadow?.shadowTitle ?? null,
+          shadowGrade: source.shadow?.shadowGrade ?? null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        try {
+          await invoke("db_save_agent_template", { template });
+        } catch {}
+      }}
     />
   {/if}
   <div class="main-panel">

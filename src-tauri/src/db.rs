@@ -105,6 +105,20 @@ impl Database {
                 timestamp TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS agent_templates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider TEXT,
+                model TEXT,
+                thinking_level TEXT,
+                cwd TEXT,
+                shadow_name TEXT,
+                shadow_title TEXT,
+                shadow_grade TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id);
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
             CREATE INDEX IF NOT EXISTS idx_memories_agent ON memories(agent_id);
@@ -201,6 +215,22 @@ pub struct MessageRow {
     pub tokens: i32,
     pub cost: f64,
     pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTemplateRow {
+    pub id: String,
+    pub name: String,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub thinking_level: Option<String>,
+    pub cwd: Option<String>,
+    pub shadow_name: Option<String>,
+    pub shadow_title: Option<String>,
+    pub shadow_grade: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -783,6 +813,83 @@ pub fn db_delete_project(db: tauri::State<'_, Arc<Database>>, project_id: String
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ---- Tauri Commands: Agent Templates ----
+
+#[tauri::command]
+pub fn db_list_agent_templates(
+    db: tauri::State<'_, Arc<Database>>,
+) -> Result<Vec<AgentTemplateRow>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, provider, model, thinking_level, cwd, shadow_name, shadow_title, shadow_grade, created_at, updated_at
+             FROM agent_templates ORDER BY updated_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(AgentTemplateRow {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                provider: row.get(2)?,
+                model: row.get(3)?,
+                thinking_level: row.get(4)?,
+                cwd: row.get(5)?,
+                shadow_name: row.get(6)?,
+                shadow_title: row.get(7)?,
+                shadow_grade: row.get(8)?,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_save_agent_template(
+    db: tauri::State<'_, Arc<Database>>,
+    template: AgentTemplateRow,
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO agent_templates (id, name, provider, model, thinking_level, cwd, shadow_name, shadow_title, shadow_grade, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+         ON CONFLICT(id) DO UPDATE SET
+           name=excluded.name,
+           provider=excluded.provider,
+           model=excluded.model,
+           thinking_level=excluded.thinking_level,
+           cwd=excluded.cwd,
+           shadow_name=excluded.shadow_name,
+           shadow_title=excluded.shadow_title,
+           shadow_grade=excluded.shadow_grade,
+           updated_at=datetime('now')",
+        params![
+            template.id, template.name, template.provider, template.model,
+            template.thinking_level, template.cwd, template.shadow_name,
+            template.shadow_title, template.shadow_grade,
+            template.created_at, template.updated_at,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn db_delete_agent_template(
+    db: tauri::State<'_, Arc<Database>>,
+    template_id: String,
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM agent_templates WHERE id = ?1",
+        params![template_id],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 

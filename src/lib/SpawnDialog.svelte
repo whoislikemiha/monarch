@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
-  import type { AgentConfig, Project, ShadowGrade } from "./types";
+  import type { AgentConfig, AgentTemplate, Project, ShadowGrade } from "./types";
   import { SHADOW_GRADES } from "./types";
 
   let {
@@ -25,13 +26,26 @@
 
   const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
+  // LM Studio runs on the user's localhost, so it's only reachable from the
+  // Tauri desktop app — not from a browser dev context.
+  const isTauri = typeof (window as any).__TAURI_INTERNALS__ !== "undefined";
+
   const providers = [
     { label: "Anthropic", value: "anthropic" },
     { label: "OpenAI Codex", value: "openai-codex" },
     { label: "OpenRouter", value: "openrouter" },
+    ...(isTauri ? [{ label: "LM Studio", value: "lmstudio" }] : []),
   ];
 
+  // Providers whose model lists are fetched over the network and benefit
+  // from an explicit refresh action.
+  const REFRESHABLE_PROVIDERS = new Set(["openrouter", "lmstudio"]);
+
   let selectedProvider = $state("openrouter");
+
+  // Agent templates
+  let templates: AgentTemplate[] = $state([]);
+  let saveAsTemplate = $state(false);
 
   // Model list from backend
   interface ModelInfo {
@@ -57,6 +71,8 @@
 
   let allModels: ModelInfo[] = $state([]);
   let modelsLoading = $state(false);
+  let modelsError: string | null = $state(null);
+  let modelFetchToken = 0;
   let authLoading = $state(false);
   let authStatus: ProviderAuthStatus | null = $state(null);
   let detectedProject: DetectedProject | null = $state(null);
@@ -91,24 +107,39 @@
   };
 
   async function fetchModels(provider: string) {
+    const token = ++modelFetchToken;
     modelsLoading = true;
+    modelsError = null;
     try {
-      allModels = await invoke<ModelInfo[]>("get_models", { provider });
-    } catch {
-      // Tauri not available (browser mode) — try direct fetch for OpenRouter, else fallback
-      if (provider === "openrouter") {
-        try {
-          const resp = await fetch("https://openrouter.ai/api/v1/models");
-          const json = await resp.json();
-          allModels = json.data.map((m: any) => ({ id: m.id, name: m.name, provider: "openrouter" }));
-        } catch {
-          allModels = [];
-        }
+      const fetched = await invoke<ModelInfo[]>("get_models", { provider });
+      if (token !== modelFetchToken) return; // stale — provider changed
+      allModels = fetched;
+    } catch (err) {
+      if (token !== modelFetchToken) return;
+      const message = err instanceof Error ? err.message : String(err);
+      if (isTauri) {
+        // Real backend error — surface it to the user (common for LM Studio).
+        modelsError = message;
+        allModels = [];
       } else {
-        allModels = FALLBACK_MODELS[provider] || [];
+        // Tauri unavailable (browser mode) — use fallbacks so the dev UI still works.
+        if (provider === "openrouter") {
+          try {
+            const resp = await fetch("https://openrouter.ai/api/v1/models");
+            const json = await resp.json();
+            allModels = json.data.map((m: any) => ({ id: m.id, name: m.name, provider: "openrouter" }));
+          } catch {
+            allModels = [];
+          }
+        } else {
+          allModels = FALLBACK_MODELS[provider] || [];
+        }
+      }
+    } finally {
+      if (token === modelFetchToken) {
+        modelsLoading = false;
       }
     }
-    modelsLoading = false;
   }
 
   async function fetchAuthStatus(provider: string) {
@@ -121,6 +152,66 @@
     authLoading = false;
   }
 
+  async function loadTemplates() {
+    if (!isTauri) return;
+    try {
+      templates = await invoke<AgentTemplate[]>("db_list_agent_templates");
+    } catch {
+      templates = [];
+    }
+  }
+
+  onMount(() => {
+    loadTemplates();
+  });
+
+  function applyTemplate(t: AgentTemplate) {
+    if (t.provider) selectedProvider = t.provider;
+    // The provider $effect resets modelInput, so defer model + other fields
+    // until after the current microtask so they stick.
+    queueMicrotask(() => {
+      if (t.model) modelInput = t.model;
+      if (t.thinkingLevel) thinkingLevel = t.thinkingLevel;
+      if (t.cwd) cwd = t.cwd;
+      shadowName = t.shadowName ?? "";
+      shadowTitle = t.shadowTitle ?? "";
+      if (t.shadowGrade) shadowGrade = t.shadowGrade as ShadowGrade;
+    });
+  }
+
+  async function persistCurrentAsTemplate() {
+    const name = shadowName.trim();
+    if (!name || !isTauri) return;
+    const now = new Date().toISOString();
+    const template: AgentTemplate = {
+      id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      provider: selectedProvider,
+      model: (fixedModelId || modelInput.trim()) || null,
+      thinkingLevel,
+      cwd: cwd || null,
+      shadowName: name,
+      shadowTitle: shadowTitle.trim() || null,
+      shadowGrade,
+      createdAt: now,
+      updatedAt: now,
+    };
+    try {
+      await invoke("db_save_agent_template", { template });
+    } catch {
+      // Swallow — spawning should not block on template save failures.
+    }
+  }
+
+  async function deleteTemplate(id: string, e: MouseEvent) {
+    e.stopPropagation();
+    if (!isTauri) return;
+    try {
+      await invoke("db_delete_agent_template", { templateId: id });
+      await loadTemplates();
+    } catch {}
+  }
+
   async function detectProject(path: string) {
     try {
       detectedProject = await invoke<DetectedProject | null>("detect_project", { cwd: path });
@@ -131,12 +222,21 @@
 
   // Fetch models when provider changes
   $effect(() => {
-    fetchModels(selectedProvider);
-    fetchAuthStatus(selectedProvider);
+    const provider = selectedProvider;
+    // Reset UI state first so no stale list/highlight bleeds in from the
+    // previous provider before the new fetch resolves.
+    allModels = [];
+    modelsError = null;
     modelInput = fixedModelId || "";
     showDropdown = false;
     highlightedIndex = -1;
+    fetchModels(provider);
+    fetchAuthStatus(provider);
   });
+
+  function refreshModels() {
+    fetchModels(selectedProvider);
+  }
 
   // Detect project when cwd changes
   $effect(() => {
@@ -191,7 +291,11 @@
     }
   }
 
-  function handleSpawn() {
+  async function handleSpawn() {
+    if (saveAsTemplate && shadowName.trim()) {
+      await persistCurrentAsTemplate();
+    }
+
     const trimmed = modelInput.trim();
     const provider = selectedProvider;
     const model = fixedModelId || trimmed || undefined;
@@ -246,6 +350,33 @@
   >
     <h2>Extract Shadow</h2>
 
+    {#if templates.length > 0}
+      <div class="section">
+        <span class="label">Templates</span>
+        <div class="template-chips">
+          {#each templates as t (t.id)}
+            <button
+              class="template-chip"
+              onclick={() => applyTemplate(t)}
+              title={`${t.provider ?? "?"} / ${t.model ?? "?"}`}
+              type="button"
+            >
+              <span class="template-chip-name">{t.name}</span>
+              <!-- svelte-ignore a11y_consider_explicit_label -->
+              <span
+                class="template-chip-del"
+                onclick={(e) => deleteTemplate(t.id, e)}
+                onkeydown={(e) => { if (e.key === "Enter") deleteTemplate(t.id, e as unknown as MouseEvent); }}
+                role="button"
+                tabindex="0"
+                title="Delete template"
+              >×</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     <div class="section">
       <span class="label">Provider</span>
       <div class="preset-grid">
@@ -293,7 +424,15 @@
           type="text"
           bind:this={modelInputEl}
           bind:value={modelInput}
-          placeholder={fixedModelId ? "Uses your Pi Codex login" : modelsLoading ? "Loading models..." : "Search models..."}
+          placeholder={fixedModelId
+            ? "Uses your Pi Codex login"
+            : modelsLoading
+              ? "Loading models..."
+              : modelsError
+                ? "Provider unreachable — see hint below"
+                : allModels.length === 0
+                  ? "No models available"
+                  : "Search models..."}
           readonly={!!fixedModelId}
           onfocus={() => { if (!fixedModelId) showDropdown = true; }}
           onblur={() => setTimeout(() => (showDropdown = false), 200)}
@@ -303,11 +442,33 @@
         />
         {#if modelsLoading}
           <span class="loading-indicator"></span>
+        {:else if !fixedModelId && REFRESHABLE_PROVIDERS.has(selectedProvider)}
+          <button
+            class="refresh-btn"
+            onmousedown={(e: MouseEvent) => { e.preventDefault(); refreshModels(); }}
+            title="Refresh model list"
+            type="button"
+          >
+            ↻
+          </button>
         {/if}
       </div>
       {#if fixedModelId}
         <div class="field-hint">
           Uses Pi's existing `openai-codex` auth and locks this provider to GPT-5.4.
+        </div>
+      {/if}
+      {#if !fixedModelId && modelsError}
+        <div class="model-error">
+          <span class="model-error-label">Can't reach provider</span>
+          <span class="model-error-text">{modelsError}</span>
+          <button class="model-error-retry" onclick={refreshModels} type="button">
+            Retry
+          </button>
+        </div>
+      {:else if !fixedModelId && !modelsLoading && allModels.length === 0}
+        <div class="field-hint">
+          No models found for this provider.
         </div>
       {/if}
       {#if !fixedModelId && showDropdown && filteredModels().length > 0}
@@ -415,6 +576,20 @@
       </div>
     </div>
 
+    {#if isTauri}
+      <label class="template-save-check" title={shadowName.trim() ? "" : "Set a shadow name to enable"}>
+        <input
+          type="checkbox"
+          bind:checked={saveAsTemplate}
+          disabled={!shadowName.trim()}
+        />
+        <span>Save as template</span>
+        {#if saveAsTemplate && shadowName.trim()}
+          <span class="template-save-hint">&middot; uses "{shadowName.trim()}" as the name</span>
+        {/if}
+      </label>
+    {/if}
+
     <div class="actions">
       <button class="btn-cancel" onclick={oncancel}>Cancel</button>
       <button class="btn-spawn" onclick={handleSpawn}>
@@ -473,6 +648,84 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+
+  .template-chips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .template-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px 4px 10px;
+    border: 1px solid var(--border-subtle, #35274f);
+    border-radius: 999px;
+    background: var(--bg-panel-2, #201734);
+    color: var(--text-secondary, #dde1e6);
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .template-chip:hover {
+    background: var(--bg-panel-3, #2a1e45);
+    border-color: rgba(190, 149, 255, 0.4);
+  }
+
+  .template-chip-name {
+    color: var(--text-primary, #f2f4f8);
+  }
+
+  .template-chip-del {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    color: var(--text-muted, #8f7aa8);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .template-chip-del:hover {
+    background: rgba(255, 120, 120, 0.15);
+    color: #ffb4b4;
+  }
+
+  .template-save-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-secondary, #dde1e6);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .template-save-check input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+    accent-color: var(--accent-purple, #be95ff);
+    cursor: pointer;
+  }
+
+  .template-save-check input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+  }
+
+  .template-save-check input[type="checkbox"]:disabled + span {
+    color: var(--text-muted, #8f7aa8);
+  }
+
+  .template-save-hint {
+    color: var(--text-muted, #8f7aa8);
   }
 
   .preset-grid {
@@ -646,6 +899,74 @@
 
   @keyframes spin {
     to { transform: translateY(-50%) rotate(360deg); }
+  }
+
+  .refresh-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--border-subtle, #35274f);
+    border-radius: 4px;
+    background: var(--bg-panel-2, #201734);
+    color: var(--text-secondary, #dde1e6);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .refresh-btn:hover {
+    background: var(--bg-panel-3, #2a1e45);
+    color: var(--accent-purple, #be95ff);
+  }
+
+  .model-error {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 120, 120, 0.4);
+    background: rgba(64, 20, 20, 0.45);
+  }
+
+  .model-error-label {
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #ffb4b4;
+  }
+
+  .model-error-text {
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--text-secondary, #dde1e6);
+    overflow-wrap: anywhere;
+  }
+
+  .model-error-retry {
+    align-self: flex-start;
+    margin-top: 4px;
+    padding: 4px 10px;
+    border: 1px solid rgba(255, 180, 180, 0.5);
+    border-radius: 4px;
+    background: transparent;
+    color: #ffb4b4;
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+  }
+
+  .model-error-retry:hover {
+    background: rgba(255, 180, 180, 0.1);
   }
 
   .model-dropdown {

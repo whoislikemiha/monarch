@@ -47,6 +47,10 @@ pub fn run() {
             db::db_save_memory,
             db::db_get_memories,
             db::db_log_event,
+            // Agent templates
+            db::db_list_agent_templates,
+            db::db_save_agent_template,
+            db::db_delete_agent_template,
             // Projects
             db::db_upsert_project,
             db::db_get_projects,

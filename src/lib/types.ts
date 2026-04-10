@@ -68,6 +68,22 @@ export interface SessionRecord {
   messageCount?: number;
 }
 
+// Reusable spawn preset — captures the fields SpawnDialog exposes so
+// users can one-click-prefill the dialog instead of refilling each time.
+export interface AgentTemplate {
+  id: string;
+  name: string;
+  provider?: string | null;
+  model?: string | null;
+  thinkingLevel?: string | null;
+  cwd?: string | null;
+  shadowName?: string | null;
+  shadowTitle?: string | null;
+  shadowGrade?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // Agent spawn config
 export interface AgentConfig {
   provider?: string;
