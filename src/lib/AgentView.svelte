@@ -5,6 +5,7 @@
   import ChatInput from "./ChatInput.svelte";
   import AgentControls from "./AgentControls.svelte";
   import AgentHeader from "./AgentHeader.svelte";
+  import ContextInspector from "./ContextInspector.svelte";
   import ExtensionDialog from "./ExtensionDialog.svelte";
   import PromptEditor from "./PromptEditor.svelte";
   import HistoryPanel from "./HistoryPanel.svelte";
@@ -48,6 +49,7 @@
   let pendingSourceSessionId: string | undefined = $state(undefined);
   let showPromptEditor = $state(false);
   let showHistory = $state(false);
+  let showContextInspector = $state(false);
   let currentToolGroup: { kind: "tool-group"; executions: ToolExecution[]; turnComplete: boolean } | null = $state(null);
 
   let unlistenEvent: UnlistenFn | undefined;
@@ -656,6 +658,7 @@
     pendingSourceSessionId = undefined;
     showPromptEditor = false;
     showHistory = false;
+    showContextInspector = false;
     currentToolGroup = null;
     activityStatus = "";
     eventCount = 0;
@@ -788,6 +791,7 @@
   });
 </script>
 
+<div class="agent-view-wrapper">
 <div class="agent-view">
   {#if showCompactError}
     <!-- Compact error view — no chat, just the error and actions -->
@@ -890,6 +894,7 @@
         sessionStats={agent.sessionStats}
         onabort={abort}
         onthinking={setThinkingLevel}
+        oncontextinspect={() => (showContextInspector = !showContextInspector)}
       />
       <ChatInput
         onsend={sendPrompt}
@@ -898,6 +903,17 @@
       />
     </div>
   {/if}
+</div>
+
+{#if showContextInspector}
+  <ContextInspector
+    {items}
+    {lastUsage}
+    contextWindow={agent.contextWindow}
+    sessionStats={agent.sessionStats}
+    onclose={() => (showContextInspector = false)}
+  />
+{/if}
 </div>
 
 {#if pendingExtensionRequest}
@@ -982,6 +998,14 @@
 {/if}
 
 <style>
+  .agent-view-wrapper {
+    flex: 1;
+    display: flex;
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+
   .agent-view {
     flex: 1;
     display: flex;
