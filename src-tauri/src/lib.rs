@@ -55,6 +55,7 @@ pub fn run() {
             agent::spawn_agent,
             agent::send_command,
             agent::kill_agent,
+            agent::get_agent_state,
             agent::load_session_context,
             agent::new_agent_session,
             agent::switch_agent_session,

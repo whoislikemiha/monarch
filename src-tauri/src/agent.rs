@@ -1,15 +1,30 @@
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::broadcast;
+use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
+use tokio::process::{Child as TokioChild, Command as TokioCommand};
+use tokio::sync::{broadcast, mpsc, RwLock};
 
+type TaskHandle = tauri::async_runtime::JoinHandle<()>;
+
+use crate::agent_state::{
+    display_items_from_messages, ApplyOutcome, DisplayItem, LiveAgentState,
+};
 use crate::db::{AgentRow, Database, MessageRow, ProjectRow};
 use crate::persistence::read_agent_prompt_file;
 use std::path::{Path, PathBuf};
+
+/// Debounce window for streaming `message_update` events. Token-rate chunks
+/// would otherwise clone + serialize the full snapshot per token; 16ms caps
+/// the emit rate at ~60fps which is visually equivalent and ~10x cheaper on
+/// token-heavy turns. Terminal events (message_end, tool_execution_end, etc.)
+/// bypass this and flush immediately so perceived "done" transitions stay
+/// latency-free.
+const DEBOUNCE_MILLIS: u64 = 16;
 
 /// A broadcast event sent to WebSocket clients
 #[derive(Debug, Clone, Serialize)]
@@ -44,32 +59,64 @@ pub struct AgentState {
 type AgentSessionMap = Arc<Mutex<HashMap<String, String>>>;
 
 // ---- Sidecar process management ----
+//
+// MON-14 Phase 1 moves the sidecar onto `tokio::process`. The stdout reader is
+// async (tokio task) so per-agent state assembly can `.await` locks cleanly.
+// The write path stays synchronous from the caller's POV: Tauri command
+// handlers are still sync functions and call `write_command(json)` which
+// enqueues on an unbounded mpsc channel drained by a dedicated writer task.
+// This avoids the "convert tokio::ChildStdin into std::ChildStdin" dance while
+// keeping MON-14's blast radius on the read side. The follow-up issue (MON-27)
+// migrates the command handlers themselves to async.
 
 #[allow(dead_code)]
 struct SidecarProcess {
-    child: Mutex<Child>,
-    stdin: Mutex<std::process::ChildStdin>,
+    /// Kept so we can observe liveness via `try_wait()` and kill on shutdown.
+    child: Mutex<TokioChild>,
+    /// Sync send into the dedicated writer task. Dropping this closes the
+    /// channel, which stops the writer task and closes the pipe.
+    stdin_tx: mpsc::UnboundedSender<String>,
 }
 
 impl SidecarProcess {
     fn write_command(&self, json: &str) -> Result<(), String> {
-        let mut stdin = self.stdin.lock().map_err(|e| e.to_string())?;
-        stdin.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
-        if !json.ends_with('\n') {
-            stdin.write_all(b"\n").map_err(|e| e.to_string())?;
+        let mut line = json.to_string();
+        if !line.ends_with('\n') {
+            line.push('\n');
         }
-        stdin.flush().map_err(|e| e.to_string())?;
-        Ok(())
+        self.stdin_tx
+            .send(line)
+            .map_err(|e| format!("sidecar writer closed: {}", e))
     }
 }
 
 // ---- Agent Manager (manages sidecar + agent state) ----
 
+/// Per-agent live state entry. Holds the assembled `LiveAgentState` plus the
+/// debounce coalescing state used by the reader task. Kept separate from the
+/// wire type so `LiveAgentState` stays purely data.
+#[derive(Default)]
+pub struct AgentStateEntry {
+    pub state: LiveAgentState,
+    /// Set true by `message_update`; cleared when the debounce task fires and
+    /// emits. Gives the debounce task a way to skip redundant emits if a
+    /// terminal event already flushed since the timer was armed.
+    pub dirty: bool,
+    /// In-flight debounce task, if any. Aborted + taken by terminal events
+    /// so they can flush immediately without racing the timer.
+    pub debounce_handle: Option<TaskHandle>,
+}
+
 pub struct AgentManager {
     sidecar: Mutex<Option<Arc<SidecarProcess>>>,
     agents: Mutex<HashMap<String, AgentState>>,
-    /// agentId → sessionId mapping, shared with the reader thread
+    /// agentId → sessionId mapping, shared with the reader task
     session_map: AgentSessionMap,
+    /// Per-agent assembled state, owned by this Rust process and emitted on
+    /// `agent-state-{id}`. Outer DashMap is sync-friendly; inner RwLock is
+    /// tokio-native because the reader task is async. Entries are lazily
+    /// created on first event for an agent.
+    live_states: Arc<DashMap<String, Arc<RwLock<AgentStateEntry>>>>,
     /// Broadcast channel for forwarding events to WebSocket clients
     pub ws_broadcast: broadcast::Sender<WsBroadcast>,
     /// Stored AppHandle for WS-initiated commands that need sidecar access
@@ -83,6 +130,7 @@ impl AgentManager {
             sidecar: Mutex::new(None),
             agents: Mutex::new(HashMap::new()),
             session_map: Arc::new(Mutex::new(HashMap::new())),
+            live_states: Arc::new(DashMap::new()),
             ws_broadcast,
             app_handle: Mutex::new(None),
         }
@@ -110,78 +158,142 @@ impl AgentManager {
     ) -> Result<Arc<SidecarProcess>, String> {
         let mut sidecar_lock = self.sidecar.lock().map_err(|e| e.to_string())?;
 
-        // Check if existing sidecar is still alive
+        // Check if existing sidecar is still alive. `tokio::process::Child::try_wait`
+        // is synchronous and does not require a runtime context, so this is safe
+        // to call from a sync Tauri command handler.
         if let Some(ref sc) = *sidecar_lock {
-            let still_alive = sc.child.lock()
+            let still_alive = sc
+                .child
+                .lock()
                 .ok()
                 .and_then(|mut c| c.try_wait().ok())
-                .map(|status| status.is_none()) // None = still running
+                .map(|status| status.is_none())
                 .unwrap_or(false);
             if still_alive {
                 return Ok(sc.clone());
             }
-            // Dead — clear it so we respawn below
             eprintln!("[monarch] Sidecar process died, respawning...");
             *sidecar_lock = None;
         }
 
-        // Resolve sidecar path
         let sidecar_script = resolve_sidecar_path()?;
 
-        let mut cmd = Command::new("node");
-        cmd.arg(&sidecar_script);
-        cmd.stdin(Stdio::piped())
+        let mut cmd = TokioCommand::new("node");
+        cmd.arg(&sidecar_script)
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .kill_on_drop(false);
 
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;
 
-        let stdout = child.stdout.take().ok_or("Failed to capture sidecar stdout")?;
-        let stderr = child.stderr.take().ok_or("Failed to capture sidecar stderr")?;
-        let stdin = child.stdin.take().ok_or("Failed to capture sidecar stdin")?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("Failed to capture sidecar stdout")?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or("Failed to capture sidecar stderr")?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or("Failed to capture sidecar stdin")?;
+
+        // Writer task: drains the mpsc and writes each line to the tokio
+        // ChildStdin. Sync callers enqueue via `stdin_tx.send(..)`.
+        let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<String>();
+        tauri::async_runtime::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let mut stdin = stdin;
+            while let Some(line) = stdin_rx.recv().await {
+                if let Err(e) = stdin.write_all(line.as_bytes()).await {
+                    eprintln!("[monarch] Sidecar stdin write failed: {}", e);
+                    break;
+                }
+                if let Err(e) = stdin.flush().await {
+                    eprintln!("[monarch] Sidecar stdin flush failed: {}", e);
+                    break;
+                }
+            }
+            eprintln!("[monarch] Sidecar writer task exited");
+        });
 
         let sc = Arc::new(SidecarProcess {
             child: Mutex::new(child),
-            stdin: Mutex::new(stdin),
+            stdin_tx,
         });
 
-        // Stdout reader thread — parse sidecar JSONL events
+        // Stdout reader task: async loop, one line → one handle_sidecar_event.
+        // Owns clones of everything the handler needs; no `self` captured.
         let app_clone = app.clone();
         let db_clone = db.clone();
         let session_map_clone = self.session_map.clone();
+        let live_states_clone = self.live_states.clone();
         let ws_tx = self.ws_broadcast.clone();
-        thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines() {
-                match line {
-                    Ok(line) if !line.is_empty() => {
-                        handle_sidecar_event(&app_clone, &db_clone, &session_map_clone, &ws_tx, &line);
+        tauri::async_runtime::spawn(async move {
+            let mut lines = TokioBufReader::new(stdout).lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) if !line.is_empty() => {
+                        handle_sidecar_event(
+                            &app_clone,
+                            &db_clone,
+                            &session_map_clone,
+                            &live_states_clone,
+                            &ws_tx,
+                            &line,
+                        )
+                        .await;
                     }
-                    Ok(_) => {}
-                    Err(_) => break,
+                    Ok(Some(_)) => {}
+                    Ok(None) => break,
+                    Err(e) => {
+                        eprintln!("[monarch] Sidecar stdout read error: {}", e);
+                        break;
+                    }
                 }
             }
             eprintln!("[monarch] Sidecar stdout closed");
         });
 
-        // Stderr reader thread — log diagnostics
-        thread::spawn(move || {
-            let reader = BufReader::new(stderr);
-            for line in reader.lines() {
-                match line {
-                    Ok(line) if !line.is_empty() => {
-                        eprintln!("[sidecar] {}", line);
-                    }
-                    Ok(_) => {}
-                    Err(_) => break,
+        // Stderr reader task — log diagnostics. Async for symmetry with stdout.
+        tauri::async_runtime::spawn(async move {
+            let mut lines = TokioBufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if !line.is_empty() {
+                    eprintln!("[sidecar] {}", line);
                 }
             }
         });
 
         *sidecar_lock = Some(sc.clone());
         Ok(sc)
+    }
+
+    /// Get or lazily create the live-state entry for an agent.
+    fn live_entry(&self, agent_id: &str) -> Arc<RwLock<AgentStateEntry>> {
+        self.live_states
+            .entry(agent_id.to_string())
+            .or_insert_with(|| Arc::new(RwLock::new(AgentStateEntry::default())))
+            .clone()
+    }
+
+    /// Drop an agent's live-state entry entirely (on kill).
+    fn remove_live_entry(&self, agent_id: &str) {
+        if let Some((_, entry)) = self.live_states.remove(agent_id) {
+            // Best-effort abort any in-flight debounce so it doesn't emit
+            // after the entry is gone. We try_write here to avoid blocking a
+            // sync caller; if the lock is held right now the debounce task
+            // itself is running and will observe the gone entry shortly.
+            if let Ok(mut guard) = entry.try_write() {
+                if let Some(h) = guard.debounce_handle.take() {
+                    h.abort();
+                }
+            }
+        }
     }
 
     fn send_to_sidecar(&self, json: &str) -> Result<(), String> {
@@ -192,6 +304,12 @@ impl AgentManager {
 
     /// Recover from a dead sidecar: respawn it and recreate all tracked agent sessions
     /// with their full config and session context.
+    ///
+    /// MON-14: also rebuilds each agent's `LiveAgentState.items` from SQLite
+    /// ancestry and emits one snapshot per recovered agent on `agent-state-{id}`.
+    /// Mid-stream assembly (partial streaming message, in-flight tool group)
+    /// is intentionally dropped — we cannot reconstruct it from persisted rows
+    /// and showing a frozen partial state would be worse than a clean reset.
     fn recover_sidecar(
         &self,
         app: &AppHandle,
@@ -214,29 +332,78 @@ impl AgentManager {
             let _ = self.send_to_sidecar(&state.create_cmd_json);
 
             // Replay session context from SQLite
-            if let Some(session_id) = session_snapshot.get(agent_id) {
-                if let Ok(messages) = db.get_messages_with_ancestry(session_id) {
-                    if !messages.is_empty() {
-                        let msg_array: Vec<serde_json::Value> = messages
-                            .iter()
-                            .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
-                            .map(|m| serde_json::json!({
+            let messages_opt = if let Some(session_id) = session_snapshot.get(agent_id) {
+                db.get_messages_with_ancestry(session_id).ok()
+            } else {
+                None
+            };
+
+            if let Some(messages) = &messages_opt {
+                if !messages.is_empty() {
+                    let msg_array: Vec<serde_json::Value> = messages
+                        .iter()
+                        .filter(|m| {
+                            m.role == "user"
+                                || m.role == "assistant"
+                                || m.role == "toolResult"
+                        })
+                        .map(|m| {
+                            serde_json::json!({
                                 "role": m.role,
                                 "content": m.content,
                                 "model": m.model,
-                            }))
-                            .collect();
+                            })
+                        })
+                        .collect();
 
-                        let load_cmd = serde_json::json!({
-                            "type": "load_session",
-                            "agentId": agent_id,
-                            "messages": msg_array,
-                        });
-                        if let Ok(json) = serde_json::to_string(&load_cmd) {
-                            let _ = self.send_to_sidecar(&json);
-                        }
+                    let load_cmd = serde_json::json!({
+                        "type": "load_session",
+                        "agentId": agent_id,
+                        "messages": msg_array,
+                    });
+                    if let Ok(json) = serde_json::to_string(&load_cmd) {
+                        let _ = self.send_to_sidecar(&json);
                     }
                 }
+            }
+
+            // Rebuild live state and emit a single snapshot so the frontend
+            // (once wired in Phase 2) picks up the restored items without
+            // needing a manual refresh.
+            let items: Vec<DisplayItem> = messages_opt
+                .as_ref()
+                .map(|msgs| {
+                    display_items_from_messages(msgs, "Session restored after sidecar restart")
+                })
+                .unwrap_or_else(|| {
+                    vec![DisplayItem::Status {
+                        text: "Session restored after sidecar restart".to_string(),
+                    }]
+                });
+
+            let entry = self.live_entry(agent_id);
+            let snapshot_json = {
+                // Block briefly on the write lock. Recovery is rare and
+                // single-threaded per agent, so contention is effectively zero.
+                let mut guard = match entry.try_write() {
+                    Ok(g) => g,
+                    Err(_) => {
+                        // Someone else is mutating; skip the emit rather than
+                        // stall recovery. The next real event will re-emit.
+                        continue;
+                    }
+                };
+                if let Some(h) = guard.debounce_handle.take() {
+                    h.abort();
+                }
+                guard.dirty = false;
+                guard.state.reset_with_items(items);
+                serde_json::to_string(&guard.state).ok()
+            };
+
+            if let Some(payload) = snapshot_json {
+                let event_name = format!("agent-state-{}", agent_id);
+                emit_event(app, &self.ws_broadcast, &event_name, &payload);
             }
         }
 
@@ -297,18 +464,31 @@ fn emit_event(app: &AppHandle, ws_tx: &broadcast::Sender<WsBroadcast>, event_nam
     });
 }
 
-/// Handle a single JSONL event from the sidecar
-fn handle_sidecar_event(
+/// Handle a single JSONL event from the sidecar.
+///
+/// MON-14 Phase 1: this is now async, owns the per-agent `LiveAgentState`
+/// mutation, and emits assembled snapshots on `agent-state-{id}` in addition
+/// to the legacy raw `agent-event-{id}` forwarding. The dual emission is
+/// intentional: Phase 2 switches the frontend to the new channel, at which
+/// point the legacy forwarding of message/tool events can be removed.
+///
+/// `session_ready`, `extension_ui_request`, and error pings stay on
+/// `agent-event-{id}` only — they are not folded into `LiveAgentState`.
+async fn handle_sidecar_event(
     app: &AppHandle,
     db: &Arc<Database>,
     session_map: &AgentSessionMap,
+    live_states: &Arc<DashMap<String, Arc<RwLock<AgentStateEntry>>>>,
     ws_tx: &broadcast::Sender<WsBroadcast>,
     line: &str,
 ) {
     let parsed: serde_json::Value = match serde_json::from_str(line) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[monarch] Failed to parse sidecar event: {} — line: {}", e, line);
+            eprintln!(
+                "[monarch] Failed to parse sidecar event: {} — line: {}",
+                e, line
+            );
             return;
         }
     };
@@ -319,9 +499,7 @@ fn handle_sidecar_event(
     match event_type {
         "session_ready" => {
             let event_name = format!("agent-event-{}", agent_id);
-            let context_window = parsed
-                .get("contextWindow")
-                .and_then(|v| v.as_i64());
+            let context_window = parsed.get("contextWindow").and_then(|v| v.as_i64());
             let ready_event = serde_json::json!({
                 "type": "session_ready",
                 "agentId": agent_id,
@@ -332,23 +510,74 @@ fn handle_sidecar_event(
 
         "session_destroyed" => {
             let exit_event = format!("agent-exit-{}", agent_id);
-            emit_event(app, ws_tx, &exit_event, &serde_json::json!(null).to_string());
+            emit_event(
+                app,
+                ws_tx,
+                &exit_event,
+                &serde_json::json!(null).to_string(),
+            );
+            // Clear the live state for this agent so a fresh session starts clean.
+            if let Some(entry) = live_states.get(agent_id).map(|e| e.clone()) {
+                let mut guard = entry.write().await;
+                if let Some(h) = guard.debounce_handle.take() {
+                    h.abort();
+                }
+                guard.dirty = false;
+                guard.state = LiveAgentState::default();
+                guard.state.state_version = guard.state.state_version.saturating_add(1);
+                if let Ok(payload) = serde_json::to_string(&guard.state) {
+                    let state_event = format!("agent-state-{}", agent_id);
+                    emit_event(app, ws_tx, &state_event, &payload);
+                }
+            }
         }
 
         "event" => {
-            if let Some(inner_event) = parsed.get("event") {
-                let inner_type = inner_event
-                    .get("type")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("");
+            let inner_event = match parsed.get("event") {
+                Some(e) => e,
+                None => return,
+            };
+            let inner_type = inner_event
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
 
-                // Persist to DB based on event type
-                persist_event(db, session_map, agent_id, inner_type, inner_event);
+            // Persist to SQLite via spawn_blocking — rusqlite is blocking and
+            // we do not want to stall the async reader task.
+            // TODO(MON-27): remove spawn_blocking after migrating db.rs to
+            // tokio-rusqlite (or equivalent non-blocking SQLite).
+            let db_task = db.clone();
+            let session_map_task = session_map.clone();
+            let agent_id_task = agent_id.to_string();
+            let inner_type_task = inner_type.to_string();
+            let inner_event_task = inner_event.clone();
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                persist_event(
+                    &db_task,
+                    &session_map_task,
+                    &agent_id_task,
+                    &inner_type_task,
+                    &inner_event_task,
+                );
+            });
 
-                // Forward to frontend
-                let event_name = format!("agent-event-{}", agent_id);
-                emit_event(app, ws_tx, &event_name, &inner_event.to_string());
-            }
+            // Legacy raw-channel forwarding. Preserved during Phase 1 so the
+            // existing frontend (which still assembles from these events)
+            // keeps working unchanged. Phase 2 removes the subscriber; the
+            // follow-up issue removes this emit.
+            let event_name = format!("agent-event-{}", agent_id);
+            emit_event(app, ws_tx, &event_name, &inner_event.to_string());
+
+            // Apply the event to per-agent LiveAgentState and decide whether
+            // to emit a snapshot now, debounce it, or skip.
+            apply_and_maybe_emit(
+                app,
+                ws_tx,
+                live_states,
+                agent_id,
+                inner_event,
+            )
+            .await;
         }
 
         "extension_ui_request" => {
@@ -357,7 +586,10 @@ fn handle_sidecar_event(
         }
 
         "error" => {
-            let error_msg = parsed.get("error").and_then(|e| e.as_str()).unwrap_or("Unknown error");
+            let error_msg = parsed
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("Unknown error");
             eprintln!("[monarch] Sidecar error for {}: {}", agent_id, error_msg);
             let event_name = format!("agent-event-{}", agent_id);
             let error_event = serde_json::json!({
@@ -370,6 +602,80 @@ fn handle_sidecar_event(
         _ => {
             eprintln!("[monarch] Unknown sidecar event type: {}", event_type);
         }
+    }
+}
+
+/// Route one inner event through `LiveAgentState::apply_event` and emit a
+/// snapshot on `agent-state-{id}` per the returned `ApplyOutcome`. No guard
+/// is held across the emit or across any await other than the lock acquire.
+async fn apply_and_maybe_emit(
+    app: &AppHandle,
+    ws_tx: &broadcast::Sender<WsBroadcast>,
+    live_states: &Arc<DashMap<String, Arc<RwLock<AgentStateEntry>>>>,
+    agent_id: &str,
+    inner_event: &serde_json::Value,
+) {
+    if agent_id.is_empty() {
+        return;
+    }
+
+    // Lazy entry creation on first event for this agent.
+    let entry = live_states
+        .entry(agent_id.to_string())
+        .or_insert_with(|| Arc::new(RwLock::new(AgentStateEntry::default())))
+        .clone();
+
+    // Clone the small bits of context the debounce task will need. Must be
+    // owned so they can outlive the caller's borrow.
+    let snapshot_to_emit: Option<String> = {
+        let mut guard = entry.write().await;
+
+        let outcome = guard.state.apply_event(inner_event);
+
+        match outcome {
+            ApplyOutcome::NoOp => None,
+            ApplyOutcome::EmitNow => {
+                guard.dirty = false;
+                if let Some(h) = guard.debounce_handle.take() {
+                    h.abort();
+                }
+                serde_json::to_string(&guard.state).ok()
+            }
+            ApplyOutcome::Debounce => {
+                guard.dirty = true;
+                if guard.debounce_handle.is_none() {
+                    let entry_clone = entry.clone();
+                    let agent_id_owned = agent_id.to_string();
+                    let app_clone = app.clone();
+                    let ws_tx_clone = ws_tx.clone();
+                    let handle = tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(DEBOUNCE_MILLIS)).await;
+                        let mut g = entry_clone.write().await;
+                        g.debounce_handle = None;
+                        if !g.dirty {
+                            return;
+                        }
+                        g.dirty = false;
+                        let payload = match serde_json::to_string(&g.state) {
+                            Ok(p) => p,
+                            Err(_) => return,
+                        };
+                        let event_name = format!("agent-state-{}", agent_id_owned);
+                        // Release the guard before emit — emit can block on
+                        // broadcast channel send under worst case.
+                        drop(g);
+                        emit_event(&app_clone, &ws_tx_clone, &event_name, &payload);
+                    });
+                    guard.debounce_handle = Some(handle);
+                }
+                None
+            }
+        }
+    };
+
+    if let Some(payload) = snapshot_to_emit {
+        let event_name = format!("agent-state-{}", agent_id);
+        emit_event(app, ws_tx, &event_name, &payload);
     }
 }
 
@@ -779,8 +1085,32 @@ pub fn kill_agent(
 
     let mut map = state.session_map.lock().map_err(|e| e.to_string())?;
     map.remove(&id);
+    drop(map);
+
+    state.remove_live_entry(&id);
 
     Ok(())
+}
+
+/// Return the current assembled live state for an agent. This is the "pull"
+/// half of the pull-then-subscribe pattern: Phase 2's frontend calls this on
+/// mount to seed `liveAgentStore`, then listens on `agent-state-{id}` for
+/// subsequent updates and reconciles by `stateVersion`.
+///
+/// Returns `None` if no entry exists for this agent (no events have arrived
+/// yet, or the agent was killed). Callers should treat `None` as "empty
+/// state" rather than an error.
+#[tauri::command]
+pub async fn get_agent_state(
+    state: tauri::State<'_, Arc<AgentManager>>,
+    agent_id: String,
+) -> Result<Option<LiveAgentState>, String> {
+    let entry = match state.live_states.get(&agent_id) {
+        Some(e) => e.clone(),
+        None => return Ok(None),
+    };
+    let guard = entry.read().await;
+    Ok(Some(guard.state.clone()))
 }
 
 /// Load messages from a previous SQLite session into the sidecar's agent context.
@@ -1096,6 +1426,8 @@ pub fn ws_kill_agent(mgr: &AgentManager, id: String) -> Result<(), String> {
     drop(agents);
     let mut map = mgr.session_map.lock().map_err(|e| e.to_string())?;
     map.remove(&id);
+    drop(map);
+    mgr.remove_live_entry(&id);
     Ok(())
 }
 

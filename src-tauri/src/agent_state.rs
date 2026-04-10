@@ -165,6 +165,7 @@ pub struct LiveAgentState {
 }
 
 impl LiveAgentState {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -451,6 +452,7 @@ impl LiveAgentState {
 
     /// Mark the entry desynced after a parse failure or unexpected state.
     /// Surfaced to the dev-only indicator wired up in Phase 2.
+    #[allow(dead_code)]
     pub fn mark_desynced(&mut self) {
         self.desynced = true;
         self.state_version = self.state_version.saturating_add(1);
