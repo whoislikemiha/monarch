@@ -33,6 +33,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         agent::send_command,
         agent::kill_agent,
         agent::get_agent_state,
+        agent::rebuild_agent_state_from_session,
         agent::load_session_context,
         agent::new_agent_session,
         agent::switch_agent_session,
@@ -110,6 +111,16 @@ pub fn export_bindings() -> Result<(), String> {
     } else {
         format!("{}{}", patch, contents)
     };
+
+    // Route every typed command through `$lib/api` so the WS fallback path
+    // (used when the frontend runs outside the Tauri webview) still fires.
+    // Specta emits `import { invoke as __TAURI_INVOKE } from "@tauri-apps/api/core";`
+    // which calls the Tauri-only invoke directly. Rewrite it to the shim.
+    let patched = patched.replace(
+        "import { invoke as __TAURI_INVOKE } from \"@tauri-apps/api/core\";",
+        "import { invoke as __TAURI_INVOKE } from \"./api\";",
+    );
+
     std::fs::write(output_path, patched)
         .map_err(|e| format!("Failed to write patched bindings: {}", e))?;
 
@@ -152,6 +163,7 @@ pub fn run() {
             agent::send_command,
             agent::kill_agent,
             agent::get_agent_state,
+            agent::rebuild_agent_state_from_session,
             agent::load_session_context,
             agent::new_agent_session,
             agent::switch_agent_session,

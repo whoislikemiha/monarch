@@ -1,27 +1,103 @@
 import { SvelteMap } from "svelte/reactivity";
+import type { LiveAgentState as WireLiveAgentState } from "../bindings";
+import type { AssistantMessage, DisplayItem, ToolExecution, Usage } from "../types";
 import type { LiveAgentState } from "./types";
 
 /**
- * Single source of truth for per-agent live state derived from the
- * `agent-event-{id}` stream. AgentView writes here; AgentView's rendering
- * and toolbox tools read from here. Keyed by agentId.
+ * Passive receiver for Rust-assembled agent state (MON-14 Phase 2).
+ *
+ * The entire turn-assembly state machine moved to Rust (`src-tauri/src/agent_state.rs`)
+ * and snapshots arrive on `agent-state-{id}`. This store no longer builds
+ * state from raw events — callers pull once with `get_agent_state` and
+ * subscribe for incremental snapshots, then hand each snapshot to
+ * `seedFromSnapshot` (initial) or `applyUpdate` (subsequent).
  *
  * Svelte 5 note: `SvelteMap` is required so that `.get(id)` reads become
  * reactive dependencies and `.set(id, entry)` invalidates derivations that
- * previously read that key. A plain `Map` wrapped in `$state` only tracks
- * reassignments of the outer property, not per-key access — so a freshly
- * spawned agent's entry would not propagate to open tools until remount.
+ * previously read that key.
  */
 export const liveAgentStore: { byAgent: SvelteMap<string, LiveAgentState> } = {
   byAgent: new SvelteMap<string, LiveAgentState>(),
 };
 
-export function emptyLiveState(): LiveAgentState {
-  // Each entry is its own $state proxy so that per-field writes
-  // (items = ..., streamingMessage = ..., activityStatus = ...) are tracked
-  // reactively. The outer Map only tracks add/delete; values stored inside
-  // are NOT deeply proxied by Svelte 5 unless we wrap them explicitly.
-  const entry: LiveAgentState = $state({
+/**
+ * Convert the Rust-emitted `LiveAgentState` wire shape into the frontend view
+ * shape consumed by `AgentView.svelte` and toolbox tools.
+ *
+ * Gotchas captured from the Phase 1 handoff:
+ *   - `toolExecutions` arrives as a plain object; tool components expect a Map.
+ *   - `lastUsage` arrives as `null`; the view shape uses `undefined` to match
+ *     the MON-12/13 toolbox contract (tools read `live.lastUsage?.cost` etc.).
+ *   - `currentToolGroup` is not on the wire (it's `#[serde(skip)]`); derive it
+ *     by scanning for the last open tool-group in `items`.
+ *   - `streamingMessage` shape is structurally compatible with
+ *     `AssistantMessage` (same camelCase fields); cast rather than rebuild.
+ */
+function adaptSnapshot(snapshot: WireLiveAgentState): LiveAgentState {
+  const items = snapshot.items as unknown as DisplayItem[];
+  const toolExecutions = new Map<string, ToolExecution>(
+    Object.entries(snapshot.toolExecutions) as [string, ToolExecution][],
+  );
+
+  let currentToolGroup: LiveAgentState["currentToolGroup"] = null;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.kind === "tool-group") {
+      if (!item.turnComplete) currentToolGroup = item;
+      break;
+    }
+  }
+
+  return {
+    items,
+    toolExecutions,
+    streamingMessage: (snapshot.streamingMessage as AssistantMessage | null) ?? null,
+    lastUsage: (snapshot.lastUsage as Usage | null) ?? undefined,
+    currentToolGroup,
+    activityStatus: snapshot.activityStatus,
+    eventCount: Number(snapshot.eventCount),
+    stateVersion: Number(snapshot.stateVersion),
+    desynced: snapshot.desynced,
+  };
+}
+
+/**
+ * Initial seed for an agent — called after `get_agent_state` returns on bind.
+ * Replaces any existing entry unconditionally.
+ */
+export function seedFromSnapshot(
+  agentId: string,
+  snapshot: WireLiveAgentState,
+): LiveAgentState {
+  const view = adaptSnapshot(snapshot);
+  liveAgentStore.byAgent.set(agentId, view);
+  return view;
+}
+
+/**
+ * Incremental update from the `agent-state-{id}` channel. Drops the snapshot
+ * if its version is not newer than what we already have (out-of-order / stale).
+ */
+export function applyUpdate(
+  agentId: string,
+  snapshot: WireLiveAgentState,
+): void {
+  const existing = liveAgentStore.byAgent.get(agentId);
+  const incomingVersion = Number(snapshot.stateVersion);
+  if (existing && incomingVersion <= existing.stateVersion) {
+    return;
+  }
+  liveAgentStore.byAgent.set(agentId, adaptSnapshot(snapshot));
+}
+
+/** Drop an agent's entry entirely (on kill / removal). */
+export function removeLiveState(agentId: string): void {
+  liveAgentStore.byAgent.delete(agentId);
+}
+
+/** Empty detached state used as a fallback before an agent is bound. */
+export function detachedLiveState(): LiveAgentState {
+  return {
     items: [],
     toolExecutions: new Map(),
     streamingMessage: null,
@@ -29,28 +105,7 @@ export function emptyLiveState(): LiveAgentState {
     currentToolGroup: null,
     activityStatus: "",
     eventCount: 0,
-  });
-  return entry;
-}
-
-/** Create the entry for an agent if missing and return it. */
-export function ensureLiveState(agentId: string): LiveAgentState {
-  let entry = liveAgentStore.byAgent.get(agentId);
-  if (!entry) {
-    entry = emptyLiveState();
-    liveAgentStore.byAgent.set(agentId, entry);
-  }
-  return entry;
-}
-
-/** Reset an agent's live state to empty in place (keeps the same entry). */
-export function resetLiveState(agentId: string): LiveAgentState {
-  const fresh = emptyLiveState();
-  liveAgentStore.byAgent.set(agentId, fresh);
-  return fresh;
-}
-
-/** Drop an agent's entry entirely (on kill). */
-export function removeLiveState(agentId: string): void {
-  liveAgentStore.byAgent.delete(agentId);
+    stateVersion: 0,
+    desynced: false,
+  };
 }

@@ -152,13 +152,6 @@ pub struct LiveAgentState {
     pub state_version: u64,
 }
 
-impl LiveAgentState {
-    #[allow(dead_code)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 // ---- Event application -------------------------------------------------
 
 /// Whether the caller should emit a snapshot immediately, debounce it,
@@ -399,7 +392,13 @@ impl LiveAgentState {
             "auto_retry_end" => ApplyOutcome::NoOp,
             "queue_update" => ApplyOutcome::NoOp,
             "tool_execution_update" => ApplyOutcome::NoOp,
-            _ => ApplyOutcome::NoOp,
+            // Truly-unknown event type: the reader saw something our state
+            // machine doesn't know how to fold in. Flip the desync flag so
+            // the dev-only frontend indicator can surface it.
+            _ => {
+                self.desynced = true;
+                ApplyOutcome::EmitNow
+            }
         };
 
         if !matches!(outcome, ApplyOutcome::NoOp) {
@@ -439,8 +438,9 @@ impl LiveAgentState {
     }
 
     /// Mark the entry desynced after a parse failure or unexpected state.
-    /// Surfaced to the dev-only indicator wired up in Phase 2.
-    #[allow(dead_code)]
+    /// Called from the reader task's malformed-line branch; surfaced to the
+    /// dev-only indicator (`VITE_MONARCH_DEBUG_DESYNC`). Reset on the next
+    /// `message_start`.
     pub fn mark_desynced(&mut self) {
         self.desynced = true;
         self.state_version = self.state_version.saturating_add(1);

@@ -430,6 +430,57 @@ impl AgentManager {
         // Retry the original command
         self.send_to_sidecar(json)
     }
+
+    /// Rebuild the assembled `LiveAgentState` for an agent from a persisted
+    /// SQLite session, replace the in-memory entry, and emit a snapshot on
+    /// `agent-state-{id}`. Returns the new state so direct callers (the
+    /// `rebuild_agent_state_from_session` Tauri command) can skip a round-trip
+    /// through the event channel.
+    ///
+    /// Passing `session_id = None` resets the entry to an empty state with a
+    /// single status item — used by "new session" flows.
+    pub async fn rebuild_state_from_session(
+        &self,
+        app: &AppHandle,
+        db: &Arc<Database>,
+        agent_id: &str,
+        session_id: Option<&str>,
+        status_text: &str,
+    ) -> Result<LiveAgentState, String> {
+        let items: Vec<DisplayItem> = match session_id {
+            Some(sid) => {
+                let messages = db.get_messages_with_ancestry(sid).unwrap_or_default();
+                if messages.is_empty() {
+                    vec![DisplayItem::Status {
+                        text: format!("{} (no stored messages)", status_text),
+                    }]
+                } else {
+                    display_items_from_messages(&messages, status_text)
+                }
+            }
+            None => vec![DisplayItem::Status {
+                text: status_text.to_string(),
+            }],
+        };
+
+        let entry = self.live_entry(agent_id);
+        let snapshot = {
+            let mut guard = entry.write().await;
+            if let Some(h) = guard.debounce_handle.take() {
+                h.abort();
+            }
+            guard.dirty = false;
+            guard.state.reset_with_items(items);
+            guard.state.clone()
+        };
+
+        if let Ok(payload) = serde_json::to_string(&snapshot) {
+            let event_name = format!("agent-state-{}", agent_id);
+            emit_event(app, &self.ws_broadcast, &event_name, &payload);
+        }
+
+        Ok(snapshot)
+    }
 }
 
 /// Resolve the sidecar script path
@@ -535,7 +586,14 @@ async fn handle_sidecar_event(
         "event" => {
             let inner_event = match parsed.get("event") {
                 Some(e) => e,
-                None => return,
+                None => {
+                    // Malformed sidecar line: an "event" envelope with no
+                    // inner event. Surface via the dev-only desync indicator.
+                    if !agent_id.is_empty() {
+                        mark_agent_desynced(app, ws_tx, live_states, agent_id).await;
+                    }
+                    return;
+                }
             };
             let inner_type = inner_event
                 .get("type")
@@ -674,6 +732,31 @@ async fn apply_and_maybe_emit(
     };
 
     if let Some(payload) = snapshot_to_emit {
+        let event_name = format!("agent-state-{}", agent_id);
+        emit_event(app, ws_tx, &event_name, &payload);
+    }
+}
+
+/// Flip the `desynced` flag on an agent's `LiveAgentState` and emit a
+/// snapshot. Called from the sidecar reader task when a line cannot be
+/// reconciled with the current state. Surfaced via the dev-only indicator
+/// (`VITE_MONARCH_DEBUG_DESYNC`); the flag resets on the next `message_start`.
+async fn mark_agent_desynced(
+    app: &AppHandle,
+    ws_tx: &broadcast::Sender<WsBroadcast>,
+    live_states: &Arc<DashMap<String, Arc<RwLock<AgentStateEntry>>>>,
+    agent_id: &str,
+) {
+    let entry = live_states
+        .entry(agent_id.to_string())
+        .or_insert_with(|| Arc::new(RwLock::new(AgentStateEntry::default())))
+        .clone();
+    let payload = {
+        let mut guard = entry.write().await;
+        guard.state.mark_desynced();
+        serde_json::to_string(&guard.state).ok()
+    };
+    if let Some(payload) = payload {
         let event_name = format!("agent-state-{}", agent_id);
         emit_event(app, ws_tx, &event_name, &payload);
     }
@@ -1117,6 +1200,32 @@ pub async fn get_agent_state(
     };
     let guard = entry.read().await;
     Ok(Some(guard.state.clone()))
+}
+
+/// Rebuild the assembled `LiveAgentState` for an agent from a SQLite session
+/// and publish a snapshot on `agent-state-{id}`. Returns the new state so the
+/// frontend can seed its store without waiting for the event loopback.
+///
+/// `session_id = None` clears the state (used for "new session" flows).
+#[tauri::command]
+#[specta::specta]
+pub async fn rebuild_agent_state_from_session(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AgentManager>>,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_id: String,
+    session_id: Option<String>,
+    status_text: String,
+) -> Result<LiveAgentState, String> {
+    state
+        .rebuild_state_from_session(
+            &app,
+            &db,
+            &agent_id,
+            session_id.as_deref(),
+            &status_text,
+        )
+        .await
 }
 
 /// Load messages from a previous SQLite session into the sidecar's agent context.
