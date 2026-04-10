@@ -118,7 +118,7 @@ and have no cross-dependencies beyond Wave 0.
   need the emit; making it conditional would require `emit_state_event`
   signature churn that the briefing explicitly forbade. Left in the
   parking lot with a declined note.
-- MON-30 PR: _TBD_ — fix structure: split `AgentStateEntry` into an outer
+- MON-30 PR: https://github.com/whoislikemiha/monarch/pull/20 — fix structure: split `AgentStateEntry` into an outer
   struct holding `AtomicU64 cancel_generation` (lock-free) + inner
   `RwLock<AgentStateInner>` for `state` / `dirty` / `debounce_handle`. The
   debounce closure in `apply_and_maybe_emit` now snapshots `cancel_generation`
