@@ -86,9 +86,9 @@ the Tauri webview and WS browser bridge both work.
 - `ONBOARDING.md` — §7 state flow rewritten around `liveAgentStore`; new "Adding a toolbox tool" subsection (4-step recipe); §12 file-path reference extended with all new toolbox files on both sides of the IPC boundary.
 
 ### Housekeeping (not MON-12 per se)
-- `src-tauri/icons/*` — Tauri-generated icon assets that were sitting untracked.
 - `thoughts/plan/MON-12.md` — the implementation plan itself.
 - `.agents/` + `skills-lock.json` — Claude Code harness state accidentally swept in by a `git add -A`; left in place and noted in the commit message rather than rewriting history.
+- Tauri-generated icon assets were also sitting in the working tree at branch start; they shipped separately in #13 to keep the MON-12 diff focused.
 
 ## What was left out
 
