@@ -18,7 +18,7 @@ export function emptyLiveState(): LiveAgentState {
   // (items = ..., streamingMessage = ..., activityStatus = ...) are tracked
   // reactively. The outer Map only tracks add/delete; values stored inside
   // are NOT deeply proxied by Svelte 5 unless we wrap them explicitly.
-  return $state<LiveAgentState>({
+  const entry: LiveAgentState = $state({
     items: [],
     toolExecutions: new Map(),
     streamingMessage: null,
@@ -27,6 +27,7 @@ export function emptyLiveState(): LiveAgentState {
     activityStatus: "",
     eventCount: 0,
   });
+  return entry;
 }
 
 /** Create the entry for an agent if missing and return it. */
