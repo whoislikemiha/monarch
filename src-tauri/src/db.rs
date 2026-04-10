@@ -155,6 +155,13 @@ impl Database {
             "ALTER TABLE agents ADD COLUMN context_window INTEGER;",
         );
 
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS ui_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
+        );
+
         Ok(())
     }
 }
@@ -1113,5 +1120,32 @@ pub fn ws_save_agent_template(db: &Database, template: AgentTemplateRow) -> Resu
 pub fn ws_delete_agent_template(db: &Database, template_id: String) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM agent_templates WHERE id = ?1", params![template_id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ---- Tauri Commands: UI State ----
+
+#[tauri::command]
+pub fn db_get_ui_state(db: tauri::State<'_, Arc<Database>>, key: String) -> Result<Option<String>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let result = conn.query_row(
+        "SELECT value FROM ui_state WHERE key = ?1",
+        params![key],
+        |row| row.get::<_, String>(0),
+    );
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+pub fn db_set_ui_state(db: tauri::State<'_, Arc<Database>>, key: String, value: String) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO ui_state (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    ).map_err(|e| e.to_string())?;
     Ok(())
 }

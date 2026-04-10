@@ -30,6 +30,7 @@
     projectName,
     customPrompt = $bindable(null),
     onrestart,
+    onspawn,
     onagentchange,
     onprojectedit,
   }: {
@@ -37,6 +38,7 @@
     projectName?: string;
     customPrompt?: string | null;
     onrestart?: (id: string) => void;
+    onspawn?: (agentId: string) => Promise<void>;
     onagentchange?: (agentId: string, updater: (agent: Agent) => Agent) => void;
     onprojectedit?: () => void;
   } = $props();
@@ -55,6 +57,7 @@
   let scrollContainer: HTMLDivElement | undefined = $state(undefined);
   let chatInputRef: { focus: () => void } | undefined = $state(undefined);
   let boundAgentId = $state("");
+  let sessionReadyResolve: (() => void) | null = null;
   let boundSessionId: string | undefined = $state(undefined);
   let activationVersion = 0;
 
@@ -370,6 +373,7 @@
           }),
           targetAgentId,
         );
+        if (sessionReadyResolve) { sessionReadyResolve(); sessionReadyResolve = null; }
         l.activityStatus = "Shadow ready";
         l.items = [...l.items, { kind: "status", text: "Session ready" }];
         // If restoring, replay past messages into the sidecar's LLM context
@@ -629,6 +633,12 @@
   }
 
   async function sendPrompt(message: string) {
+    if (agent.status === "stopped" && onspawn) {
+      setActivity("Waking agent...");
+      const sessionReady = new Promise<void>((resolve) => { sessionReadyResolve = resolve; });
+      await onspawn(agent.id);
+      await sessionReady;
+    }
     setActivity("Sending prompt...");
     await sendPiCommand({ type: "prompt", message });
   }
@@ -651,8 +661,9 @@
 
   // Show compact error view when agent failed and has no useful messages
   let hasMessages = $derived(items.some((i) => i.kind === "user" || i.kind === "assistant"));
+  let isStandby = $derived(agent.status === "stopped" && !!agent.sessionId);
   let showCompactError = $derived(
-    (agent.status === "error" || agent.status === "stopped") && !hasMessages
+    (agent.status === "error" || (agent.status === "stopped" && !isStandby)) && !hasMessages
   );
 
   async function setThinkingLevel(level: string) {
@@ -779,7 +790,11 @@
 
     if (version !== activationVersion) return;
 
-    setActivity("Shadow connected — waiting for Pi process...", target.id);
+    if (target.status === "stopped") {
+      setActivity("", target.id);
+    } else {
+      setActivity("Shadow connected — waiting for Pi process...", target.id);
+    }
 
     unlistenEvent = await listen<string>(
       `agent-event-${target.id}`,
@@ -895,12 +910,17 @@
     <div class="messages-scroll" bind:this={scrollContainer}>
       <MessageList {items} {streamingMessage} />
 
-      {#if agent.status === "stopped"}
+      {#if agent.status === "stopped" && !isStandby}
         <div class="exit-banner">
           <span>Agent stopped</span>
           {#if onrestart}
             <button class="restart-btn" onclick={() => onrestart?.(agent.id)}>Restart</button>
           {/if}
+        </div>
+      {/if}
+      {#if isStandby}
+        <div class="standby-banner">
+          <span>Session paused — send a message to wake</span>
         </div>
       {/if}
     </div>
@@ -1295,6 +1315,21 @@
   .event-count {
     color: var(--text-muted);
     font-size: 10px;
+  }
+
+  .standby-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 12px;
+    margin-top: 12px;
+    border-radius: 8px;
+    background: rgba(190, 149, 255, 0.06);
+    border: 1px dashed var(--accent-purple, #be95ff);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    opacity: 0.7;
   }
 
   @keyframes pulse {
