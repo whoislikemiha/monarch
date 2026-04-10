@@ -191,7 +191,7 @@ and have no cross-dependencies beyond Wave 0.
 Strictly sequential: each step depends on the previous one having landed,
 because they keep tightening the type system around the same call sites.
 
-- [ ] **MON-31** — Introduce `MonarchError` domain error type  · High · `refactor` — **PR #24 open**
+- [ ] **MON-31** — Introduce `MonarchError` domain error type  · High · `refactor` — **PR #24 merged to phase-1 (2026-04-11)**
   - Done when: Every Tauri command returns `Result<T, MonarchError>` (or an
     intentional alias); `thiserror` chains replace the `.to_string()` churn;
     poisoned-lock paths surface distinct variants.
@@ -277,23 +277,71 @@ about the shape left behind. -->
   the tracker rules. Base all Wave 2 branches on the Phase 1 branch,
   not on `master`.
 
-- **Next task: MON-31 — Introduce `MonarchError` domain error type.**
-  Starts Wave 2 because MON-32 / MON-35 / MON-33 all touch command
-  signatures, and converting the error type once up-front is cheaper
-  than three passes over the same lines. Full ticket:
-  https://linear.app/monarch-commander/issue/MON-31
+- **Next task: MON-32 — Typed `SidecarEvent` and `SidecarCommand`
+  enums.** Second in Wave 2. MON-31 is merged (PR #24, commit
+  `9dacfca` on the phase-1 base), so the `MonarchError` surface is in
+  place and MON-32 threads its returns through it. Full ticket:
+  https://linear.app/monarch-commander/issue/MON-32
 
-  Scope reminder from the ticket: replace every `Result<T, String>` on
-  `#[tauri::command]` functions with `Result<T, MonarchError>`,
-  introduce `src-tauri/src/error.rs` using `thiserror`, serialize via a
-  DTO `{ kind, message, details }` so the specta boundary exposes a
-  typed shape, and migrate all `.map_err(|e| e.to_string())` sprinkles
-  in `agent.rs` / `db.rs` / `persistence.rs`. Acceptance requires the
-  frontend to `match` on `error.kind` in at least one call site
-  (suggest `AgentView` spawn failure handling, since spawn already has
-  the richest error surface).
+  _Linear state note:_ the merge auto-flipped MON-31 to **Done** even
+  though phase-1 is not `master`. Per the durable rule, revert MON-31
+  back to **In Review** manually — the actual ship happens when the
+  phase-1 train lands on master.
 
-- **Wave 1 residue MON-31 will encounter.**
+  _Scope reminder from the ticket:_ replace the stringly
+  `get("type").as_str()` dispatch in `apply_event` with a
+  `#[serde(tag = "type", rename_all = "snake_case")]` enum
+  (`SidecarEvent`) and replace the hand-built `serde_json::json!({
+  "type": "..", .. })` command-building sites with a typed
+  `SidecarCommand` enum serialized once. Kill the `unwrap_or("")` /
+  `unwrap_or(0)` defaulting on event fields — missing fields should
+  surface as parse errors, not silent zeroes.
+
+- **Wave 2 starting state for MON-32.** Branch from
+  `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` at
+  `9dacfca` (MON-31 merge commit). `cargo check` / `cargo clippy`
+  clean modulo the two pre-existing `too_many_arguments` warnings on
+  `spawn_agent` / `ws_spawn_agent`. `svelte-check` clean. No Rust
+  test harness — manual verification only.
+
+- **Wave 2 residue MON-32 will encounter (from MON-31).**
+  - `MonarchError::Serde` (from `serde_json::Error`) is the natural
+    landing for `SidecarEvent` / `SidecarCommand` parse failures —
+    the `From<serde_json::Error>` impl is already wired, so
+    `serde_json::from_str::<SidecarEvent>(line)?` just works. If
+    MON-32 wants richer context (e.g. which event type failed to
+    parse), prefer `MonarchError::sidecar_parse(raw)` over inventing
+    a new variant — that sub-kind already exists and flattens to
+    `sidecarParse` on the wire.
+  - The sidecar event reader in `agent.rs::handle_sidecar_event`
+    currently logs parse errors via `eprintln!` and bails; MON-32
+    should not migrate that log to `tracing` (parking-lot item) but
+    **should** make the error path surface via
+    `mark_agent_desynced` the same way malformed-envelope errors
+    already do.
+  - `build_persist_commands` takes `event: &serde_json::Value`. If
+    MON-32 types the event shape, this function's signature wants to
+    change to `&SidecarEvent` at the same time so the `.get("X")`
+    chains collapse to field access. Fair game — it's all internal
+    to the persistence consumer.
+  - `ws::dispatch_command` deserializes inbound args via
+    `serde_json::from_value(args.get("agent")…)` with
+    `MonarchError::invalid_input(...)` wraps. If MON-32 introduces
+    typed inbound `SidecarCommand`s on the WS side too, that
+    invalid-input path is the correct landing site — do not add a
+    new variant for it.
+  - The two pre-existing `too_many_arguments` clippy warnings on
+    `spawn_agent` / `ws_spawn_agent` still stand. **Do not** fix
+    them in MON-32 — MON-35 collapses the signatures via
+    `SpawnAgentRequest`, and pre-doing it here steps on that diff.
+  - `PersistCommand::apply` was migrated to `MonarchError` during
+    MON-31 (optional consistency win). `run_persist_consumer` still
+    stringifies at its log/desync boundary — that's intentional and
+    MON-32 should not touch it.
+
+- **Wave 1 residue MON-31 encountered.** (Historical — MON-31 shipped
+  2026-04-11, PR #24. Keeping the list for context on what MON-32 and
+  beyond inherit.)
   - MON-37 added `Result<(), String>` in `PersistCommand::apply` and
     `run_persist_consumer` inside `agent.rs`. Those are **not** Tauri
     command returns — they are internal to the persistence consumer
@@ -318,15 +366,6 @@ about the shape left behind. -->
     touching those signatures in a pure error-type migration adds
     diff noise that MON-35 will rewrite anyway.
 
-- **Starting state for MON-31.** Branch from
-  `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` at
-  `9c785e1` (MON-37 merge commit). `cargo check` / `cargo clippy` clean
-  modulo the two pre-existing warnings noted above. No working Rust
-  test harness on Windows — see parking lot — so acceptance verification
-  is manual: `svelte-check` for the frontend, a hand-spot-check of the
-  chosen `AgentView` error branch, and confirming `bindings.ts`
-  regenerates with the new error DTO shape via
-  `cargo run -- --export-bindings`.
 
 - **Plan-then-impl workflow is the expectation.** Previous Wave 1
   issues each landed a `thoughts/plan/MON-XX.md` (research/plan phase)
