@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
-  import type { AgentConfig, Project, ShadowGrade } from "./types";
+  import type { AgentConfig, AgentTemplate, Project, ShadowGrade } from "./types";
   import { SHADOW_GRADES } from "./types";
 
   let {
@@ -41,6 +42,11 @@
   const REFRESHABLE_PROVIDERS = new Set(["openrouter", "lmstudio"]);
 
   let selectedProvider = $state("openrouter");
+
+  // Agent templates
+  let templates: AgentTemplate[] = $state([]);
+  let showSaveTemplate = $state(false);
+  let newTemplateName = $state("");
 
   // Model list from backend
   interface ModelInfo {
@@ -145,6 +151,69 @@
       authStatus = null;
     }
     authLoading = false;
+  }
+
+  async function loadTemplates() {
+    if (!isTauri) return;
+    try {
+      templates = await invoke<AgentTemplate[]>("db_list_agent_templates");
+    } catch {
+      templates = [];
+    }
+  }
+
+  onMount(() => {
+    loadTemplates();
+  });
+
+  function applyTemplate(t: AgentTemplate) {
+    if (t.provider) selectedProvider = t.provider;
+    // The provider $effect resets modelInput, so defer model + other fields
+    // until after the current microtask so they stick.
+    queueMicrotask(() => {
+      if (t.model) modelInput = t.model;
+      if (t.thinkingLevel) thinkingLevel = t.thinkingLevel;
+      if (t.cwd) cwd = t.cwd;
+      shadowName = t.shadowName ?? "";
+      shadowTitle = t.shadowTitle ?? "";
+      if (t.shadowGrade) shadowGrade = t.shadowGrade as ShadowGrade;
+    });
+  }
+
+  async function saveAsTemplate() {
+    const name = newTemplateName.trim();
+    if (!name || !isTauri) return;
+    const now = new Date().toISOString();
+    const template: AgentTemplate = {
+      id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      provider: selectedProvider,
+      model: (fixedModelId || modelInput.trim()) || null,
+      thinkingLevel,
+      cwd: cwd || null,
+      shadowName: shadowName.trim() || null,
+      shadowTitle: shadowTitle.trim() || null,
+      shadowGrade,
+      createdAt: now,
+      updatedAt: now,
+    };
+    try {
+      await invoke("db_save_agent_template", { template });
+      newTemplateName = "";
+      showSaveTemplate = false;
+      await loadTemplates();
+    } catch {
+      // Ignore — UI stays open so user can retry.
+    }
+  }
+
+  async function deleteTemplate(id: string, e: MouseEvent) {
+    e.stopPropagation();
+    if (!isTauri) return;
+    try {
+      await invoke("db_delete_agent_template", { templateId: id });
+      await loadTemplates();
+    } catch {}
   }
 
   async function detectProject(path: string) {
@@ -280,6 +349,33 @@
     tabindex="-1"
   >
     <h2>Extract Shadow</h2>
+
+    {#if templates.length > 0}
+      <div class="section">
+        <span class="label">Templates</span>
+        <div class="template-chips">
+          {#each templates as t (t.id)}
+            <button
+              class="template-chip"
+              onclick={() => applyTemplate(t)}
+              title={`${t.provider ?? "?"} / ${t.model ?? "?"}`}
+              type="button"
+            >
+              <span class="template-chip-name">{t.name}</span>
+              <!-- svelte-ignore a11y_consider_explicit_label -->
+              <span
+                class="template-chip-del"
+                onclick={(e) => deleteTemplate(t.id, e)}
+                onkeydown={(e) => { if (e.key === "Enter") deleteTemplate(t.id, e as unknown as MouseEvent); }}
+                role="button"
+                tabindex="0"
+                title="Delete template"
+              >×</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
 
     <div class="section">
       <span class="label">Provider</span>
@@ -480,6 +576,41 @@
       </div>
     </div>
 
+    {#if isTauri}
+      <div class="template-save">
+        {#if showSaveTemplate}
+          <input
+            type="text"
+            bind:value={newTemplateName}
+            placeholder="Template name"
+            onkeydown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); saveAsTemplate(); }
+              if (e.key === "Escape") { showSaveTemplate = false; newTemplateName = ""; }
+            }}
+          />
+          <button
+            class="template-save-btn"
+            onclick={saveAsTemplate}
+            disabled={!newTemplateName.trim()}
+            type="button"
+          >Save</button>
+          <button
+            class="template-save-cancel"
+            onclick={() => { showSaveTemplate = false; newTemplateName = ""; }}
+            type="button"
+          >Cancel</button>
+        {:else}
+          <button
+            class="template-save-toggle"
+            onclick={() => (showSaveTemplate = true)}
+            type="button"
+          >
+            + Save as template
+          </button>
+        {/if}
+      </div>
+    {/if}
+
     <div class="actions">
       <button class="btn-cancel" onclick={oncancel}>Cancel</button>
       <button class="btn-spawn" onclick={handleSpawn}>
@@ -538,6 +669,109 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+
+  .template-chips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .template-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px 4px 10px;
+    border: 1px solid var(--border-subtle, #35274f);
+    border-radius: 999px;
+    background: var(--bg-panel-2, #201734);
+    color: var(--text-secondary, #dde1e6);
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .template-chip:hover {
+    background: var(--bg-panel-3, #2a1e45);
+    border-color: rgba(190, 149, 255, 0.4);
+  }
+
+  .template-chip-name {
+    color: var(--text-primary, #f2f4f8);
+  }
+
+  .template-chip-del {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    color: var(--text-muted, #8f7aa8);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .template-chip-del:hover {
+    background: rgba(255, 120, 120, 0.15);
+    color: #ffb4b4;
+  }
+
+  .template-save {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-top: -4px;
+  }
+
+  .template-save input {
+    flex: 1;
+  }
+
+  .template-save-toggle {
+    padding: 6px 10px;
+    border: 1px dashed var(--border-subtle, #35274f);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted, #8f7aa8);
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+  }
+
+  .template-save-toggle:hover {
+    border-color: var(--accent-purple, #be95ff);
+    color: var(--accent-purple, #be95ff);
+  }
+
+  .template-save-btn {
+    padding: 6px 12px;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent-purple, #be95ff);
+    color: #140d22;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+  }
+
+  .template-save-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .template-save-cancel {
+    padding: 6px 10px;
+    border: 1px solid var(--border-subtle, #35274f);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary, #dde1e6);
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
   }
 
   .preset-grid {
