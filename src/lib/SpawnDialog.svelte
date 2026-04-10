@@ -479,6 +479,22 @@
             ↻
           </button>
         {/if}
+        {#if !fixedModelId && showDropdown && filteredModels().length > 0}
+          <div class="model-dropdown">
+            {#each filteredModels() as model, i (model.id)}
+              <button
+                class="model-option"
+                class:highlighted={i === highlightedIndex}
+                class:selected={modelInput === model.id}
+                onmousedown={(e: MouseEvent) => { e.preventDefault(); selectModel(model); }}
+                onmouseenter={() => (highlightedIndex = i)}
+              >
+                <span class="model-id">{model.id}</span>
+                <span class="model-name">{model.name}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
       {#if fixedModelId}
         <div class="field-hint">
@@ -517,22 +533,6 @@
               Pick a loaded model above to see its context window.
             {/if}
           </div>
-        </div>
-      {/if}
-      {#if !fixedModelId && showDropdown && filteredModels().length > 0}
-        <div class="model-dropdown">
-          {#each filteredModels() as model, i (model.id)}
-            <button
-              class="model-option"
-              class:highlighted={i === highlightedIndex}
-              class:selected={modelInput === model.id}
-              onmousedown={(e: MouseEvent) => { e.preventDefault(); selectModel(model); }}
-              onmouseenter={() => (highlightedIndex = i)}
-            >
-              <span class="model-id">{model.id}</span>
-              <span class="model-name">{model.name}</span>
-            </button>
-          {/each}
         </div>
       {/if}
     </div>
