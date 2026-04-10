@@ -190,14 +190,14 @@
   // Live context occupancy — mirrors AgentControls logic: input + cached tokens
   // from the most recent message, NOT cumulative session billing.
   let liveContextTokens = $derived.by(() => {
-    if (!lastUsage) return 0;
+    if (!lastUsage) return estimatedTotal;
     const cached = (lastUsage.cacheRead ?? 0) + (lastUsage.cacheWrite ?? 0);
     if (lastUsage.input && lastUsage.input > 0) return lastUsage.input + cached;
     if (lastUsage.totalTokens) {
       const output = lastUsage.output ?? 0;
       return Math.max(lastUsage.totalTokens - output, 0);
     }
-    return 0;
+    return estimatedTotal;
   });
 
   let billingTotal = $derived(sessionStats?.totalTokens ?? 0);
