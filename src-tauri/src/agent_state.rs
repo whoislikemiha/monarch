@@ -30,7 +30,7 @@ pub type ToolResult = serde_json::Value;
 // ---- Usage -------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Cost {
     pub input: f64,
     pub output: f64,
@@ -38,7 +38,7 @@ pub struct Cost {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Usage {
     pub input: i64,
     pub output: i64,
@@ -170,243 +170,6 @@ pub enum ApplyOutcome {
 }
 
 impl LiveAgentState {
-    /// Apply one parsed inner event from the sidecar to this state.
-    ///
-    /// Port of the `handleEvent` switch in `src/lib/AgentView.svelte` pre-MON-14.
-    /// `state_version` is bumped whenever state actually changed (i.e. not on
-    /// `NoOp` outcomes).
-    pub fn apply_event(&mut self, event: &serde_json::Value) -> ApplyOutcome {
-        let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
-        self.event_count = self.event_count.saturating_add(1);
-
-        let outcome = match event_type {
-            "agent_start" => {
-                self.activity_status = "Agent processing...".to_string();
-                self.items.push(DisplayItem::Status {
-                    text: "Agent started".to_string(),
-                });
-                ApplyOutcome::EmitNow
-            }
-            "agent_end" => {
-                self.activity_status = String::new();
-                self.commit_streaming_message();
-                self.items.push(DisplayItem::Status {
-                    text: "Agent finished".to_string(),
-                });
-                ApplyOutcome::EmitNow
-            }
-            "turn_start" => {
-                self.activity_status = "LLM call in progress...".to_string();
-                self.current_tool_group_idx = None;
-                ApplyOutcome::EmitNow
-            }
-            "turn_end" => {
-                self.activity_status = "Processing response...".to_string();
-                if let Some(idx) = self.current_tool_group_idx {
-                    if let Some(DisplayItem::ToolGroup { turn_complete, .. }) =
-                        self.items.get_mut(idx)
-                    {
-                        *turn_complete = true;
-                    }
-                }
-                self.current_tool_group_idx = None;
-                ApplyOutcome::EmitNow
-            }
-            "message_start" => {
-                self.desynced = false;
-                let message = event.get("message");
-                let role = message
-                    .and_then(|m| m.get("role"))
-                    .and_then(|r| r.as_str())
-                    .unwrap_or("");
-                match role {
-                    "user" => {
-                        let content = message
-                            .and_then(|m| m.get("content"))
-                            .map(extract_user_text)
-                            .unwrap_or_default();
-                        let timestamp = message
-                            .and_then(|m| m.get("timestamp"))
-                            .and_then(|t| t.as_i64());
-                        self.items.push(DisplayItem::User { content, timestamp });
-                        ApplyOutcome::EmitNow
-                    }
-                    "assistant" => {
-                        self.streaming_message = message.map(streaming_from_json);
-                        self.activity_status = "Receiving response...".to_string();
-                        ApplyOutcome::EmitNow
-                    }
-                    _ => ApplyOutcome::NoOp,
-                }
-            }
-            "message_update" => {
-                if let Some(message) = event.get("message") {
-                    if message.get("role").and_then(|r| r.as_str()) == Some("assistant") {
-                        let sm = streaming_from_json(message);
-                        if let Some(usage) = sm.usage.clone() {
-                            self.last_usage = Some(usage);
-                        }
-                        self.streaming_message = Some(sm);
-                        return ApplyOutcome::Debounce;
-                    }
-                }
-                ApplyOutcome::NoOp
-            }
-            "message_end" => {
-                if let Some(message) = event.get("message") {
-                    if message.get("role").and_then(|r| r.as_str()) == Some("assistant") {
-                        let sm = streaming_from_json(message);
-                        if let Some(usage) = sm.usage.clone() {
-                            self.last_usage = Some(usage);
-                        }
-                        self.items.push(DisplayItem::Assistant {
-                            content: sm.content,
-                            model: sm.model,
-                            usage: sm.usage,
-                            timestamp: sm.timestamp,
-                        });
-                        self.streaming_message = None;
-                    }
-                }
-                ApplyOutcome::EmitNow
-            }
-            "tool_execution_start" => {
-                let tool_call_id = event
-                    .get("toolCallId")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let tool_name = event
-                    .get("toolName")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                let args = event.get("args").cloned();
-                self.activity_status = format!("Running tool: {}", tool_name);
-                let exec = ToolExecution {
-                    tool_call_id: tool_call_id.clone(),
-                    tool_name,
-                    args,
-                    result: None,
-                    is_error: None,
-                    status: ToolStatus::Running,
-                };
-                self.tool_executions
-                    .insert(tool_call_id.clone(), exec.clone());
-
-                match self.current_tool_group_idx {
-                    Some(idx) => {
-                        if let Some(DisplayItem::ToolGroup { executions, .. }) =
-                            self.items.get_mut(idx)
-                        {
-                            executions.push(exec);
-                        }
-                    }
-                    None => {
-                        self.items.push(DisplayItem::ToolGroup {
-                            executions: vec![exec],
-                            turn_complete: false,
-                        });
-                        self.current_tool_group_idx = Some(self.items.len() - 1);
-                    }
-                }
-                ApplyOutcome::EmitNow
-            }
-            "tool_execution_end" => {
-                let tool_call_id = event
-                    .get("toolCallId")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let result = event.get("result").cloned();
-                let is_error = event
-                    .get("isError")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let status = if is_error {
-                    ToolStatus::Error
-                } else {
-                    ToolStatus::Done
-                };
-
-                self.activity_status = String::new();
-
-                if let Some(existing) = self.tool_executions.get_mut(&tool_call_id) {
-                    existing.result = result.clone();
-                    existing.is_error = Some(is_error);
-                    existing.status = status;
-                }
-
-                if let Some(idx) = self.current_tool_group_idx {
-                    if let Some(DisplayItem::ToolGroup { executions, .. }) =
-                        self.items.get_mut(idx)
-                    {
-                        if let Some(exec) =
-                            executions.iter_mut().find(|e| e.tool_call_id == tool_call_id)
-                        {
-                            exec.result = result;
-                            exec.is_error = Some(is_error);
-                            exec.status = status;
-                        }
-                    }
-                }
-                ApplyOutcome::EmitNow
-            }
-            "compaction_start" => {
-                let reason = event
-                    .get("reason")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                self.activity_status = "Compacting context...".to_string();
-                self.items.push(DisplayItem::Status {
-                    text: format!("Context compaction started ({})", reason),
-                });
-                ApplyOutcome::EmitNow
-            }
-            "compaction_end" => {
-                let aborted = event
-                    .get("aborted")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                self.activity_status = String::new();
-                self.items.push(DisplayItem::Status {
-                    text: if aborted {
-                        "Compaction aborted".to_string()
-                    } else {
-                        "Context compacted".to_string()
-                    },
-                });
-                ApplyOutcome::EmitNow
-            }
-            "auto_retry_start" => {
-                let attempt = event
-                    .get("attempt")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                self.activity_status = format!("Auto-retry attempt {}...", attempt);
-                self.items.push(DisplayItem::Status {
-                    text: format!("Auto-retry attempt {}", attempt),
-                });
-                ApplyOutcome::EmitNow
-            }
-            "auto_retry_end" => ApplyOutcome::NoOp,
-            "queue_update" => ApplyOutcome::NoOp,
-            "tool_execution_update" => ApplyOutcome::NoOp,
-            // Truly-unknown event type: the reader saw something our state
-            // machine doesn't know how to fold in. Flip the desync flag so
-            // the dev-only frontend indicator can surface it.
-            _ => {
-                self.desynced = true;
-                ApplyOutcome::EmitNow
-            }
-        };
-
-        if !matches!(outcome, ApplyOutcome::NoOp) {
-            self.state_version = self.state_version.saturating_add(1);
-        }
-        outcome
-    }
-
     /// Replace `items` with a fresh list rebuilt from persisted messages on
     /// recovery. Resets the streaming/tool-group tracking and bumps the
     /// version. Caller is responsible for emitting one snapshot after this.
@@ -426,7 +189,7 @@ impl LiveAgentState {
 
     /// Commit a live streaming message to `items` and clear it. Used by
     /// `agent_end` when the sidecar never sent a distinct `message_end`.
-    fn commit_streaming_message(&mut self) {
+    pub(crate) fn commit_streaming_message(&mut self) {
         if let Some(sm) = self.streaming_message.take() {
             self.items.push(DisplayItem::Assistant {
                 content: sm.content,
@@ -470,48 +233,6 @@ fn extract_user_text(content: &serde_json::Value) -> String {
             .join("");
     }
     String::new()
-}
-
-fn streaming_from_json(message: &serde_json::Value) -> StreamingMessage {
-    let content = message
-        .get("content")
-        .and_then(|c| c.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let model = message
-        .get("model")
-        .and_then(|m| m.as_str())
-        .map(String::from);
-    let usage = message.get("usage").and_then(parse_usage);
-    let timestamp = message.get("timestamp").and_then(|t| t.as_i64());
-    StreamingMessage {
-        content,
-        model,
-        usage,
-        timestamp,
-    }
-}
-
-fn parse_usage(value: &serde_json::Value) -> Option<Usage> {
-    let obj = value.as_object()?;
-    let get_i64 = |k: &str| obj.get(k).and_then(|v| v.as_i64()).unwrap_or(0);
-    let cost = obj
-        .get("cost")
-        .and_then(|c| c.as_object())
-        .map(|c| Cost {
-            input: c.get("input").and_then(|v| v.as_f64()).unwrap_or(0.0),
-            output: c.get("output").and_then(|v| v.as_f64()).unwrap_or(0.0),
-            total: c.get("total").and_then(|v| v.as_f64()).unwrap_or(0.0),
-        })
-        .unwrap_or_default();
-    Some(Usage {
-        input: get_i64("input"),
-        output: get_i64("output"),
-        cache_read: get_i64("cacheRead"),
-        cache_write: get_i64("cacheWrite"),
-        total_tokens: get_i64("totalTokens"),
-        cost,
-    })
 }
 
 // ---- Recovery helpers --------------------------------------------------
