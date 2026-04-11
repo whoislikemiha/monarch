@@ -80,7 +80,7 @@
     line-height: 1.5;
     min-height: 40px;
     max-height: 200px;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    box-shadow: inset 0 1px 0 var(--input-inset-shadow);
   }
 
   textarea::placeholder {
@@ -88,12 +88,12 @@
   }
 
   textarea:focus {
-    border-color: var(--accent-purple);
+    border-color: var(--accent);
   }
 
   .send-btn {
-    background: var(--accent-purple);
-    color: #140d22;
+    background: var(--accent);
+    color: var(--text-on-accent);
     border: none;
     border-radius: 8px;
     padding: 10px 16px;
@@ -106,7 +106,7 @@
   }
 
   .send-btn:hover:not(:disabled) {
-    background: #d5bbff;
+    background: var(--accent-hover);
   }
 
   .send-btn:disabled {

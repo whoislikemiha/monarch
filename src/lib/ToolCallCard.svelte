@@ -86,10 +86,10 @@
     return { cls: "", text: line };
   }
 
-  const statusColors: Record<string, string> = {
-    running: "#ffe97b",
-    done: "#42be65",
-    error: "#ee5396",
+  const statusVars: Record<string, string> = {
+    running: "var(--warning)",
+    done: "var(--success)",
+    error: "var(--error)",
   };
 
   let resultText = $derived(getResultText(execution.result));
@@ -102,7 +102,7 @@
     <span class="toggle-arrow">{expanded ? "▾" : "▸"}</span>
     <span
       class="status-dot"
-      style="background: {statusColors[execution.status]}"
+      style="background: {statusVars[execution.status]}"
     ></span>
     <span class="tool-name">{execution.toolName}</span>
     {#if summary}
@@ -152,7 +152,7 @@
   }
 
   .tool-card.error {
-    border-color: rgba(238, 83, 150, 0.35);
+    border-color: var(--error-border-faint);
   }
 
   .tool-header {
@@ -234,7 +234,7 @@
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     color: var(--text-secondary);
-    background: #110b1d;
+    background: var(--bg-code);
     padding: 8px 10px;
     border-radius: 4px;
     overflow-x: auto;
@@ -253,7 +253,7 @@
   .diff-view {
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    background: #110b1d;
+    background: var(--bg-code);
     border-radius: 4px;
     overflow-x: auto;
     max-height: 400px;
@@ -267,13 +267,13 @@
   }
 
   .diff-add {
-    background: rgba(66, 190, 101, 0.12);
-    color: #42be65;
+    background: var(--diff-add-bg);
+    color: var(--diff-add-text);
   }
 
   .diff-del {
-    background: rgba(238, 83, 150, 0.12);
-    color: #ee5396;
+    background: var(--diff-del-bg);
+    color: var(--diff-del-text);
   }
 
   .diff-hunk {

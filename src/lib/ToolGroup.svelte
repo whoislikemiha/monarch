@@ -81,7 +81,7 @@
   }
 
   .tool-group.has-errors {
-    border-color: rgba(238, 83, 150, 0.3);
+    border-color: var(--error-border-faint);
   }
 
   .tool-group-header {
@@ -113,7 +113,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--warning, #ffe97b);
+    background: var(--warning);
     animation: pulse 1s ease-in-out infinite;
     flex-shrink: 0;
   }
@@ -122,7 +122,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--success, #42be65);
+    background: var(--success);
     flex-shrink: 0;
   }
 
@@ -181,7 +181,7 @@
 
   .quick-item.error {
     color: var(--error);
-    background: rgba(238, 83, 150, 0.08);
+    background: var(--error-bg-subtle);
   }
 
   .tool-group-body {

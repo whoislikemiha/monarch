@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { invoke } from "$lib/api";
+  import { listThemes, applyTheme, getActiveTheme, type ThemeId, type Theme } from "./themes";
+
   let {
     onclose,
   }: {
@@ -13,12 +16,20 @@
   ];
 
   let activeCategory = $state("general");
+  let activeThemeId = $state(getActiveTheme().name);
+  let themes = $derived(listThemes());
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       onclose();
       e.stopPropagation();
     }
+  }
+
+  function selectTheme(id: ThemeId) {
+    const resolvedId = applyTheme(id);
+    activeThemeId = resolvedId;
+    invoke("db_set_ui_state", { key: "theme", value: JSON.stringify(resolvedId) }).catch(() => {});
   }
 </script>
 
@@ -49,7 +60,40 @@
       </nav>
       <div class="category-content">
         <h3>{categories.find((c) => c.id === activeCategory)?.label}</h3>
-        <p class="placeholder-text">No settings configured yet.</p>
+
+        {#if activeCategory === "appearance"}
+          <div class="theme-section">
+            <span class="section-label">Theme</span>
+            <div class="theme-grid">
+              {#each themes as { id, label, theme } (id)}
+                <button
+                  class="theme-card"
+                  class:active={activeThemeId === id}
+                  onclick={() => selectTheme(id)}
+                >
+                  <div class="theme-preview">
+                    <div class="preview-sidebar" style:background={theme.bgSidebar}></div>
+                    <div class="preview-main" style:background={theme.bgPanel}>
+                      <div class="preview-header" style:background={theme.bgSidebar} style:border-bottom="1px solid {theme.borderSubtle}"></div>
+                      <div class="preview-content">
+                        <div class="preview-line" style:background={theme.textMuted}></div>
+                        <div class="preview-line short" style:background={theme.accent}></div>
+                        <div class="preview-line" style:background={theme.textMuted}></div>
+                      </div>
+                      <div class="preview-input" style:background={theme.bgPanel2} style:border-top="1px solid {theme.borderSubtle}"></div>
+                    </div>
+                  </div>
+                  <span class="theme-label">{label}</span>
+                  {#if activeThemeId === id}
+                    <span class="theme-active-badge">Active</span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {:else}
+          <p class="placeholder-text">No settings configured yet.</p>
+        {/if}
       </div>
     </div>
   </div>
@@ -59,7 +103,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--overlay-backdrop);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -67,8 +111,8 @@
   }
 
   .dialog {
-    background: var(--bg-panel, #171126);
-    border: 1px solid var(--border-subtle, #35274f);
+    background: var(--bg-panel);
+    border: 1px solid var(--border-subtle);
     border-radius: 12px;
     width: 720px;
     max-width: 90vw;
@@ -84,7 +128,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px;
-    border-bottom: 1px solid var(--border-subtle, #35274f);
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
   }
 
@@ -92,7 +136,7 @@
     margin: 0;
     font-size: 14px;
     font-weight: 600;
-    color: var(--text-primary, #f2f4f8);
+    color: var(--text-primary);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
@@ -109,7 +153,7 @@
     padding: 12px;
     width: 180px;
     flex-shrink: 0;
-    border-right: 1px solid var(--border-subtle, #35274f);
+    border-right: 1px solid var(--border-subtle);
     overflow-y: auto;
   }
 
@@ -118,7 +162,7 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--text-secondary, #dde1e6);
+    color: var(--text-secondary);
     font-size: 12px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
@@ -127,13 +171,13 @@
   }
 
   .category-btn:hover {
-    background: var(--bg-panel-2, #201734);
-    color: var(--text-primary, #f2f4f8);
+    background: var(--bg-panel-2);
+    color: var(--text-primary);
   }
 
   .category-btn.active {
-    background: rgba(190, 149, 255, 0.12);
-    color: var(--accent-purple, #be95ff);
+    background: var(--accent-bg-hover);
+    color: var(--accent);
   }
 
   .category-content {
@@ -146,23 +190,23 @@
     margin: 0 0 16px 0;
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-primary, #f2f4f8);
+    color: var(--text-primary);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
   .placeholder-text {
     font-size: 12px;
-    color: var(--text-muted, #8f7aa8);
+    color: var(--text-muted);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     margin: 0;
   }
 
   .btn-close {
     padding: 6px 12px;
-    border: 1px solid var(--border-subtle, #35274f);
+    border: 1px solid var(--border-subtle);
     border-radius: 6px;
     background: transparent;
-    color: var(--text-secondary, #dde1e6);
+    color: var(--text-secondary);
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
@@ -170,6 +214,114 @@
   }
 
   .btn-close:hover {
-    background: var(--bg-panel-2, #201734);
+    background: var(--bg-panel-2);
+  }
+
+  /* Appearance tab */
+  .theme-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .section-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+
+  .theme-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  .theme-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border: 2px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--bg-panel-2);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    text-align: left;
+  }
+
+  .theme-card:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-panel-3);
+  }
+
+  .theme-card.active {
+    border-color: var(--accent);
+  }
+
+  .theme-preview {
+    display: flex;
+    border-radius: 6px;
+    overflow: hidden;
+    height: 72px;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .preview-sidebar {
+    width: 28px;
+    flex-shrink: 0;
+  }
+
+  .preview-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .preview-header {
+    height: 10px;
+    flex-shrink: 0;
+  }
+
+  .preview-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 8px;
+    justify-content: center;
+  }
+
+  .preview-line {
+    height: 3px;
+    border-radius: 2px;
+    width: 80%;
+    opacity: 0.5;
+  }
+
+  .preview-line.short {
+    width: 50%;
+    opacity: 0.8;
+  }
+
+  .preview-input {
+    height: 10px;
+    flex-shrink: 0;
+  }
+
+  .theme-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+
+  .theme-active-badge {
+    font-size: 9px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 </style>

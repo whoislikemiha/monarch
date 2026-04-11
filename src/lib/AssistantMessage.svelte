@@ -155,10 +155,10 @@
     top: 0;
     right: 0;
     padding: 2px 8px;
-    background: var(--bg-panel-2, #201734);
-    border: 1px solid var(--border-subtle, #35274f);
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    color: var(--text-muted, #8f7aa8);
+    color: var(--text-muted);
     font-size: 10px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
@@ -172,8 +172,8 @@
   }
 
   .copy-msg-btn:hover {
-    color: var(--text-primary, #f2f4f8);
-    background: var(--bg-panel-3, #2a1e45);
+    color: var(--text-primary);
+    background: var(--bg-panel-3);
   }
 
   .text-block {

@@ -138,7 +138,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--overlay-backdrop);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -199,8 +199,8 @@
   }
 
   .option-btn.active {
-    border-color: var(--accent-purple);
-    color: var(--accent-purple);
+    border-color: var(--accent);
+    color: var(--accent);
   }
 
   input, textarea {
@@ -215,7 +215,7 @@
   }
 
   input:focus, textarea:focus {
-    border-color: var(--accent-purple);
+    border-color: var(--accent);
   }
 
   input::placeholder, textarea::placeholder {
@@ -255,8 +255,8 @@
     padding: 6px 14px;
     border: none;
     border-radius: 6px;
-    background: var(--accent-purple);
-    color: #140d22;
+    background: var(--accent);
+    color: var(--text-on-accent);
     font-size: 12px;
     font-weight: 600;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
@@ -265,6 +265,6 @@
   }
 
   .btn-confirm:hover {
-    background: #d5bbff;
+    background: var(--accent-hover);
   }
 </style>

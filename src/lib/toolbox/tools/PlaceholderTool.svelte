@@ -75,13 +75,13 @@
   }
 
   .label {
-    color: var(--text-muted, #9aa0a6);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
 
   .value {
-    color: var(--text-primary, #f2f4f8);
+    color: var(--text-primary);
   }
 
   .value.mono {
@@ -93,7 +93,7 @@
 
   .empty {
     margin: 0;
-    color: var(--text-muted, #9aa0a6);
+    color: var(--text-muted);
     font-size: 11px;
     font-style: italic;
   }
@@ -101,10 +101,10 @@
   .ping-btn {
     margin-top: 4px;
     padding: 6px 10px;
-    border: 1px solid var(--border-subtle, #35274f);
+    border: 1px solid var(--border-subtle);
     border-radius: 6px;
-    background: var(--bg-panel-2, #201734);
-    color: var(--text-primary, #f2f4f8);
+    background: var(--bg-panel-2);
+    color: var(--text-primary);
     font-family: inherit;
     font-size: 11px;
     cursor: pointer;
@@ -112,7 +112,7 @@
   }
 
   .ping-btn:hover:not(:disabled) {
-    background: rgba(190, 149, 255, 0.15);
+    background: var(--accent-bg-hover);
   }
 
   .ping-btn:disabled {
@@ -131,12 +131,12 @@
   }
 
   .result {
-    background: rgba(190, 149, 255, 0.08);
-    color: var(--text-primary, #f2f4f8);
+    background: var(--accent-bg-subtle);
+    color: var(--text-primary);
   }
 
   .error {
-    background: rgba(255, 90, 90, 0.12);
-    color: #ff8a8a;
+    background: var(--error-bg-faint);
+    color: var(--error-light);
   }
 </style>

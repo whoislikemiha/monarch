@@ -232,25 +232,16 @@
     min-width: min(320px, 52vw);
     padding: 4px 9px;
     border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--success) 32%, var(--border-subtle));
-    background:
-      linear-gradient(180deg, rgba(66, 190, 101, 0.08), rgba(66, 190, 101, 0.02)),
-      var(--bg-panel-2);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-panel-2);
   }
 
   .context-meter.warning {
-    border-color: color-mix(in srgb, var(--warning) 50%, var(--border-subtle));
-    background:
-      linear-gradient(180deg, rgba(255, 233, 123, 0.08), rgba(255, 233, 123, 0.02)),
-      var(--bg-panel-2);
+    border-color: var(--border-subtle);
   }
 
   .context-meter.critical {
-    border-color: color-mix(in srgb, var(--error) 48%, var(--border-subtle));
-    background:
-      linear-gradient(180deg, rgba(238, 83, 150, 0.1), rgba(238, 83, 150, 0.03)),
-      var(--bg-panel-2);
+    border-color: var(--border-subtle);
   }
 
   .context-label,
@@ -278,39 +269,22 @@
     height: 8px;
     overflow: hidden;
     border-radius: 999px;
-    background:
-      linear-gradient(90deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)),
-      rgba(9, 6, 16, 0.72);
-    box-shadow:
-      inset 0 0 0 1px rgba(255, 255, 255, 0.04),
-      inset 0 1px 3px rgba(0, 0, 0, 0.45);
+    background: var(--context-track-bg);
   }
 
   .context-fill {
     height: 100%;
     border-radius: inherit;
-    background:
-      linear-gradient(90deg, color-mix(in srgb, var(--success) 76%, white 10%), var(--success));
-    box-shadow:
-      0 0 14px rgba(66, 190, 101, 0.36),
-      inset 0 0 12px rgba(255, 255, 255, 0.2);
-    transition: width 0.25s ease, background 0.2s ease, box-shadow 0.2s ease;
+    background: var(--success);
+    transition: width 0.25s ease, background 0.2s ease;
   }
 
   .context-meter.warning .context-fill {
-    background:
-      linear-gradient(90deg, color-mix(in srgb, var(--warning) 88%, white 10%), var(--warning));
-    box-shadow:
-      0 0 14px rgba(255, 233, 123, 0.32),
-      inset 0 0 10px rgba(255, 255, 255, 0.16);
+    background: var(--warning);
   }
 
   .context-meter.critical .context-fill {
-    background:
-      linear-gradient(90deg, color-mix(in srgb, var(--error) 78%, white 8%), var(--error));
-    box-shadow:
-      0 0 16px rgba(238, 83, 150, 0.32),
-      inset 0 0 12px rgba(255, 255, 255, 0.16);
+    background: var(--error);
   }
 
   .control-btn {
@@ -339,7 +313,7 @@
     bottom: 100%;
     left: 0;
     margin-bottom: 4px;
-    background: var(--bg-panel-2, #201734);
+    background: var(--bg-panel-2);
     border: 1px solid var(--border-subtle);
     border-radius: 6px;
     padding: 4px;
@@ -367,11 +341,11 @@
   }
 
   .thinking-option.active {
-    color: var(--accent-purple);
+    color: var(--accent);
   }
 
   .control-tag.model {
-    color: var(--accent-purple);
+    color: var(--accent);
     max-width: 300px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -385,7 +359,7 @@
     border-radius: 6px;
     background: var(--error);
     border: none;
-    color: #190f24;
+    color: var(--text-on-accent);
     cursor: pointer;
     font-weight: 600;
     transition: filter 0.15s;
