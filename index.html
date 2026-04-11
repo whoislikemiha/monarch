@@ -7,6 +7,21 @@
     <link rel="stylesheet" href="/src/global.css" />
   </head>
   <body>
+    <script>
+      // Blocking theme restore — runs before first paint to prevent FOUC.
+      // applyTheme() in themes/index.ts caches CSS vars to localStorage.
+      (function () {
+        try {
+          var raw = localStorage.getItem("monarch-theme-cache");
+          if (raw) {
+            var vars = JSON.parse(raw);
+            var s = document.documentElement.style;
+            for (var k in vars) s.setProperty(k, vars[k]);
+            if (vars["--bg-app"]) document.body.style.background = vars["--bg-app"];
+          }
+        } catch (e) {}
+      })();
+    </script>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
