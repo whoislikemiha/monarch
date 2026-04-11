@@ -8,6 +8,7 @@ mod project;
 mod sidecar_protocol;
 mod toolbox;
 mod ws;
+mod zoom;
 
 pub use error::MonarchError;
 
@@ -90,6 +91,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         // Toolbox
         toolbox::toolbox_list_tools,
         toolbox::placeholder::toolbox_placeholder_ping,
+        // Zoom
+        zoom::set_zoom,
     ])
 }
 
@@ -210,6 +213,7 @@ pub fn run() {
             db::db_set_ui_state,
             toolbox::toolbox_list_tools,
             toolbox::placeholder::toolbox_placeholder_ping,
+            zoom::set_zoom,
         ])
         .setup(move |app| {
             // Store AppHandle so WS-initiated commands can access the sidecar
