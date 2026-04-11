@@ -723,7 +723,11 @@
 {/if}
 
 {#if showSettings}
-  <SettingsDialog onclose={() => (showSettings = false)} />
+  <SettingsDialog
+    onclose={() => (showSettings = false)}
+    {zoomLevel}
+    onzoom={applyZoom}
+  />
 {/if}
 
 <style>

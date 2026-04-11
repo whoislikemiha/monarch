@@ -4,8 +4,12 @@
 
   let {
     onclose,
+    zoomLevel,
+    onzoom,
   }: {
     onclose: () => void;
+    zoomLevel: number;
+    onzoom: (level: number) => void;
   } = $props();
 
   const categories = [
@@ -31,6 +35,8 @@
     activeThemeId = resolvedId;
     invoke("db_set_ui_state", { key: "theme", value: JSON.stringify(resolvedId) }).catch(() => {});
   }
+
+  let zoomPercent = $derived(Math.round(zoomLevel * 100));
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -89,6 +95,19 @@
                   {/if}
                 </button>
               {/each}
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Zoom Level</span>
+              <span class="setting-hint">Ctrl+Plus / Ctrl+Minus / Ctrl+0 to reset</span>
+            </div>
+            <div class="zoom-controls">
+              <button class="zoom-btn" onclick={() => onzoom(zoomLevel - 0.05)} disabled={zoomPercent <= 50}>−</button>
+              <span class="zoom-value">{zoomPercent}%</span>
+              <button class="zoom-btn" onclick={() => onzoom(zoomLevel + 0.05)} disabled={zoomPercent >= 200}>+</button>
+              <button class="zoom-reset" onclick={() => onzoom(1.0)} disabled={zoomPercent === 100}>Reset</button>
             </div>
           </div>
         {:else}
@@ -323,5 +342,97 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+
+  /* --- Settings rows --- */
+
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .setting-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .setting-label {
+    font-size: 12px;
+    color: var(--text-primary);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+
+  .setting-hint {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+
+  .zoom-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .zoom-btn {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .zoom-btn:hover:not(:disabled) {
+    background: var(--bg-panel-2);
+    color: var(--text-primary);
+  }
+
+  .zoom-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  .zoom-value {
+    min-width: 44px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-primary);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .zoom-reset {
+    padding: 4px 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    margin-left: 4px;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .zoom-reset:hover:not(:disabled) {
+    background: var(--bg-panel-2);
+    color: var(--text-primary);
+  }
+
+  .zoom-reset:disabled {
+    opacity: 0.3;
+    cursor: default;
   }
 </style>
