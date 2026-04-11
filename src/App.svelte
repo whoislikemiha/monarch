@@ -178,9 +178,10 @@
         };
         agents = [...agents, agent];
       }
-      if (agents.length > 0) {
-        openTabs = agents.map((a) => a.id);
-        if (!activeTabId) activeTabId = agents[0].id;
+      // Don't set openTabs here — loadUiState() restores saved tabs.
+      // Only set a default activeTabId so the UI has something selected.
+      if (agents.length > 0 && !activeTabId) {
+        activeTabId = agents[0].id;
       }
     } catch {
       // No saved state
@@ -198,10 +199,12 @@
         const agentIds = new Set(agents.map((a) => a.id));
         openTabs = savedTabs.filter((id) => agentIds.has(id));
       }
+      // If no saved tabs (first launch or cleared state), don't open any
       if (activeJson) {
         const savedActive = JSON.parse(activeJson);
         if (openTabs.includes(savedActive)) activeTabId = savedActive;
         else if (openTabs.length > 0) activeTabId = openTabs[0];
+        else activeTabId = null;
       }
       if (collapsedJson) sidebarCollapsed = JSON.parse(collapsedJson);
       if (themeJson) {
