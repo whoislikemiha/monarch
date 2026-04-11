@@ -124,6 +124,7 @@ export const commands = {
 	dbSetUiState: (key: string, value: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_set_ui_state", { key, value })),
 	toolboxListTools: () => __TAURI_INVOKE<ToolDescriptor[]>("toolbox_list_tools"),
 	toolboxPlaceholderPing: () => typedError<string, ErrorDto>(__TAURI_INVOKE("toolbox_placeholder_ping")),
+	setZoom: (level: number) => typedError<number, ErrorDto>(__TAURI_INVOKE("set_zoom", { level })),
 };
 
 /* Types */

@@ -209,6 +209,28 @@
     } catch {}
   }
 
+  // --- Zoom state ---
+  const ZOOM_STEP = 0.05;
+  const ZOOM_DEFAULT = 1.0;
+  let zoomLevel = $state(ZOOM_DEFAULT);
+
+  async function applyZoom(level: number) {
+    try {
+      const clamped = await invoke<number>("set_zoom", { level });
+      zoomLevel = clamped;
+      invoke("db_set_ui_state", { key: "zoomLevel", value: String(clamped) }).catch(() => {});
+    } catch {
+      // Not in Tauri (browser mode) — skip
+    }
+  }
+
+  function handleWheel(e: WheelEvent) {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const direction = e.deltaY < 0 ? 1 : -1;
+    applyZoom(zoomLevel + direction * ZOOM_STEP);
+  }
+
   let uiStateInitialized = false;
   function saveUiState() {
     if (!uiStateInitialized) return;
@@ -224,6 +246,15 @@
     await loadSavedAgents();
     await loadUiState();
     uiStateInitialized = true;
+
+    // Restore zoom level
+    try {
+      const saved = await invoke<string | null>("db_get_ui_state", { key: "zoomLevel" });
+      if (saved) {
+        const level = parseFloat(saved);
+        if (!isNaN(level)) applyZoom(level);
+      }
+    } catch {}
   });
 
   // --- Agent lifecycle ---
@@ -506,6 +537,23 @@
       return;
     }
 
+    // Ctrl+= / Ctrl+- / Ctrl+0 — zoom (always)
+    if (e.ctrlKey && (e.key === "=" || e.key === "+")) {
+      e.preventDefault();
+      applyZoom(zoomLevel + ZOOM_STEP);
+      return;
+    }
+    if (e.ctrlKey && e.key === "-") {
+      e.preventDefault();
+      applyZoom(zoomLevel - ZOOM_STEP);
+      return;
+    }
+    if (e.ctrlKey && e.key === "0") {
+      e.preventDefault();
+      applyZoom(ZOOM_DEFAULT);
+      return;
+    }
+
     // Ctrl+1-9 — switch tabs (always)
     if (e.ctrlKey && e.key >= "1" && e.key <= "9") {
       e.preventDefault();
@@ -576,7 +624,7 @@
   );
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} onwheel={handleWheel} />
 
 <main class="app">
   <Sidebar
@@ -674,7 +722,11 @@
 {/if}
 
 {#if showSettings}
-  <SettingsDialog onclose={() => (showSettings = false)} />
+  <SettingsDialog
+    onclose={() => (showSettings = false)}
+    {zoomLevel}
+    onzoom={applyZoom}
+  />
 {/if}
 
 <style>
