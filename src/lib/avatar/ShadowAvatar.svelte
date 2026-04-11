@@ -77,8 +77,8 @@
     riveInstance = new Rive({
       src: riveFile,
       canvas: canvasEl,
-      stateMachines: "State Machine 1",
-      layout: new Layout({ fit: Fit.Cover, alignment: Alignment.Center }),
+      animations: "Timeline 1",
+      layout: new Layout({ fit: Fit.Contain, alignment: Alignment.Center }),
       autoplay: true,
     });
 
