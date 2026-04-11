@@ -1417,7 +1417,7 @@ mod tests {
         assert!(s.streaming_message.is_none());
         assert_eq!(count_items(&s, "assistant"), 2);
         assert_eq!(count_items(&s, "tool-group"), 1);
-        assert_eq!(count_items(&s, "status"), 3); // AgentStart, AgentEnd, (TurnEnd doesn't push status)
+        assert_eq!(count_items(&s, "status"), 2); // AgentStart, AgentEnd
         assert_eq!(s.event_count, 11);
         assert!(s.state_version > 0);
     }
