@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Agent, Project, SessionRecord, ShadowIdentity } from "./types";
   import AgentStatusDot from "./AgentStatusDot.svelte";
+  import { ShadowAvatar } from "./avatar";
 
   interface ProjectGroup {
     project?: Project;
@@ -140,7 +141,9 @@
             role="button"
             tabindex="0"
           >
-            <AgentStatusDot {agent} baseClass="status-dot" />
+            <div class="avatar-wrap">
+              <ShadowAvatar agentId={agent.id} size={32} />
+            </div>
             <div class="agent-info">
               <span class="agent-name">{agent.name}</span>
               {#if agent.shadow}
@@ -362,6 +365,14 @@
   }
   .agent-item.standby:hover {
     opacity: 1;
+  }
+
+  .avatar-wrap {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    overflow: hidden;
   }
 
   .agent-info {

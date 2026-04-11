@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Agent } from "./types";
+  import { ShadowAvatar } from "./avatar";
 
   let {
     agent,
@@ -35,6 +36,9 @@
 
 <div class="agent-header">
   <div class="header-left">
+    <div class="header-avatar">
+      <ShadowAvatar agentId={agent.id} size={40} />
+    </div>
     <span class="agent-name">{agent.shadow?.shadowName || agent.name}</span>
     {#if agent.shadow?.shadowTitle}
       <span class="agent-title">{agent.shadow.shadowTitle}</span>
@@ -107,6 +111,14 @@
     align-items: center;
     gap: 10px;
     min-width: 0;
+  }
+
+  .header-avatar {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    overflow: hidden;
   }
 
   .agent-name {
