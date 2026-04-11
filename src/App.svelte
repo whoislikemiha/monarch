@@ -210,8 +210,7 @@
   }
 
   // --- Zoom state ---
-  const ZOOM_STEP = 0.1;
-  const ZOOM_SCROLL_STEP = 0.05;
+  const ZOOM_STEP = 0.05;
   const ZOOM_DEFAULT = 1.0;
   let zoomLevel = $state(ZOOM_DEFAULT);
 
@@ -229,7 +228,7 @@
     if (!e.ctrlKey) return;
     e.preventDefault();
     const direction = e.deltaY < 0 ? 1 : -1;
-    applyZoom(zoomLevel + direction * ZOOM_SCROLL_STEP);
+    applyZoom(zoomLevel + direction * ZOOM_STEP);
   }
 
   let uiStateInitialized = false;
