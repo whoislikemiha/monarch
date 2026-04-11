@@ -10,7 +10,7 @@
   } from "./stateMapper";
 
   const DEFAULT_RIV = "/avatars/shadow_animations.riv";
-  const DEFAULT_STATE_MACHINE = "State Machine 1";
+  const DEFAULT_STATE_MACHINE = "StateMachine";
 
   let {
     agentId,
