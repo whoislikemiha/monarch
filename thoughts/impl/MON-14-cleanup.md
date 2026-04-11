@@ -570,7 +570,7 @@ about the shape left behind. -->
   **In Review** manually so the Wave 2 dashboard reflects the stacked
   state. Full train merges to master together later.
 
-- **MON-34 — PR opened against phase-1 (2026-04-11).** `AgentManager`'s
+- **MON-34 — PR #28 merged into phase-1 (2026-04-11).** `AgentManager`'s
   sync-path concurrency is now uniformly `parking_lot::Mutex`. The two
   agent maps (`agents` + `session_map`) consolidated into a new
   `AgentManagerInner` struct guarded by one lock, so the lock-ordering
@@ -633,9 +633,118 @@ about the shape left behind. -->
     `std::sync::Mutex` sites in `agent.rs` — part of the
     graceful-shutdown protocol, not in MON-34's scope, MON-27's call.
 
-  _Linear state note:_ expect the merge to auto-flip MON-34 to
-  **Done** per the GitHub integration. Revert to **In Review**
-  manually until phase-1 reaches master, same pattern as MON-33.
+  _Linear state note:_ merge auto-flipped MON-34 to **Done** per the
+  GitHub integration. Reverted to **In Review** manually so the Wave 2
+  dashboard reflects the stacked state — same pattern as MON-33. Full
+  train merges to master together later.
+
+- **Next task: MON-39 — Phase 1 cleanup: remove dead code and legacy channels.**
+  Wave 2 sweep. The four Wave 2 refactors (MON-31, MON-32, MON-35, MON-33,
+  MON-34) have all landed; MON-39 is the grab-bag that closes out phase-1
+  before Phase 2 frontend work picks up. Full ticket:
+  https://linear.app/monarch-commander/issue/MON-39
+
+  _Wave 2 base_: branch from
+  `markocvijanovic1998/mon-14-phase-1-rust-state-ownership`
+  (post-MON-34, commit `e9dbfee`), open PR against the same. Commit
+  `thoughts/plan/MON-39.md` and `thoughts/impl/MON-39.md` on the PR
+  branch. Update this tracker file's Wave 2 entry for MON-39 in the
+  same PR that ships the code. Expect the merge to auto-flip Linear to
+  Done; revert to In Review manually until phase-1 reaches master.
+
+  **The nine items (copy from the ticket for the plan doc):**
+  1. Dead `AgentLifecycleState` — set to `Idle` in `spawn` and never
+     transitions. `#[allow(dead_code)]` on `AgentState`. Delete or
+     drive from sidecar events.
+  2. Legacy `agent-event-{id}` forwarding — the Phase 2 frontend reads
+     `agent-state-{id}` now; the legacy forward is pure overhead per
+     event. Remove the emit sites in `handle_sidecar_event`.
+  3. `uuid_v4_simple` — not a UUID, `{nanos:x}-{pid:x}` with real
+     collision risk and format-incompatible with stored `project-<uuid>`
+     ids. Replace with the `uuid` crate (already transitively present).
+  4. `chrono_now() -> String` writes Unix-seconds-as-string into columns
+     SQLite's `datetime('now')` default populates as ISO8601.
+     `parse_timestamp` only accepts `i64`, so sessions created by SQLite
+     defaults restore with `timestamp: None`. Pick one format and
+     migrate existing rows.
+  5. `resolve_sidecar_path` uses `std::env::current_dir()`, undefined in
+     a packaged Tauri build. Switch to `tauri::path` APIs or
+     `std::env::current_exe`.
+  6. `persistence.rs` swallows `create_dir_all` errors with `.ok()` on
+     filesystem bring-up. Prompt reads later report "file not found"
+     instead of the real permission error. Propagate.
+  7. `get_str(event, key)` helper — `apply_event` in `agent_state.rs`
+     repeats `event.get("..").and_then(|v| v.as_str())…` 4+ times.
+     **Already gone** since MON-32's typed `SidecarEvent` landed — the
+     ticket itself flags "include only if that ticket slips", and it
+     didn't. Drop item 7 from scope.
+  8. `format!("agent-state-{}", agent_id)` in the hot path — allocated
+     per event at ~6 sites. Cache the topic string on `AgentStateEntry`.
+  9. Unknown-event desync: `apply_event`'s catch-all returns `EmitNow`
+     and bumps `state_version` per unknown event. Return `NoOp` and rely
+     on `mark_desynced` to bump version once per desync window.
+
+  **Starting state MON-34 leaves:**
+  - `AgentManager`'s sync-path concurrency is uniform
+    `parking_lot::Mutex`. `agents` + `session_map` live inside a single
+    `AgentManagerInner` behind one lock (`agent.rs` ~line 66); `sidecar`
+    and `app_handle` are independent `PlMutex` fields. The module-level
+    lock-hierarchy doc comment above `AgentManager` is the single source
+    of truth for ordering rules — update it if MON-39 adds or removes a
+    lock.
+  - `lock_poisoned` is no longer called from `agent.rs`. The only
+    `std::sync::Mutex` sites left in `agent.rs` are `SidecarProcess.child`
+    and `SidecarProcess.stdin_tx` (graceful-shutdown protocol — MON-34
+    scoped them out; same goes for MON-39 unless the sweep explicitly
+    wants to touch them, and it doesn't).
+  - `MonarchError::Lock` and the `lock_poisoned` helper still live in
+    `error.rs` because `db.rs` (~40 sites) and `models.rs` (4 sites) use
+    them. MON-39 should **not** delete them — `db.rs` still calls. MON-27
+    is the ticket that eventually removes them, after `db.rs` moves to
+    tokio-rusqlite.
+  - `recover_sidecar` is now `async fn`; `send_with_recovery` bridges to
+    it via `tauri::async_runtime::block_on`. If MON-39 touches either
+    path, keep the `block_on` shim — flipping it to a real `.await` means
+    propagating async out through `#[tauri::command]` bodies, which is
+    MON-27's scope.
+  - `chrono_now() -> String` (item 4) and `uuid_v4_simple` (item 3) both
+    still live at the bottom of `agent.rs` as `pub(crate)` helpers — they
+    were bumped to `pub(crate)` by MON-33 so `project.rs` can reuse them.
+    Any MON-39 rewrite must keep the visibility or update `project.rs`
+    call sites at the same time.
+  - `get_session_id`'s signature now takes
+    `&Arc<parking_lot::Mutex<AgentManagerInner>>` instead of the removed
+    `AgentSessionMap` alias. Any MON-39 rewiring of event dispatch that
+    needs session lookup should go through this helper, not a second
+    clone of the inner handle.
+
+  **Testing note:** the MON-33 round-trip test
+  (`agent::tests::kill_agent_round_trip_funnels_through_shared_method`)
+  seeds both maps through `mgr.inner.lock()` now. Any MON-39 item that
+  adds an `AgentManagerInner` field needs to update the seed path and
+  keep the kill-clears-both assertion shape. The `cargo test` harness
+  still hits `STATUS_ENTRYPOINT_NOT_FOUND` on Windows — `cargo check` +
+  `cargo clippy --all-targets` is the local bar; CI or a Linux harness
+  runs the actual test.
+
+  **Scope reminder:** MON-39 is a cleanup sweep, not a design pass.
+  Items 1, 2, 3, 5, 6, 8, 9 are line-level or small-module changes.
+  Item 4 (timestamp format) has a data-migration dimension — if existing
+  rows need conversion, a migration SQL step on `Database::new` is the
+  right shape; do not silently re-parse both formats forever. Item 7 is
+  already resolved (drop from scope). Do not fold MON-27 (full async
+  migration) or any further lock work into this ticket.
+
+  **Known unrelated bug noticed during MON-34 manual testing (NOT
+  MON-39 scope, flag for follow-up):** killing an agent mid-response
+  via the sidebar X appears to leave the sidecar's Pi SDK session in a
+  state where a *different* agent cannot get a response until the user
+  clicks "new chat" on it. User observed it may only pause (not lose)
+  the prior session. Pre-existing — MON-34 did not touch kill
+  semantics, sidecar protocol, or reader-task routing. Likely lives in
+  the sidecar's session-abort handling (`sidecar/src/runtime-manager.ts`)
+  or in how the Node event loop serializes Pi SDK calls. File a new
+  ticket if you reproduce — do not expand MON-39 to cover it.
 
 - **Wave 1 residue MON-31 encountered.** (Historical — MON-31 shipped
   2026-04-11, PR #24. Keeping the list for context on what MON-32 and
