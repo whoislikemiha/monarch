@@ -77,20 +77,18 @@
     riveInstance = new Rive({
       src: riveFile,
       canvas: canvasEl,
-      animations: "Timeline 1",
+      stateMachines: stateMachine,
       layout: new Layout({ fit: Fit.Contain, alignment: Alignment.Center }),
       autoplay: true,
     });
 
-    riveInstance.on(EventType.LoadError, (e: any) => {
-      console.error("[ShadowAvatar] LOAD ERROR:", e);
-    });
-
     riveInstance.on(EventType.Load, () => {
       riveInstance!.resizeDrawingSurfaceToCanvas();
-      console.log("[ShadowAvatar] loaded and playing, canvas:", canvasEl.width, canvasEl.height);
-      cacheInputs(riveInstance!, "State Machine 1");
-      console.log("[ShadowAvatar] cached inputs:", [...inputMap.keys()]);
+      // Auto-detect: use first available state machine
+      const r = riveInstance! as any;
+      const smNames: string[] = r.stateMachineNames ?? [];
+      const smName = smNames[0] ?? stateMachine;
+      cacheInputs(riveInstance!, smName);
     });
 
     return () => {
@@ -148,7 +146,5 @@
   .shadow-avatar {
     display: block;
     image-rendering: auto;
-    /* debug: visible border to confirm canvas placement */
-    border: 1px solid var(--accent);
   }
 </style>

@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "rive": {
+      "url": "http://localhost:9791/sse"
+    }
+  }
+}
