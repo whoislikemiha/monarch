@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "$lib/api";
   import { listThemes, applyTheme, getActiveTheme, type ThemeId, type Theme } from "./themes";
+  import KeybindingsSettings from "./KeybindingsSettings.svelte";
 
   let {
     onclose,
@@ -110,6 +111,8 @@
               <button class="zoom-reset" onclick={() => onzoom(1.0)} disabled={zoomPercent === 100}>Reset</button>
             </div>
           </div>
+        {:else if activeCategory === "keybindings"}
+          <KeybindingsSettings />
         {:else}
           <p class="placeholder-text">No settings configured yet.</p>
         {/if}
