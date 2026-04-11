@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Rive, EventType, StateMachineInputType } from "@rive-app/webgl2";
+  import { Rive, EventType, StateMachineInputType, Layout, Fit, Alignment } from "@rive-app/webgl2";
   import type { StateMachineInput } from "@rive-app/webgl2";
   import { liveAgentStore, detachedLiveState } from "../toolbox/liveAgentStore.svelte";
   import {
@@ -80,8 +80,9 @@
       src: riveFile,
       canvas: canvasEl,
       stateMachines: "State Machine 1",
+      layout: new Layout({ fit: Fit.Cover, alignment: Alignment.Center }),
       autoplay: true,
-      useOffscreenRenderer,
+      useOffscreenRenderer: false,
     });
 
     riveInstance.on(EventType.LoadError, (e: any) => {
@@ -92,6 +93,7 @@
       riveInstance!.resizeDrawingSurfaceToCanvas();
       console.log("[ShadowAvatar] loaded and playing, canvas:", canvasEl.width, canvasEl.height);
       cacheInputs(riveInstance!, "State Machine 1");
+      console.log("[ShadowAvatar] cached inputs:", [...inputMap.keys()]);
     });
 
     return () => {
