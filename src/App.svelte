@@ -233,7 +233,10 @@
   }
 
   // --- Tab history for recent-agent switching (MON-44) ---
-  let tabHistory: string[] = $state([]);
+  // Plain array (not $state) — only read imperatively in switchToRecentAgent().
+  // Using $state here would create an infinite $effect loop since the effect
+  // both reads and writes the array.
+  let tabHistory: string[] = [];
 
   $effect(() => {
     if (activeTabId && openTabs.includes(activeTabId)) {
