@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Agent, Project, SessionRecord, ShadowIdentity } from "./types";
+  import { liveAgentStore } from "./toolbox/liveAgentStore.svelte";
 
   interface ProjectGroup {
     project?: Project;
@@ -139,7 +140,7 @@
             role="button"
             tabindex="0"
           >
-            <span class="status-dot {agent.isStreaming ? 'streaming' : agent.status}"></span>
+            <span class="status-dot {liveAgentStore.byAgent.get(agent.id)?.isStreaming ? 'streaming' : agent.status}"></span>
             <div class="agent-info">
               <span class="agent-name">{agent.name}</span>
               {#if agent.shadow}

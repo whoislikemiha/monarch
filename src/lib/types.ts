@@ -48,7 +48,6 @@ export interface Agent {
   model?: string;
   thinkingLevel?: string;
   cwd?: string;
-  isStreaming: boolean;
   sessionStats?: SessionStats;
   stderrLines: string[];
   exitCode?: number | null;

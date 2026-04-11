@@ -157,7 +157,6 @@
           model: row.model || undefined,
           thinkingLevel: row.thinkingLevel || undefined,
           cwd: row.cwd || undefined,
-          isStreaming: false,
           stderrLines: [],
           contextWindow: row.contextWindow || undefined,
           shadow: row.shadowName
@@ -246,7 +245,6 @@
       model: config?.model,
       thinkingLevel: config?.thinkingLevel || "off",
       cwd,
-      isStreaming: false,
       stderrLines: [],
       shadow: config?.shadow,
       contextWindow: config?.contextWindow,
@@ -342,7 +340,7 @@
     // Track exit listener for cleanup
     const unlisten = await listen(`agent-exit-${id}`, () => {
       agents = agents.map((a) =>
-        a.id === id ? { ...a, status: "stopped" as const, isStreaming: false } : a,
+        a.id === id ? { ...a, status: "stopped" as const } : a,
       );
     });
     exitListeners.set(id, unlisten);
@@ -451,7 +449,7 @@
       throw err;
     }
     const unlisten = await listen(`agent-exit-${id}`, () => {
-      agents = agents.map((a) => a.id === id ? { ...a, status: "stopped" as const, isStreaming: false } : a);
+      agents = agents.map((a) => a.id === id ? { ...a, status: "stopped" as const } : a);
     });
     exitListeners.set(id, unlisten);
   }

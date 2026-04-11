@@ -43,7 +43,6 @@
     onprojectedit?: () => void;
   } = $props();
 
-  let isStreaming = $state(false);
   let pendingExtensionRequest: ExtensionUIRequest | null = $state(null);
   let showStderr = $state(false);
   // Captured on mount — used when session_ready fires to replay session ancestry
@@ -256,6 +255,7 @@
   let lastUsage = $derived(live.lastUsage);
   let activityStatus = $derived(live.activityStatus);
   let eventCount = $derived(live.eventCount);
+  let isStreaming = $derived(live.isStreaming);
 
   async function abort() {
     await sendPiCommand({ type: "abort" });
@@ -338,7 +338,6 @@
   }
 
   function resetUiLocalState() {
-    isStreaming = false;
     pendingExtensionRequest = null;
     showStderr = false;
     pendingSourceSessionId = undefined;
@@ -430,7 +429,6 @@
     boundSessionId = target.sessionId;
     clearListeners();
     resetUiLocalState();
-    isStreaming = target.isStreaming;
 
     const sessionsPromise = refreshSessionsFromDb(target.id);
     const promptPromise = invoke<string | null>("get_agent_prompt", { agentId: target.id })
@@ -469,10 +467,8 @@
 
     unlistenExit = await listen<number | null>(`agent-exit-${target.id}`, (event) => {
       if (version !== activationVersion) return;
-      isStreaming = false;
       updateAgent((current) => ({
         ...current,
-        isStreaming: false,
         status: "stopped",
         exitCode: event.payload,
       }), target.id);
