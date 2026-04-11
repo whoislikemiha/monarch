@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "$lib/api";
   import { open } from "@tauri-apps/plugin-dialog";
+  import { matchBinding } from "$lib/keybindings.svelte";
   import type { AgentConfig, AgentTemplate, Project, ShadowGrade } from "./types";
   import { SHADOW_GRADES } from "./types";
 
@@ -328,7 +329,7 @@
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape" && !showDropdown) oncancel();
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSpawn();
+    if (matchBinding(e, "dialog.confirm-spawn")) handleSpawn();
   }
 </script>
 

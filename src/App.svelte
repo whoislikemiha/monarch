@@ -23,6 +23,7 @@
   import type { AgentContext } from "./lib/toolbox/types";
   import type { Agent, AgentConfig, AgentViewState, Project, SessionRecord } from "./lib/types";
   import { applyTheme, DEFAULT_THEME } from "./lib/themes";
+  import { loadKeybindings, matchBinding } from "$lib/keybindings.svelte";
 
   let agents: Agent[] = $state([]);
   let projects: Project[] = $state([]);
@@ -231,6 +232,30 @@
     applyZoom(zoomLevel + direction * ZOOM_STEP);
   }
 
+  // --- Tab history for recent-agent switching (MON-44) ---
+  // Plain array (not $state) — only read imperatively in switchToRecentAgent().
+  // Using $state here would create an infinite $effect loop since the effect
+  // both reads and writes the array.
+  let tabHistory: string[] = [];
+
+  $effect(() => {
+    if (activeTabId && openTabs.includes(activeTabId)) {
+      tabHistory = [activeTabId, ...tabHistory.filter((id) => id !== activeTabId)].slice(0, 20);
+    }
+  });
+
+  function switchToRecentAgent() {
+    const recent = tabHistory.find((id) => id !== activeTabId && openTabs.includes(id));
+    if (recent) activeTabId = recent;
+  }
+
+  function switchToNextAgent() {
+    if (!activeTabId || openTabs.length <= 1) return;
+    const idx = openTabs.indexOf(activeTabId);
+    const nextIdx = (idx + 1) % openTabs.length;
+    activeTabId = openTabs[nextIdx];
+  }
+
   let uiStateInitialized = false;
   function saveUiState() {
     if (!uiStateInitialized) return;
@@ -245,6 +270,7 @@
     await loadProjects();
     await loadSavedAgents();
     await loadUiState();
+    await loadKeybindings();
     uiStateInitialized = true;
 
     // Restore zoom level
@@ -511,33 +537,31 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    // Don't capture when in input/textarea/dialog
     const target = e.target as HTMLElement;
     const inInput = target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.tagName === "SELECT";
     const inDialog = target.closest("[role=dialog]") !== null;
 
-    // Ctrl+N — spawn new agent (always)
-    if (e.ctrlKey && e.key === "n") {
+    // --- Always active (even in inputs/dialogs) ---
+
+    if (matchBinding(e, "global.spawn-agent")) {
       e.preventDefault();
       showSpawnDialog = true;
       return;
     }
 
-    // Ctrl+, — toggle settings (always)
-    if (e.ctrlKey && e.key === ",") {
+    if (matchBinding(e, "global.settings")) {
       e.preventDefault();
       showSettings = !showSettings;
       return;
     }
 
-    // Ctrl+B — toggle sidebar (always)
-    if (e.ctrlKey && e.key === "b") {
+    if (matchBinding(e, "global.toggle-sidebar")) {
       e.preventDefault();
       sidebarCollapsed = !sidebarCollapsed;
       return;
     }
 
-    // Ctrl+= / Ctrl+- / Ctrl+0 — zoom (always)
+    // Zoom (non-editable, kept as direct checks for = / + ambiguity)
     if (e.ctrlKey && (e.key === "=" || e.key === "+")) {
       e.preventDefault();
       applyZoom(zoomLevel + ZOOM_STEP);
@@ -554,39 +578,50 @@
       return;
     }
 
-    // Ctrl+1-9 — switch tabs (always)
-    if (e.ctrlKey && e.key >= "1" && e.key <= "9") {
-      e.preventDefault();
-      const idx = parseInt(e.key) - 1;
-      if (idx < openTabs.length) {
-        activeTabId = openTabs[idx];
+    // Tab switching (Ctrl+1-9)
+    for (let i = 1; i <= 9; i++) {
+      if (matchBinding(e, `nav.tab-${i}`)) {
+        e.preventDefault();
+        if (i - 1 < openTabs.length) {
+          activeTabId = openTabs[i - 1];
+        }
+        return;
       }
+    }
+
+    // Recent agent (Ctrl+Tab)
+    if (matchBinding(e, "nav.recent-agent")) {
+      e.preventDefault();
+      switchToRecentAgent();
       return;
     }
 
-    // Below only when not in an input
+    // Next agent (Ctrl+PageDown)
+    if (matchBinding(e, "nav.next-agent")) {
+      e.preventDefault();
+      switchToNextAgent();
+      return;
+    }
+
+    // --- Only when not in input/dialog ---
     if (inInput || inDialog) return;
 
-    // / or i — focus chat input
-    if (e.key === "/" || e.key === "i") {
+    if (matchBinding(e, "global.focus-chat") || matchBinding(e, "global.focus-chat-alt")) {
       e.preventDefault();
       agentViewRef?.focusInput();
       return;
     }
 
-    // Escape — unfocus (blur active element)
+    // Escape — unfocus (not in registry, universal behavior)
     if (e.key === "Escape") {
       (document.activeElement as HTMLElement)?.blur();
       return;
     }
 
-    // Ctrl+C — copy if text selected, otherwise abort active agent
-    if (e.ctrlKey && e.key === "c") {
+    // Abort agent (Ctrl+C when no text selected)
+    if (matchBinding(e, "global.abort-agent")) {
       const selection = window.getSelection();
-      if (selection && selection.toString().length > 0) {
-        // Let the browser handle copy
-        return;
-      }
+      if (selection && selection.toString().length > 0) return;
       e.preventDefault();
       if (activeAgent) {
         invoke("send_command", {
