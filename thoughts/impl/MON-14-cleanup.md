@@ -498,7 +498,7 @@ about the shape left behind. -->
     collapsing the WS twin layer into a shared service function — which
     is exactly what MON-33 wants.
 
-- **MON-33 — PR open against phase-1 (2026-04-11).** All agent-lifecycle
+- **MON-33 — PR #27 merged into phase-1 (2026-04-11).** All agent-lifecycle
   logic now lives in `impl AgentManager` as shared methods — `spawn`,
   `send_command`, `kill`, `load_session_context`, `new_session`,
   `switch_session`, `respond_extension_ui`. Each Tauri command body and
@@ -564,6 +564,102 @@ about the shape left behind. -->
     `remove_live_entry` are still the helper primitives; `ensure_sidecar`
     now lives inside every lifecycle method's entry point (the adapters
     no longer need to remember to call it).
+
+  _Linear state note:_ merge auto-flipped MON-33 to **Done** even though
+  phase-1 is not `master`. Per the durable rule, reverted to
+  **In Review** manually so the Wave 2 dashboard reflects the stacked
+  state. Full train merges to master together later.
+
+- **Next task: MON-34 — Unify concurrency primitives across AgentManager.**
+  Fourth and final refactor in Wave 2 (MON-39 is the sweep). Full ticket:
+  https://linear.app/monarch-commander/issue/MON-34
+
+  _Wave 2 base_: branch from
+  `markocvijanovic1998/mon-14-phase-1-rust-state-ownership`
+  (post-MON-33, commit `aea6315`), open PR against the same. Commit
+  `thoughts/plan/MON-34.md` and `thoughts/impl/MON-34.md` on the PR
+  branch. Update this tracker file's Wave 2 entry for MON-34 in the
+  same PR that ships the code. Expect the merge to auto-flip Linear to
+  Done; revert to In Review manually.
+
+  **Starting state MON-33 leaves:**
+  - All `std::sync::Mutex` lock acquisitions on `agents` and
+    `session_map` now live inside `impl AgentManager` lifecycle methods
+    (`spawn`, `send_command`, `kill`, `load_session_context`,
+    `new_session`, `switch_session`, `respond_extension_ui`) at
+    `src-tauri/src/agent.rs:634–899`. There are no longer mirrored WS
+    copies to keep in sync — change the lock topology in one place and
+    both transports pick it up. This is the clean surface MON-34's
+    acceptance bullet asked for.
+  - Every lock site uniformly goes through
+    `lock_poisoned("<label>")` from MON-31's `error` module. Grep
+    `lock_poisoned` in `agent.rs` to find the ~12 call sites after the
+    MON-33 collapse (was ~30 pre-refactor, mirrored).
+  - `app_handle: Arc<Mutex<Option<AppHandle>>>` (`agent.rs:192`) is still
+    `std::sync::Mutex` from MON-37. MON-34's call.
+  - `live_states` entries are still `Arc<RwLock<AgentStateInner>>` from
+    `tokio::sync::RwLock`, guarded on the async reader side. That is
+    the split MON-34 is being asked to unify.
+
+  **Lock-ordering invariant MON-33 preserved (did not fix):** no path
+  holds `agents` and `session_map` locks simultaneously today, but the
+  acquisition order still varies: `spawn` takes `session_map` →
+  `agents` in sequence; `kill` takes `agents` → `session_map`;
+  `new_session` goes `session_map` → `agents` → `session_map`. All
+  released between steps, so no deadlock — but the implicit ordering
+  is exactly what MON-34's acceptance bullet wants enforced or made
+  structurally impossible (fold the fields into a single struct
+  guarded by one lock, or parking_lot + convention + a doc comment
+  pinning the order). MON-33 deliberately did not touch this — its
+  scope was dedup, not lock topology. Flagged here so the next agent
+  does not treat the inconsistency as an MON-33 regression.
+
+  **Option A (recommended short term):** migrate the four
+  `std::sync::Mutex` sites (`sidecar`, `agents`, `session_map`,
+  `app_handle`) to `parking_lot::Mutex`. No poisoning, no
+  `lock_poisoned` helper needed, `.lock()` returns the guard directly.
+  Pairs well with a doc comment on `AgentManager` pinning the lock
+  order (`sidecar` → `session_map` → `agents` → `app_handle`, or
+  whichever order the next agent picks). `recover_sidecar`'s
+  `try_write()` bail-out at `agent.rs:525` is the one remaining
+  silent-drop site — MON-34's acceptance bullet calls it out
+  explicitly, so fix that in the same PR.
+
+  **Option B (long term, larger blast radius):** fold `agents` and
+  `session_map` into a single struct guarded by one
+  `parking_lot::Mutex` (or `tokio::sync::Mutex` if MON-27 runs first).
+  Kills the lock-ordering question entirely. Bigger diff, and requires
+  re-thinking how `send_command` / `new_session` / `switch_session`
+  acquire both maps without holding either across an `.await` (they
+  don't today — all the `.await` is in `recover_sidecar` /
+  `rebuild_state_from_session`, neither of which touches those maps
+  while they need to).
+
+  **Ticket also wants** (don't miss):
+  - Every `.lock().map_err(...)` site reviewed and poisoning handled
+    deliberately. After MON-33, the sites are all `lock_poisoned(...)`
+    calls — `git grep "lock_poisoned" src-tauri/src/agent.rs` gives you
+    the full list in one shot. Option A (parking_lot) makes this
+    uniformly Nothing-To-Do; Option B collapses them to a single site.
+  - `recover_sidecar`'s `try_write()` bail (agent.rs:525) no longer
+    silently dropping recovery snapshots.
+
+  **Dependency already satisfied:** MON-31 shipped `MonarchError::Lock`
+  and `lock_poisoned(label)`. MON-34 doesn't need to add poisoning
+  infra — it needs to choose whether to keep it, delete it
+  (parking_lot), or redirect it (consolidated lock).
+
+  **Testing note:** the MON-33 round-trip test
+  (`agent::tests::kill_agent_round_trip_funnels_through_shared_method`)
+  seeds `mgr.agents` and `mgr.session_map` directly via the `std::Mutex`
+  locks. MON-34's lock topology change will likely need to update this
+  test's seed path. Keep the assertion shape (kill-clears-both) — that
+  is the regression bar for the MON-33 invariant.
+
+  **Out of scope for MON-34:** MON-27 (full async migration of command
+  handlers). The ticket mentions it as a "long term pairs with" option
+  but Wave 2 is the refactor track; keeping sync bodies with one
+  unified sync lock is the sized-right answer for this ticket.
 
 - **Wave 1 residue MON-31 encountered.** (Historical — MON-31 shipped
   2026-04-11, PR #24. Keeping the list for context on what MON-32 and
