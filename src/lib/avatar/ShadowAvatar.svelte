@@ -76,12 +76,17 @@
     canvasEl.width = size * dpr;
     canvasEl.height = size * dpr;
 
+    console.log("[ShadowAvatar] mounting, src:", riveFile, "sm:", stateMachine, "canvas:", canvasEl?.width, canvasEl?.height);
+
     riveInstance = new Rive({
       src: riveFile,
       canvas: canvasEl,
-      stateMachines: stateMachine,
       autoplay: true,
       useOffscreenRenderer,
+    });
+
+    riveInstance.on(EventType.LoadError, (e: any) => {
+      console.error("[ShadowAvatar] LOAD ERROR:", e);
     });
 
     riveInstance.on(EventType.Load, () => {
