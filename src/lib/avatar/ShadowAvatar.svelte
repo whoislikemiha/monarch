@@ -93,11 +93,22 @@
       riveInstance!.resizeDrawingSurfaceToCanvas();
       // Debug: log what the .riv file actually contains
       const r = riveInstance! as any;
+      const smNames: string[] = r.stateMachineNames ?? [];
+      const animNames: string[] = r.animationNames ?? [];
       console.log("[ShadowAvatar] .riv loaded:", riveFile);
-      console.log("[ShadowAvatar] source:", r.source);
-      console.log("[ShadowAvatar] animationNames:", r.animationNames);
-      console.log("[ShadowAvatar] stateMachineNames:", r.stateMachineNames);
-      cacheInputs(riveInstance!, stateMachine);
+      console.log("[ShadowAvatar] stateMachineNames:", JSON.stringify(smNames));
+      console.log("[ShadowAvatar] animationNames:", JSON.stringify(animNames));
+
+      // Start the first available state machine
+      const smToUse = smNames[0];
+      if (smToUse) {
+        console.log("[ShadowAvatar] starting state machine:", smToUse);
+        r.play(smToUse);
+        cacheInputs(riveInstance!, smToUse);
+      } else if (animNames[0]) {
+        console.log("[ShadowAvatar] no SM, playing animation:", animNames[0]);
+        r.play(animNames[0]);
+      }
     });
 
     return () => {
