@@ -75,11 +75,21 @@ Do **not** include:
 - Line-by-line diffs
 - Concrete implementation details beyond the conceptual level
 
-## 5. Save the plan
+## 5. Save and commit the plan
 
 Write the research plan from step 4 to `thoughts/plan/<issue-id>.md` (e.g. `thoughts/plan/MON-7.md`). Use the Linear issue identifier as the filename. Create the `thoughts/plan/` directory if it doesn't exist.
 
 The file should contain the full plan exactly as produced in step 4 (summary, relevant files, what needs to change, open questions, out of scope).
+
+**Commit and push immediately:**
+
+```bash
+git add thoughts/plan/<issue-id>.md
+git commit -m "docs(<issue-id-lowercase>): research plan"
+git push
+```
+
+Do not leave plan files uncommitted.
 
 ## 6. Hand off
 

@@ -101,7 +101,7 @@ Once approved:
 
 Do not merge the PR. The user merges.
 
-## 8. Write implementation notes
+## 8. Write and commit implementation notes
 
 After the PR is created, write a high-level summary to `thoughts/impl/<issue-id>.md`. Keep it short — this is a reference for future context, not documentation. Include:
 
@@ -109,3 +109,13 @@ After the PR is created, write a high-level summary to `thoughts/impl/<issue-id>
 - **Key decisions** — notable design choices, trade-offs, or deviations.
 - **Files touched** — main files created or modified.
 - **What was left out** — anything deferred or descoped.
+
+**Commit and push immediately:**
+
+```bash
+git add thoughts/impl/<issue-id>.md
+git commit -m "docs(<issue-id-lowercase>): implementation notes"
+git push
+```
+
+Do not leave impl files uncommitted — they are part of the PR.
