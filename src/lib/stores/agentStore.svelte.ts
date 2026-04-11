@@ -241,6 +241,10 @@ export async function initialize() {
 // Tab management
 // ---------------------------------------------------------------------------
 
+export function setActiveTab(id: string | null) {
+  activeTabId = id;
+}
+
 export function openTab(id: string) {
   if (!openTabs.includes(id)) {
     openTabs = [...openTabs, id];

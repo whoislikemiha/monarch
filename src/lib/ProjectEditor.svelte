@@ -1,15 +1,14 @@
 <script lang="ts">
   import { invoke } from "$lib/api";
   import type { Project } from "./types";
+  import { agents } from "$lib/stores/agentStore.svelte";
 
   let {
     project,
-    agents,
     onclose,
     onupdate,
   }: {
     project: Project;
-    agents: { id: string; projectId?: string }[];
     onclose: () => void;
     onupdate: (project: Project) => void;
   } = $props();

@@ -1,10 +1,17 @@
 <script lang="ts">
-  import type { Agent, Project, SessionRecord, ShadowIdentity } from "./types";
+  import type { Project, ShadowIdentity } from "./types";
   import AgentStatusDot from "./AgentStatusDot.svelte";
+  import {
+    agents,
+    projects,
+    activeTabId,
+    selectAgent,
+    killAgent,
+  } from "$lib/stores/agentStore.svelte";
 
   interface ProjectGroup {
     project?: Project;
-    agents: Agent[];
+    agents: typeof agents;
   }
 
   /** Snapshot of the clicked row passed to onsavetemplate. */
@@ -18,23 +25,13 @@
   }
 
   let {
-    agents,
-    projects = [],
     collapsed = false,
-    activeId,
-    onselect,
     oncreate,
-    onkill,
     oneditproject,
     onsavetemplate,
   }: {
-    agents: Agent[];
-    projects?: Project[];
     collapsed?: boolean;
-    activeId: string | null;
-    onselect: (id: string) => void;
     oncreate: () => void;
-    onkill: (id: string) => void;
     oneditproject?: (project: Project) => void;
     onsavetemplate?: (source: TemplateSource) => void;
   } = $props();
@@ -43,7 +40,7 @@
   // we can render one that matches the rest of the app.
   let contextMenu: { x: number; y: number; source: TemplateSource } | null = $state(null);
 
-  function openAgentMenu(e: MouseEvent, agent: Agent) {
+  function openAgentMenu(e: MouseEvent, agent: typeof agents[number]) {
     e.preventDefault();
     contextMenu = {
       x: e.clientX,
@@ -132,10 +129,10 @@
         {#each group.agents as agent (agent.id)}
           <div
             class="agent-item"
-            class:active={agent.id === activeId}
+            class:active={agent.id === activeTabId}
             class:standby={agent.status === "stopped"}
-            onclick={() => onselect(agent.id)}
-            onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') onselect(agent.id); }}
+            onclick={() => selectAgent(agent.id)}
+            onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') selectAgent(agent.id); }}
             oncontextmenu={(e: MouseEvent) => openAgentMenu(e, agent)}
             role="button"
             tabindex="0"
@@ -151,7 +148,7 @@
             </div>
             <button
               class="btn-kill"
-              onclick={(e: MouseEvent) => { e.stopPropagation(); onkill(agent.id); }}
+              onclick={(e: MouseEvent) => { e.stopPropagation(); killAgent(agent.id); }}
               title="Kill"
             >
               &times;

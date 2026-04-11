@@ -18,6 +18,11 @@
     detachedLiveState,
   } from "./toolbox/liveAgentStore.svelte";
   import type { LiveAgentState } from "./toolbox/types";
+  import {
+    restartAgent,
+    spawnStoppedAgent,
+    updateAgent as storeUpdateAgent,
+  } from "$lib/stores/agentStore.svelte";
 
   // Dev-only desync indicator. Opt-in via VITE_MONARCH_DEBUG_DESYNC=true.
   // Rationale: MON-14 Phase 2 is the first time the frontend can observe
@@ -29,17 +34,11 @@
     agent,
     projectName,
     customPrompt = $bindable(null),
-    onrestart,
-    onspawn,
-    onagentchange,
     onprojectedit,
   }: {
     agent: Agent;
     projectName?: string;
     customPrompt?: string | null;
-    onrestart?: (id: string) => void;
-    onspawn?: (agentId: string) => Promise<void>;
-    onagentchange?: (agentId: string, updater: (agent: Agent) => Agent) => void;
     onprojectedit?: () => void;
   } = $props();
 
@@ -74,7 +73,7 @@
   }
 
   function updateAgent(updater: (agent: Agent) => Agent, agentId: string = agent.id) {
-    onagentchange?.(agentId, updater);
+    storeUpdateAgent(agentId, updater);
   }
 
   function countPersistedMessages(list: DisplayItem[]): number {
@@ -241,9 +240,9 @@
   }
 
   async function sendPrompt(message: string) {
-    if (agent.status === "stopped" && onspawn) {
+    if (agent.status === "stopped") {
       const sessionReady = new Promise<void>((resolve) => { sessionReadyResolve = resolve; });
-      await onspawn(agent.id);
+      await spawnStoppedAgent(agent.id);
       await sessionReady;
     }
     await sendPiCommand({ type: "prompt", message });
@@ -536,11 +535,9 @@
       {/if}
 
       <div class="compact-actions">
-        {#if onrestart}
-          <button class="restore-btn" onclick={() => onrestart?.(agent.id)}>
-            {agent.status === "error" ? "Retry" : "Restart"}
-          </button>
-        {/if}
+        <button class="restore-btn" onclick={() => restartAgent(agent.id)}>
+          {agent.status === "error" ? "Retry" : "Restart"}
+        </button>
       </div>
     </div>
   {:else}
@@ -561,9 +558,7 @@
       {#if agent.status === "stopped" && !isStandby}
         <div class="exit-banner">
           <span>Agent stopped</span>
-          {#if onrestart}
-            <button class="restart-btn" onclick={() => onrestart?.(agent.id)}>Restart</button>
-          {/if}
+          <button class="restart-btn" onclick={() => restartAgent(agent.id)}>Restart</button>
         </div>
       {/if}
       {#if isStandby}

@@ -3,17 +3,16 @@
   import { invoke } from "$lib/api";
   import { open } from "@tauri-apps/plugin-dialog";
   import { matchBinding } from "$lib/keybindings.svelte";
-  import type { AgentConfig, AgentTemplate, Project, ShadowGrade } from "./types";
+  import type { AgentConfig, AgentTemplate, ShadowGrade } from "./types";
   import { SHADOW_GRADES } from "./types";
+  import { projects } from "$lib/stores/agentStore.svelte";
 
   let {
     onspawn,
     oncancel,
-    projects = [],
   }: {
     onspawn: (config: AgentConfig) => void;
     oncancel: () => void;
-    projects?: Project[];
   } = $props();
 
   let modelInput = $state("");
