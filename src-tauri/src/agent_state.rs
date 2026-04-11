@@ -150,6 +150,17 @@ pub struct LiveAgentState {
     /// Monotonically increasing per-agent. The frontend reconciles by dropping
     /// any incoming snapshot whose version is <= its current entry version.
     pub state_version: u64,
+    /// True while the agent is actively producing a turn. Drives the Abort
+    /// button and the `ChatInput` disabled state on the frontend, plus the
+    /// status dots in Sidebar/TabBar. Flipped on in `apply_event` at
+    /// `MessageStart { assistant }` and `ToolExecutionStart`, off at
+    /// `AgentEnd`. Tighter boundaries (`TurnEnd`, `MessageEnd`,
+    /// `ToolExecutionEnd`) are intentionally avoided to prevent mid-turn
+    /// flicker while tools run or the next LLM call spins up — a turn is
+    /// not "done" until the agent stops talking and tools stop running.
+    /// If Pi SDK ever starts firing `MessageEnd` mid-agent-turn (parallel
+    /// tool calls) this policy needs to be revisited — see MON-40.
+    pub is_streaming: bool,
 }
 
 // ---- Event application -------------------------------------------------
@@ -184,6 +195,7 @@ impl LiveAgentState {
         self.current_tool_group_idx = None;
         self.activity_status = String::new();
         self.desynced = false;
+        self.is_streaming = false;
         self.state_version = self.state_version.saturating_add(1);
     }
 

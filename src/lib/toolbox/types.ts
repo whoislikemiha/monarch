@@ -31,6 +31,8 @@ export interface LiveAgentState {
   stateVersion: number;
   /** True when Rust-side reader hit a parse failure or unreconcilable event. */
   desynced: boolean;
+  /** True while the agent is actively producing a turn. Drives Abort/ChatInput/status dots. */
+  isStreaming: boolean;
 }
 
 /**

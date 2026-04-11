@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Agent } from "./types";
+  import { liveAgentStore } from "./toolbox/liveAgentStore.svelte";
 
   let {
     agents,
@@ -44,7 +45,7 @@
         role="tab"
         tabindex="0"
       >
-        <span class="tab-dot {agent.isStreaming ? 'streaming' : agent.status}"></span>
+        <span class="tab-dot {liveAgentStore.byAgent.get(agent.id)?.isStreaming ? 'streaming' : agent.status}"></span>
         <span class="tab-name">{agent.name}</span>
         <button
           class="tab-close"
@@ -77,7 +78,7 @@
               role="menuitem"
               onclick={() => handleDropdownSelect(agent.id)}
             >
-              <span class="tab-dot {agent.isStreaming ? 'streaming' : agent.status}"></span>
+              <span class="tab-dot {liveAgentStore.byAgent.get(agent.id)?.isStreaming ? 'streaming' : agent.status}"></span>
               <span class="dropdown-name">{agent.name}</span>
               {#if agent.model}<span class="dropdown-model">{agent.model}</span>{/if}
             </button>

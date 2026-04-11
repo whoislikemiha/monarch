@@ -58,6 +58,7 @@ function adaptSnapshot(snapshot: WireLiveAgentState): LiveAgentState {
     eventCount: Number(snapshot.eventCount),
     stateVersion: Number(snapshot.stateVersion),
     desynced: snapshot.desynced,
+    isStreaming: snapshot.isStreaming,
   };
 }
 
@@ -107,5 +108,6 @@ export function detachedLiveState(): LiveAgentState {
     eventCount: 0,
     stateVersion: 0,
     desynced: false,
+    isStreaming: false,
   };
 }
