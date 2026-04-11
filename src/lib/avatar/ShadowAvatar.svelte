@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Rive, EventType, StateMachineInputType } from "@rive-app/webgl2";
-  import type { StateMachineInput } from "@rive-app/webgl2";
+  import { Rive, EventType, StateMachineInputType, Layout, Fit, Alignment } from "@rive-app/canvas";
+  import type { StateMachineInput } from "@rive-app/canvas";
   import { liveAgentStore, detachedLiveState } from "../toolbox/liveAgentStore.svelte";
   import {
     deriveAnimationState,
@@ -10,20 +10,18 @@
   } from "./stateMapper";
 
   const DEFAULT_RIV = "/avatars/shadow_animations.riv";
-  const DEFAULT_STATE_MACHINE = "ShadowBehavior";
+  const DEFAULT_STATE_MACHINE = "StateMachine";
 
   let {
     agentId,
     size = 64,
     stateMachine = DEFAULT_STATE_MACHINE,
     riveFile = DEFAULT_RIV,
-    useOffscreenRenderer = true,
   }: {
     agentId: string;
     size?: number;
     stateMachine?: string;
     riveFile?: string;
-    useOffscreenRenderer?: boolean;
   } = $props();
 
   let canvasEl: HTMLCanvasElement;
@@ -80,13 +78,17 @@
       src: riveFile,
       canvas: canvasEl,
       stateMachines: stateMachine,
+      layout: new Layout({ fit: Fit.Contain, alignment: Alignment.Center }),
       autoplay: true,
-      useOffscreenRenderer,
     });
 
     riveInstance.on(EventType.Load, () => {
       riveInstance!.resizeDrawingSurfaceToCanvas();
-      cacheInputs(riveInstance!, stateMachine);
+      // Auto-detect: use first available state machine
+      const r = riveInstance! as any;
+      const smNames: string[] = r.stateMachineNames ?? [];
+      const smName = smNames[0] ?? stateMachine;
+      cacheInputs(riveInstance!, smName);
     });
 
     return () => {
