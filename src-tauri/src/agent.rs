@@ -1561,12 +1561,7 @@ pub(crate) fn chrono_now() -> String {
 }
 
 pub(crate) fn uuid_v4_simple() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let t = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    format!("{:x}-{:x}", t, std::process::id())
+    uuid::Uuid::new_v4().to_string()
 }
 
 #[tauri::command]
