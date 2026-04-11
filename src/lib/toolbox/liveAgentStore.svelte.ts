@@ -12,13 +12,29 @@ import type { LiveAgentState } from "./types";
  * subscribe for incremental snapshots, then hand each snapshot to
  * `seedFromSnapshot` (initial) or `applyUpdate` (subsequent).
  *
- * Svelte 5 note: `SvelteMap` is required so that `.get(id)` reads become
- * reactive dependencies and `.set(id, entry)` invalidates derivations that
- * previously read that key.
+ * Each map entry is a `$state(...)` proxy whose identity is stable across the
+ * agent's lifetime in the store (MON-41). Updates mutate fields in place so
+ * that consumers reading a single field like `live.isStreaming` only
+ * re-invalidate when that field actually changes, instead of once per
+ * snapshot.
  */
 export const liveAgentStore: { byAgent: SvelteMap<string, LiveAgentState> } = {
   byAgent: new SvelteMap<string, LiveAgentState>(),
 };
+
+/** Field-by-field copy from an adapted snapshot onto an existing reactive entry. */
+function assignInto(target: LiveAgentState, source: LiveAgentState): void {
+  target.items = source.items;
+  target.toolExecutions = source.toolExecutions;
+  target.streamingMessage = source.streamingMessage;
+  target.lastUsage = source.lastUsage;
+  target.currentToolGroup = source.currentToolGroup;
+  target.activityStatus = source.activityStatus;
+  target.eventCount = source.eventCount;
+  target.stateVersion = source.stateVersion;
+  target.desynced = source.desynced;
+  target.isStreaming = source.isStreaming;
+}
 
 /**
  * Convert the Rust-emitted `LiveAgentState` wire shape into the frontend view
@@ -63,21 +79,38 @@ function adaptSnapshot(snapshot: WireLiveAgentState): LiveAgentState {
 }
 
 /**
- * Initial seed for an agent — called after `get_agent_state` returns on bind.
- * Replaces any existing entry unconditionally.
+ * Initial seed for an agent — called after `get_agent_state` returns on bind,
+ * and again on session switches / history loads / restores.
+ *
+ * On first seed, allocates a new `$state(...)` entry and installs it. On
+ * re-seed (existing entry), mutates the entry in place without consulting
+ * `stateVersion` — a seed is authoritative (e.g. `rebuild_agent_state_from_session`
+ * can return a snapshot whose version is lower than the previous session's
+ * final version).
  */
 export function seedFromSnapshot(
   agentId: string,
   snapshot: WireLiveAgentState,
 ): LiveAgentState {
-  const view = adaptSnapshot(snapshot);
-  liveAgentStore.byAgent.set(agentId, view);
-  return view;
+  const adapted = adaptSnapshot(snapshot);
+  const existing = liveAgentStore.byAgent.get(agentId);
+  if (existing) {
+    assignInto(existing, adapted);
+    return existing;
+  }
+  const entry = $state(adapted);
+  liveAgentStore.byAgent.set(agentId, entry);
+  return entry;
 }
 
 /**
  * Incremental update from the `agent-state-{id}` channel. Drops the snapshot
  * if its version is not newer than what we already have (out-of-order / stale).
+ *
+ * On accept, mutates the existing entry field-by-field so that consumers
+ * reading a single field only invalidate when that field actually changes
+ * (MON-41). If no entry exists yet (update arrived before seed), allocates
+ * one — matches the pre-MON-41 behavior of the unconditional `.set`.
  */
 export function applyUpdate(
   agentId: string,
@@ -88,7 +121,13 @@ export function applyUpdate(
   if (existing && incomingVersion <= existing.stateVersion) {
     return;
   }
-  liveAgentStore.byAgent.set(agentId, adaptSnapshot(snapshot));
+  const adapted = adaptSnapshot(snapshot);
+  if (existing) {
+    assignInto(existing, adapted);
+    return;
+  }
+  const entry = $state(adapted);
+  liveAgentStore.byAgent.set(agentId, entry);
 }
 
 /** Drop an agent's entry entirely (on kill / removal). */
