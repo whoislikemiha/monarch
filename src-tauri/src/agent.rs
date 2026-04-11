@@ -40,21 +40,10 @@ pub struct WsBroadcast {
 
 // ---- Agent state tracking ----
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AgentLifecycleState {
-    Idle,
-    Busy,
-    Stopped,
-}
-
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct AgentState {
-    pub lifecycle: AgentLifecycleState,
     pub provider: Option<String>,
     pub model: Option<String>,
-    pub thinking_level: Option<String>,
-    pub is_streaming: bool,
     pub session_id: String,
     /// The original create_session command, replayed on sidecar crash
     /// recovery. Typed `SidecarCommand::CreateSession` since MON-32 — the
@@ -758,11 +747,8 @@ impl AgentManager {
             inner.agents.insert(
                 id,
                 AgentState {
-                    lifecycle: AgentLifecycleState::Idle,
                     provider,
                     model,
-                    thinking_level,
-                    is_streaming: false,
                     session_id,
                     create_cmd: cmd,
                 },
@@ -1631,11 +1617,8 @@ mod tests {
 
     fn seeded_agent_state(agent_id: &str, session_id: &str) -> AgentState {
         AgentState {
-            lifecycle: AgentLifecycleState::Idle,
             provider: None,
             model: None,
-            thinking_level: None,
-            is_streaming: false,
             session_id: session_id.to_string(),
             create_cmd: SidecarCommand::NewSession {
                 agent_id: agent_id.to_string(),
