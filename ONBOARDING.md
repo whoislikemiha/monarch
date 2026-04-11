@@ -253,7 +253,7 @@ Sidecar ([`sidecar/src/runtime-manager.ts`](./sidecar/src/runtime-manager.ts) `c
 4. Pi runs the LLM loop, streaming events (`message_start` → `message_update` → `message_end`, `tool_execution_*`, `turn_*`).
 5. Sidecar forwards every Pi event to Rust.
 6. Rust's async event handler (`handle_sidecar_event`) does three things on each `event`-typed line:
-   - Persists relevant rows to SQLite via `spawn_blocking(persist_event, ...)` (moving off `tokio-rusqlite` is follow-up **MON-27**).
+   - Enqueues persistence effects on the bounded single-consumer mpsc pipeline (`PersistCommand`), which applies them in FIFO order by awaiting the async `Database` methods directly — no `spawn_blocking` hop, since `db.rs` runs on `tokio-rusqlite`.
    - Feeds the event into the per-agent `LiveAgentState::apply_event` state machine (`src-tauri/src/agent_state.rs`) — Rust owns turn assembly: streaming messages, tool-group stitching, `lastUsage`, `activityStatus`, etc.
    - Emits the assembled snapshot on `agent-state-{agent_id}` as a JSON-encoded string, with a 16ms debounce coalescing streaming `message_update`s (terminal events flush immediately).
 7. Legacy `agent-event-{agent_id}` forwarding is still present for out-of-band signals only: `session_ready`, `sidecar_error`, and `extension_ui_request`. **Message and tool events are not consumed from this channel by the frontend anymore.** The raw `event` forward on this topic is pending removal (MON-14 follow-up).
@@ -284,9 +284,9 @@ If the sidecar dies, Rust's async stdout reader task hits EOF. The next command 
 
 From the frontend's perspective, nothing happened: the `agent-state-{id}` listener picks up the rebuilt snapshot automatically, and the UI reflects it without a manual refresh.
 
-### 5.5 Phased tokio migration (MON-27)
+### 5.5 Fully tokio-native backend (MON-14 + MON-27)
 
-MON-14 Phase 1 moved the sidecar onto `tokio::process` with an async stdout reader, but kept the write path and Tauri command handlers synchronous — commands enqueue on an unbounded mpsc drained by a dedicated writer task, and DB writes inside the reader go through `tauri::async_runtime::spawn_blocking` (search `TODO(MON-27)` in `agent.rs`). The follow-up issue migrates `db.rs` to `tokio-rusqlite` and converts command handlers to async so the `spawn_blocking` scaffolding can be removed.
+The backend is fully tokio-native. The sidecar runs on `tokio::process`, every `#[tauri::command]` in `agent.rs` is `async fn`, the write path is a direct `.await` into a `tokio::sync::Mutex<ChildStdin>` (no mpsc bridge, no dedicated writer task), and SQLite runs on `tokio-rusqlite` so every `Database` method is `async fn` and dispatches work onto the connection's dedicated background thread. `persistence.rs` prompt-file IO uses `tokio::fs`. The one remaining sync bridge is `AgentManager::shutdown_sidecar`, which is called from Tauri's sync `RunEvent::ExitRequested` hook and uses `tauri::async_runtime::block_on` to close the async-owned `ChildStdin` — an unavoidable compromise, since the Tauri hook itself is sync. The critical invariant for any new code is that `parking_lot::MutexGuard` must never be held across an `.await` (`inner`, `sidecar`, `app_handle`).
 
 ---
 
