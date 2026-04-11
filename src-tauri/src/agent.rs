@@ -1012,14 +1012,14 @@ fn emit_state_event(
 
 /// Handle a single JSONL event from the sidecar.
 ///
-/// MON-14 Phase 1: this is now async, owns the per-agent `LiveAgentState`
-/// mutation, and emits assembled snapshots on `agent-state-{id}` in addition
-/// to the legacy raw `agent-event-{id}` forwarding. The dual emission is
-/// intentional: Phase 2 switches the frontend to the new channel, at which
-/// point the legacy forwarding of message/tool events can be removed.
+/// MON-14 Phase 1: this is async, owns the per-agent `LiveAgentState`
+/// mutation, and emits assembled snapshots on `agent-state-{id}`.
 ///
-/// `session_ready`, `extension_ui_request`, and error pings stay on
-/// `agent-event-{id}` only — they are not folded into `LiveAgentState`.
+/// `agent-event-{id}` is narrowed to out-of-band signals only:
+/// `session_ready`, `extension_ui_request`, and sidecar errors. Message and
+/// tool events flow exclusively through the assembled `agent-state-{id}`
+/// channel — MON-39 removed the Phase-1 dual emission once the frontend
+/// `liveAgentStore` took over assembly.
 async fn handle_sidecar_event(
     app: &AppHandle,
     persist_tx: &mpsc::Sender<PersistCommand>,
@@ -1120,10 +1120,6 @@ async fn handle_sidecar_event(
                 if !agent_id.is_empty() {
                     mark_agent_desynced(app, ws_tx, live_states, &agent_id).await;
                 }
-                // Still forward the raw event to the legacy channel so the
-                // existing frontend sees it — keeps Phase-1 behavior intact.
-                let event_name = format!("agent-event-{}", agent_id);
-                emit_event(app, ws_tx, &event_name, &raw.to_string());
                 return;
             }
 
@@ -1140,15 +1136,6 @@ async fn handle_sidecar_event(
                     eprintln!("[monarch] persist consumer closed, dropping event");
                     break;
                 }
-            }
-
-            // Legacy raw-channel forwarding. Preserved during Phase 1 so the
-            // existing frontend (which still assembles from these events)
-            // keeps working unchanged. Phase 2 removes the subscriber; the
-            // follow-up issue removes this emit.
-            if let Some(inner_raw) = raw_value.get("event") {
-                let event_name = format!("agent-event-{}", agent_id);
-                emit_event(app, ws_tx, &event_name, &inner_raw.to_string());
             }
 
             // Apply the event to per-agent LiveAgentState and decide whether
