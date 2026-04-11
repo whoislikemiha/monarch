@@ -252,34 +252,41 @@ Sidecar ([`sidecar/src/runtime-manager.ts`](./sidecar/src/runtime-manager.ts) `c
 3. Sidecar routes by command type (`prompt`, `abort`, `set_model`, `set_thinking_level`, `compact`, `new_session`, `set_custom_prompt`, ...).
 4. Pi runs the LLM loop, streaming events (`message_start` → `message_update` → `message_end`, `tool_execution_*`, `turn_*`).
 5. Sidecar forwards every Pi event to Rust.
-6. Rust's event handler (`handle_sidecar_event`) does two things on each event:
-   - For `message_end` / `tool_execution_end`: persist to SQLite via `db.save_message_internal()` and increment counters.
-   - Always: re-emit the event on the Tauri bus as `agent-event-{agent_id}` so the frontend can render it.
-7. `AgentView.svelte` listens on that topic, parses the payload, and updates the reactive items/tool executions/streaming state.
+6. Rust's async event handler (`handle_sidecar_event`) does three things on each `event`-typed line:
+   - Persists relevant rows to SQLite via `spawn_blocking(persist_event, ...)` (moving off `tokio-rusqlite` is follow-up **MON-27**).
+   - Feeds the event into the per-agent `LiveAgentState::apply_event` state machine (`src-tauri/src/agent_state.rs`) — Rust owns turn assembly: streaming messages, tool-group stitching, `lastUsage`, `activityStatus`, etc.
+   - Emits the assembled snapshot on `agent-state-{agent_id}` as a JSON-encoded string, with a 16ms debounce coalescing streaming `message_update`s (terminal events flush immediately).
+7. Legacy `agent-event-{agent_id}` forwarding is still present for out-of-band signals only: `session_ready`, `sidecar_error`, and `extension_ui_request`. **Message and tool events are not consumed from this channel by the frontend anymore.** The raw `event` forward on this topic is pending removal (MON-14 follow-up).
+8. `AgentView.svelte` uses a **pull-then-subscribe** pattern: on bind, `invoke("get_agent_state", { agentId })` seeds `liveAgentStore`, then `listen("agent-state-{id}")` applies incremental snapshots. Snapshots are reconciled by `stateVersion` — any incoming snapshot with `version <= entry.stateVersion` is dropped.
 
-**Important:** the frontend **never** writes to the DB for conversation history. Rust owns persistence. The frontend is a view on top of state that Rust has already committed.
+**Important:** the frontend **never** writes to the DB for conversation history and **never** assembles turn state. Rust owns persistence and the authoritative live view. The frontend is a passive receiver of Rust-assembled snapshots.
 
 ### 5.3 Restore (pick up a saved agent on startup)
 
 1. App startup: `App.svelte` calls `db_get_agents` and populates `savedAgents[]`, shows the restore bar.
 2. User clicks "Restore All" (or one specifically). `restoreAgent()` calls `createAgent()` with `reuseExistingSession: true` and a `sourceSessionId` pointing at the session to replay.
 3. The normal spawn flow runs (steps 5.1), but using the existing session row instead of creating a new one.
-4. When the sidecar emits `session_ready`, `AgentView` notices `sourceSessionId` is set and calls `load_session_context`.
-5. Rust's `load_session_context` walks ancestry, builds a `load_session` command with the full message array, and sends it to the sidecar.
+4. `AgentView.bindAgent` calls `rebuild_agent_state_from_session` with the `sourceSessionId`, which loads messages from SQLite (following parent-session ancestry), rebuilds `LiveAgentState.items` via `display_items_from_messages`, replaces the in-memory entry, and returns the new snapshot. The frontend seeds its store from the returned value (and Rust also emits the same snapshot on `agent-state-{id}`).
+5. When the sidecar emits `session_ready`, `AgentView` notices `sourceSessionId` was pending and calls `load_session_context` — Rust walks ancestry and sends a `load_session` command to inject messages into the sidecar's LLM context.
 6. Sidecar's `loadSession` reconstructs messages (user / assistant / toolResult) and pushes them into `session.agent.state.messages` plus the session manager's persisted log.
 
 ### 5.4 Recover from sidecar crash
 
-If the sidecar dies, Rust's stdout reader thread hits EOF. The next command triggers `send_with_recovery()`, which falls into `recover_sidecar()`:
+If the sidecar dies, Rust's async stdout reader task hits EOF. The next command triggers `send_with_recovery()`, which falls into `recover_sidecar()`:
 
 1. Respawn the sidecar process.
 2. Snapshot `agents` + `session_map`.
 3. For each tracked agent:
    - Replay the cached `create_cmd_json` (same command that spawned it originally).
    - Walk ancestry in SQLite and replay the full message history via `load_session`.
+   - Call `LiveAgentState::reset_with_items` with the rebuilt display items and emit a single snapshot on `agent-state-{id}`. Mid-stream state (partial streaming message, in-flight tool group) is intentionally dropped.
 4. Retry the original failing command.
 
-From the frontend's perspective, nothing happened. Tauri event listeners stay attached.
+From the frontend's perspective, nothing happened: the `agent-state-{id}` listener picks up the rebuilt snapshot automatically, and the UI reflects it without a manual refresh.
+
+### 5.5 Phased tokio migration (MON-27)
+
+MON-14 Phase 1 moved the sidecar onto `tokio::process` with an async stdout reader, but kept the write path and Tauri command handlers synchronous — commands enqueue on an unbounded mpsc drained by a dedicated writer task, and DB writes inside the reader go through `tauri::async_runtime::spawn_blocking` (search `TODO(MON-27)` in `agent.rs`). The follow-up issue migrates `db.rs` to `tokio-rusqlite` and converts command handlers to async so the `spawn_blocking` scaffolding can be removed.
 
 ---
 
@@ -312,6 +319,17 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 | `event`                   | Wrapper around a raw Pi SDK runtime event (`message_*`, `tool_execution_*`, `turn_*`, `queue_update`, `compaction_*`, …). |
 | `extension_ui_request`    | Pi needs user input (select / confirm / input / editor). Includes a `requestId` for the eventual `extension_ui_response`. |
 | `error`                   | Sidecar-level error (parse failure, model setup failure, ...). |
+
+### Rust → frontend (Tauri events)
+
+| Channel                   | Payload | Meaning |
+|---------------------------|---------|---------|
+| `agent-state-{id}`        | JSON-encoded `LiveAgentState` (string) | **Canonical assembled state.** Rust-owned turn assembly; streaming updates debounced to ~60fps, terminal events flush immediately. The frontend pulls via `get_agent_state` on bind and then subscribes for incremental snapshots, reconciling by `stateVersion`. |
+| `agent-event-{id}`        | Varies (JSON) | Out-of-band signals only: `session_ready`, `sidecar_error`, `extension_ui_request`. **Message and tool forwarding on this channel is deprecated** — a follow-up issue removes the Rust-side emit after verifying no frontend subscribers remain. |
+| `agent-exit-{id}`         | `number \| null` | Pi process exit code. |
+| `agent-stderr-{id}`       | `string` | Per-line sidecar stderr, buffered into `agent.stderrLines`. |
+
+`LiveAgentState` is defined in Rust at `src-tauri/src/agent_state.rs`; the TypeScript shape is generated via `specta` + `tauri-specta` into `src/lib/bindings.ts`. To regenerate after a Rust change, run `cargo run -- --export-bindings` from `src-tauri/` — the generated file is post-processed to route through `$lib/api` so the WS fallback still works in non-Tauri environments.
 
 ### Example message shapes
 

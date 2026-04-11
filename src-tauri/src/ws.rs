@@ -10,6 +10,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::agent::{AgentManager, WsBroadcast};
 use crate::db::Database;
+use crate::error::MonarchError;
 use crate::models::ModelCache;
 
 /// Shared state passed to each WebSocket connection handler
@@ -144,7 +145,7 @@ async fn handle_message(
     Some(make_response(id, result))
 }
 
-fn make_response(id: Option<Value>, result: Result<Value, String>) -> String {
+fn make_response(id: Option<Value>, result: Result<Value, MonarchError>) -> String {
     match result {
         Ok(val) => {
             let mut resp = serde_json::json!({"result": val});
@@ -154,7 +155,15 @@ fn make_response(id: Option<Value>, result: Result<Value, String>) -> String {
             resp.to_string()
         }
         Err(e) => {
-            let mut resp = serde_json::json!({"error": e});
+            // Embed the full ErrorDto (kind, message, details) as the JSON-RPC
+            // error.data field so WS clients see the same typed shape Tauri
+            // clients get via the MonarchError Serialize impl. The top-level
+            // `error` string stays human-readable for backwards compatibility.
+            let dto = serde_json::to_value(&e).unwrap_or(Value::Null);
+            let mut resp = serde_json::json!({
+                "error": e.to_string(),
+                "errorData": dto,
+            });
             if let Some(id) = id {
                 resp["id"] = id;
             }
@@ -165,72 +174,67 @@ fn make_response(id: Option<Value>, result: Result<Value, String>) -> String {
 
 /// Dispatch a command to the appropriate internal handler.
 /// Adding a new command = adding one match arm here.
-async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Value, String> {
+pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Value, MonarchError> {
     match cmd {
         // ---- Agent lifecycle ----
         "spawn_agent" => {
-            let id = str_field(&args, "id")?;
-            let session_id = str_field(&args, "sessionId")?;
-            crate::agent::ws_spawn_agent(
-                &state.agent_mgr,
-                &state.db,
-                id,
-                session_id,
-                opt_str(&args, "provider"),
-                opt_str(&args, "model"),
-                opt_str(&args, "thinkingLevel"),
-                opt_str(&args, "cwd"),
-                opt_str(&args, "shadowName"),
-                opt_str(&args, "shadowTitle"),
-                opt_str(&args, "shadowGrade"),
-            )?;
+            // MON-35: single-shot typed decode. `SpawnAgentRequest` is the
+            // shared wire contract between the Tauri command and the WS
+            // bridge, so the serde round-trip validates the payload instead
+            // of per-field `str_field` / `opt_str` extraction.
+            let req: crate::agent::SpawnAgentRequest = serde_json::from_value(args)?;
+            let app = state.agent_mgr.get_app_handle()?;
+            state.agent_mgr.spawn(&app, &state.db, req)?;
             Ok(Value::Null)
         }
         "send_command" => {
             let id = str_field(&args, "id")?;
             let command_json = str_field(&args, "commandJson")?;
-            crate::agent::ws_send_command(&state.agent_mgr, &state.db, id, command_json)?;
+            let app = state.agent_mgr.get_app_handle()?;
+            state.agent_mgr.send_command(&app, &state.db, id, command_json)?;
             Ok(Value::Null)
         }
         "kill_agent" => {
             let id = str_field(&args, "id")?;
-            crate::agent::ws_kill_agent(&state.agent_mgr, id)?;
+            state.agent_mgr.kill(&id)?;
             Ok(Value::Null)
         }
         "load_session_context" => {
             let agent_id = str_field(&args, "agentId")?;
             let source_session_id = str_field(&args, "sourceSessionId")?;
-            crate::agent::ws_load_session_context(&state.agent_mgr, &state.db, agent_id, source_session_id)?;
+            let app = state.agent_mgr.get_app_handle()?;
+            state.agent_mgr.load_session_context(&app, &state.db, agent_id, source_session_id)?;
             Ok(Value::Null)
         }
         "new_agent_session" => {
             let agent_id = str_field(&args, "agentId")?;
             let new_session_id = str_field(&args, "newSessionId")?;
             let parent_session_id = opt_str(&args, "parentSessionId");
-            crate::agent::ws_new_agent_session(&state.agent_mgr, &state.db, agent_id, new_session_id, parent_session_id)?;
+            let app = state.agent_mgr.get_app_handle()?;
+            state.agent_mgr.new_session(&app, &state.db, agent_id, new_session_id, parent_session_id)?;
             Ok(Value::Null)
         }
         "switch_agent_session" => {
             let agent_id = str_field(&args, "agentId")?;
             let session_id = str_field(&args, "sessionId")?;
-            crate::agent::ws_switch_agent_session(&state.agent_mgr, &state.db, agent_id, session_id)?;
+            let app = state.agent_mgr.get_app_handle()?;
+            state.agent_mgr.switch_session(&app, &state.db, agent_id, session_id)?;
             Ok(Value::Null)
         }
         "respond_extension_ui" => {
-            let agent_id = str_field(&args, "agentId")?;
-            let request_id = str_field(&args, "requestId")?;
-            let value = args.get("value").cloned().unwrap_or(Value::Null);
-            crate::agent::ws_respond_extension_ui(&state.agent_mgr, &state.db, agent_id, request_id, value)?;
+            let req: crate::agent::ExtensionUiResponseRequest = serde_json::from_value(args)?;
+            let app = state.agent_mgr.get_app_handle()?;
+            state.agent_mgr.respond_extension_ui(&app, &state.db, req)?;
             Ok(Value::Null)
         }
         "detect_project" => {
             let cwd = str_field(&args, "cwd")?;
-            let result = crate::agent::ws_detect_project(&state.db, cwd)?;
+            let result = crate::project::detect_project(&state.db, &cwd)?;
             Ok(result.unwrap_or(Value::Null))
         }
         "read_project_instructions" => {
             let cwd = str_field(&args, "cwd")?;
-            let result = crate::agent::ws_read_project_instructions(cwd)?;
+            let result = crate::project::read_project_instructions(&cwd);
             Ok(result.map(Value::String).unwrap_or(Value::Null))
         }
 
@@ -238,12 +242,12 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
         "get_models" => {
             let provider = str_field(&args, "provider")?;
             let models = crate::models::ws_get_models(&state.model_cache, provider).await?;
-            serde_json::to_value(models).map_err(|e| e.to_string())
+            serde_json::to_value(models).map_err(MonarchError::from)
         }
         "get_provider_auth_status" => {
             let provider = str_field(&args, "provider")?;
             let status = crate::models::ws_get_provider_auth_status(provider)?;
-            serde_json::to_value(status).map_err(|e| e.to_string())
+            serde_json::to_value(status).map_err(MonarchError::from)
         }
 
         // ---- Persistence (prompts) ----
@@ -255,73 +259,73 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
         "save_agent_prompt" => {
             let agent_id = str_field(&args, "agentId")?;
             let prompt = str_field(&args, "prompt")?;
-            crate::persistence::ws_save_agent_prompt(agent_id, prompt)?;
+            crate::persistence::write_agent_prompt_file(&agent_id, &prompt)?;
             Ok(Value::Null)
         }
         "get_prompts_dir" => {
-            Ok(Value::String(crate::persistence::ws_get_prompts_dir()))
+            Ok(Value::String(crate::persistence::prompts_dir_string()?))
         }
 
         // ---- DB: Agents ----
         "db_upsert_agent" => {
             let agent = serde_json::from_value(args.get("agent").cloned().unwrap_or(args.clone()))
-                .map_err(|e| format!("Invalid agent: {}", e))?;
+                .map_err(|e| MonarchError::invalid_input(format!("Invalid agent: {}", e)))?;
             state.db.upsert_agent_internal(&agent)?;
             Ok(Value::Null)
         }
         "db_get_agents" => {
-            let agents = crate::db::ws_get_agents(&state.db)?;
-            serde_json::to_value(agents).map_err(|e| e.to_string())
+            let agents = state.db.get_agents_internal()?;
+            serde_json::to_value(agents).map_err(MonarchError::from)
         }
         "db_delete_agent" => {
             let agent_id = str_field(&args, "agentId")?;
-            crate::db::ws_delete_agent(&state.db, agent_id)?;
+            state.db.delete_agent_internal(&agent_id)?;
             Ok(Value::Null)
         }
 
         // ---- DB: Sessions ----
         "db_create_session" => {
             let session = serde_json::from_value(args.get("session").cloned().unwrap_or(args.clone()))
-                .map_err(|e| format!("Invalid session: {}", e))?;
+                .map_err(|e| MonarchError::invalid_input(format!("Invalid session: {}", e)))?;
             state.db.create_session_internal(&session)?;
             Ok(Value::Null)
         }
         "db_get_sessions" => {
             let agent_id = str_field(&args, "agentId")?;
-            let sessions = crate::db::ws_get_sessions(&state.db, agent_id)?;
-            serde_json::to_value(sessions).map_err(|e| e.to_string())
+            let sessions = state.db.get_sessions_internal(&agent_id)?;
+            serde_json::to_value(sessions).map_err(MonarchError::from)
         }
 
         // ---- DB: Messages ----
         "db_save_message" => {
             let message = serde_json::from_value(args.get("message").cloned().unwrap_or(args.clone()))
-                .map_err(|e| format!("Invalid message: {}", e))?;
+                .map_err(|e| MonarchError::invalid_input(format!("Invalid message: {}", e)))?;
             let id = state.db.save_message_internal(&message)?;
             Ok(Value::Number(id.into()))
         }
         "db_get_messages" => {
             let session_id = str_field(&args, "sessionId")?;
-            let messages = crate::db::ws_get_messages(&state.db, session_id)?;
-            serde_json::to_value(messages).map_err(|e| e.to_string())
+            let messages = state.db.get_messages_internal(&session_id)?;
+            serde_json::to_value(messages).map_err(MonarchError::from)
         }
         "db_get_messages_with_ancestry" => {
             let session_id = str_field(&args, "sessionId")?;
             let messages = state.db.get_messages_with_ancestry(&session_id)?;
-            serde_json::to_value(messages).map_err(|e| e.to_string())
+            serde_json::to_value(messages).map_err(MonarchError::from)
         }
 
         // ---- DB: Memories ----
         "db_save_memory" => {
             let memory = serde_json::from_value(args.get("memory").cloned().unwrap_or(args.clone()))
-                .map_err(|e| format!("Invalid memory: {}", e))?;
-            let id = crate::db::ws_save_memory(&state.db, memory)?;
+                .map_err(|e| MonarchError::invalid_input(format!("Invalid memory: {}", e)))?;
+            let id = state.db.save_memory_internal(&memory)?;
             Ok(Value::Number(id.into()))
         }
         "db_get_memories" => {
             let agent_id = opt_str(&args, "agentId");
             let layer = opt_str(&args, "layer");
-            let memories = crate::db::ws_get_memories(&state.db, agent_id, layer)?;
-            serde_json::to_value(memories).map_err(|e| e.to_string())
+            let memories = state.db.get_memories_internal(agent_id.as_deref(), layer.as_deref())?;
+            serde_json::to_value(memories).map_err(MonarchError::from)
         }
 
         // ---- DB: Events ----
@@ -341,76 +345,76 @@ async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Val
 
         // ---- DB: Templates ----
         "db_list_agent_templates" => {
-            let templates = crate::db::ws_list_agent_templates(&state.db)?;
-            serde_json::to_value(templates).map_err(|e| e.to_string())
+            let templates = state.db.list_agent_templates_internal()?;
+            serde_json::to_value(templates).map_err(MonarchError::from)
         }
         "db_save_agent_template" => {
             let template = serde_json::from_value(args.get("template").cloned().unwrap_or(args.clone()))
-                .map_err(|e| format!("Invalid template: {}", e))?;
-            crate::db::ws_save_agent_template(&state.db, template)?;
+                .map_err(|e| MonarchError::invalid_input(format!("Invalid template: {}", e)))?;
+            state.db.save_agent_template_internal(&template)?;
             Ok(Value::Null)
         }
         "db_delete_agent_template" => {
             let template_id = str_field(&args, "templateId")?;
-            crate::db::ws_delete_agent_template(&state.db, template_id)?;
+            state.db.delete_agent_template_internal(&template_id)?;
             Ok(Value::Null)
         }
 
         // ---- DB: Projects ----
         "db_upsert_project" => {
             let project = serde_json::from_value(args.get("project").cloned().unwrap_or(args.clone()))
-                .map_err(|e| format!("Invalid project: {}", e))?;
-            crate::db::ws_upsert_project(&state.db, project)?;
+                .map_err(|e| MonarchError::invalid_input(format!("Invalid project: {}", e)))?;
+            state.db.upsert_project_internal(&project)?;
             Ok(Value::Null)
         }
         "db_get_projects" => {
-            let projects = crate::db::ws_get_projects(&state.db)?;
-            serde_json::to_value(projects).map_err(|e| e.to_string())
+            let projects = state.db.get_projects_internal()?;
+            serde_json::to_value(projects).map_err(MonarchError::from)
         }
         "db_get_project_by_path" => {
             let root_path = str_field(&args, "rootPath")?;
             let project = state.db.get_project_by_path_internal(&root_path)?;
-            serde_json::to_value(project).map_err(|e| e.to_string())
+            serde_json::to_value(project).map_err(MonarchError::from)
         }
         "db_rename_project" => {
             let project_id = str_field(&args, "projectId")?;
             let name = str_field(&args, "name")?;
-            crate::db::ws_rename_project(&state.db, project_id, name)?;
+            state.db.rename_project_internal(&project_id, &name)?;
             Ok(Value::Null)
         }
         "db_update_project_instructions" => {
             let project_id = str_field(&args, "projectId")?;
             let instructions = opt_str(&args, "instructions");
-            crate::db::ws_update_project_instructions(&state.db, project_id, instructions)?;
+            state.db.update_project_instructions_internal(&project_id, instructions.as_deref())?;
             Ok(Value::Null)
         }
         "db_delete_project" => {
             let project_id = str_field(&args, "projectId")?;
-            crate::db::ws_delete_project(&state.db, project_id)?;
+            state.db.delete_project_internal(&project_id)?;
             Ok(Value::Null)
         }
 
         // ---- Toolbox ----
         "toolbox_list_tools" => {
             let tools = crate::toolbox::ws_toolbox_list_tools();
-            serde_json::to_value(tools).map_err(|e| e.to_string())
+            serde_json::to_value(tools).map_err(MonarchError::from)
         }
         "toolbox_placeholder_ping" => {
             let result = crate::toolbox::placeholder::ws_toolbox_placeholder_ping()?;
             Ok(Value::String(result))
         }
 
-        _ => Err(format!("Unknown command: {}", cmd)),
+        _ => Err(MonarchError::not_found(format!("command {}", cmd))),
     }
 }
 
 // ---- Helpers ----
 
-fn str_field(args: &Value, key: &str) -> Result<String, String> {
+fn str_field(args: &Value, key: &str) -> Result<String, MonarchError> {
     args.get(key)
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .ok_or_else(|| format!("Missing required field: {}", key))
+        .ok_or_else(|| MonarchError::invalid_input(format!("Missing required field: {}", key)))
 }
 
 fn opt_str(args: &Value, key: &str) -> Option<String> {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { invoke, listen, type UnlistenFn } from "$lib/api";
+  import { commands } from "$lib/bindings";
   import MessageList from "./MessageList.svelte";
   import ChatInput from "./ChatInput.svelte";
   import AgentControls from "./AgentControls.svelte";
@@ -8,22 +9,21 @@
   import ExtensionDialog from "./ExtensionDialog.svelte";
   import PromptEditor from "./PromptEditor.svelte";
   import HistoryPanel from "./HistoryPanel.svelte";
-  import type {
-    Agent,
-    PiEvent,
-    DisplayItem,
-    ToolExecution,
-    AssistantMessage,
-    ExtensionUIRequest,
-    ContentBlock,
-  } from "./types";
+  import type { Agent, DisplayItem, ExtensionUIRequest } from "./types";
+  import type { LiveAgentState as WireLiveAgentState } from "./bindings";
   import {
     liveAgentStore,
-    ensureLiveState,
-    resetLiveState,
-    emptyLiveState,
+    seedFromSnapshot,
+    applyUpdate,
+    detachedLiveState,
   } from "./toolbox/liveAgentStore.svelte";
   import type { LiveAgentState } from "./toolbox/types";
+
+  // Dev-only desync indicator. Opt-in via VITE_MONARCH_DEBUG_DESYNC=true.
+  // Rationale: MON-14 Phase 2 is the first time the frontend can observe
+  // Rust-side state divergence; we want to catch it during dev without any
+  // UX cost in prod builds.
+  const DEBUG_DESYNC = import.meta.env.VITE_MONARCH_DEBUG_DESYNC === "true";
 
   let {
     agent,
@@ -51,6 +51,7 @@
   let showPromptEditor = $state(false);
   let showHistory = $state(false);
 
+  let unlistenState: UnlistenFn | undefined;
   let unlistenEvent: UnlistenFn | undefined;
   let unlistenExit: UnlistenFn | undefined;
   let unlistenStderr: UnlistenFn | undefined;
@@ -62,17 +63,12 @@
   let activationVersion = 0;
 
   // Live state — read from liveAgentStore keyed by the bound agent id.
-  // Fallback to a detached empty state before bind completes so template reads
-  // are safe. Writes look up the store entry explicitly via `writeLive(id)`
-  // so we never mutate the detached fallback.
-  const DETACHED_LIVE: LiveAgentState = emptyLiveState();
+  // The store is a passive receiver of Rust-assembled snapshots from
+  // `agent-state-{id}`; all turn assembly happens in Rust (MON-14 Phase 2).
+  const DETACHED_LIVE: LiveAgentState = detachedLiveState();
   let live: LiveAgentState = $derived(
     (boundAgentId && liveAgentStore.byAgent.get(boundAgentId)) || DETACHED_LIVE,
   );
-
-  function writeLive(targetAgentId: string): LiveAgentState {
-    return ensureLiveState(targetAgentId);
-  }
 
   export function focusInput() {
     chatInputRef?.focus();
@@ -93,170 +89,6 @@
     requestAnimationFrame(() => {
       container.scrollTop = container.scrollHeight;
     });
-  }
-
-  function setActivity(text: string, targetAgentId: string = boundAgentId) {
-    if (!targetAgentId) return;
-    writeLive(targetAgentId).activityStatus = text;
-  }
-
-  function tryParseStoredContent(content: unknown): unknown {
-    if (typeof content !== "string") return content;
-
-    const trimmed = content.trim();
-    if (!trimmed) return content;
-
-    const looksSerialized = trimmed.startsWith("[") || trimmed.startsWith("{") || trimmed.startsWith("\"");
-    if (!looksSerialized) return content;
-
-    try {
-      return JSON.parse(content);
-    } catch {
-      return content;
-    }
-  }
-
-  function normalizeUserContent(content: unknown): string {
-    const resolved = tryParseStoredContent(content);
-
-    if (typeof resolved === "string") return resolved;
-    if (Array.isArray(resolved)) {
-      return resolved
-        .filter((block): block is { type: "text"; text: string } => !!block && typeof block === "object" && "type" in block && (block as any).type === "text")
-        .map((block) => block.text)
-        .join("");
-    }
-    return "";
-  }
-
-  function normalizeAssistantContent(content: unknown): ContentBlock[] {
-    const resolved = tryParseStoredContent(content);
-
-    if (Array.isArray(resolved)) return resolved as ContentBlock[];
-    if (typeof resolved === "string") {
-      return [{ type: "text", text: resolved }];
-    }
-    return [];
-  }
-
-  function parseStoredToolResult(content: unknown, fallbackId: string): ToolExecution | null {
-    const resolved = tryParseStoredContent(content);
-
-    if (!resolved || Array.isArray(resolved) || typeof resolved !== "object") return null;
-
-    const payload = resolved as {
-      toolCallId?: string;
-      toolName?: string;
-      result?: unknown;
-      isError?: boolean;
-    };
-
-    if (!payload.toolCallId && !payload.toolName && payload.result == null) return null;
-
-    return {
-      toolCallId: payload.toolCallId || fallbackId,
-      toolName: payload.toolName || "tool",
-      args: undefined,
-      result: tryParseStoredContent(payload.result),
-      isError: !!payload.isError,
-      status: payload.isError ? "error" : "done",
-    };
-  }
-
-  function hasVisibleAssistantContent(blocks: ContentBlock[]): boolean {
-    return blocks.some((block) => {
-      if (block.type === "text") return block.text.trim().length > 0;
-      if (block.type === "thinking") return block.thinking.trim().length > 0;
-      if (block.type === "image") return true;
-      return false;
-    });
-  }
-
-  function restoreDisplayItemsFromMessages(messages: any[], statusText: string): DisplayItem[] {
-    const restored: DisplayItem[] = [];
-    let pendingToolResults: ToolExecution[] = [];
-
-    function flushPendingToolResults() {
-      if (pendingToolResults.length === 0) return;
-      restored.push({
-        kind: "tool-group",
-        executions: pendingToolResults,
-        turnComplete: true,
-      });
-      pendingToolResults = [];
-    }
-
-    for (const [index, msg] of messages.entries()) {
-      if (msg.role === "user") {
-        flushPendingToolResults();
-        restored.push({
-          kind: "user",
-          content: normalizeUserContent(msg.content ?? msg),
-          timestamp: msg.timestamp,
-        });
-      } else if (msg.role === "toolResult") {
-        const parsed = parseStoredToolResult(msg.content ?? msg, `restored-tool-${index}`);
-        if (parsed) {
-          pendingToolResults = [...pendingToolResults, parsed];
-        }
-      } else if (msg.role === "assistant") {
-        const content = normalizeAssistantContent(msg.content ?? msg);
-        const toolCalls = content.filter((block): block is Extract<ContentBlock, { type: "toolCall" }> => block.type === "toolCall");
-
-        if (toolCalls.length > 0 || pendingToolResults.length > 0) {
-          const pendingById = new Map(
-            pendingToolResults.map((execution) => [execution.toolCallId, execution]),
-          );
-          const mergedExecutions: ToolExecution[] = toolCalls.map((block) => {
-            const result = pendingById.get(block.id);
-            return {
-              toolCallId: block.id,
-              toolName: block.name,
-              args: block.arguments,
-              result: result?.result,
-              isError: result?.isError,
-              status: result?.status ?? "done",
-            };
-          });
-
-          const handledIds = new Set(toolCalls.map((block) => block.id));
-          for (const execution of pendingToolResults) {
-            if (!handledIds.has(execution.toolCallId)) {
-              mergedExecutions.push(execution);
-            }
-          }
-
-          if (mergedExecutions.length > 0) {
-            restored.push({
-              kind: "tool-group",
-              executions: mergedExecutions,
-              turnComplete: true,
-            });
-          }
-
-          pendingToolResults = [];
-        }
-
-        if (!hasVisibleAssistantContent(content)) {
-          continue;
-        }
-
-        restored.push({
-          kind: "assistant",
-          content,
-          model: msg.model,
-          timestamp: msg.timestamp,
-        });
-      }
-    }
-
-    flushPendingToolResults();
-
-    if (restored.length === 0) {
-      return [{ kind: "status", text: `${statusText} (no stored messages)` }];
-    }
-
-    return [{ kind: "status", text: statusText }, ...restored];
   }
 
   async function refreshSessionsFromDb(agentId: string = agent.id) {
@@ -295,74 +127,23 @@
     }
   }
 
-  async function fetchStoredMessages(sessionId: string) {
-    let lastError: unknown;
+  type NarrowEvent =
+    | { type: "session_ready"; agentId: string; contextWindow?: number }
+    | { type: "sidecar_error"; error: string }
+    | ({ type: "extension_ui_request" } & ExtensionUIRequest);
 
-    try {
-      const ancestry = await invoke<any[]>("db_get_messages_with_ancestry", { sessionId });
-      if (ancestry.length > 0) return ancestry;
-    } catch (e) {
-      lastError = e;
-    }
-
-    try {
-      const direct = await invoke<any[]>("db_get_messages", { sessionId });
-      if (direct.length > 0) return direct;
-    } catch (e) {
-      lastError = e;
-    }
-
-    if (lastError) throw lastError;
-    return [];
-  }
-
-  async function loadSessionMessages(sessionId: string, statusText: string) {
-    const dbMessages = await fetchStoredMessages(sessionId);
-    const entry = writeLive(boundAgentId);
-
-    if (dbMessages.length > 0) {
-      entry.items = restoreDisplayItemsFromMessages(
-        dbMessages.map((msg) => ({
-          role: msg.role,
-          content: msg.content,
-          model: msg.model,
-        })),
-        statusText,
-      );
-    } else {
-      const knownSession = agent.sessions.find((s) => s.sessionId === sessionId);
-      if ((knownSession?.messageCount || 0) > 0) {
-        entry.items = [
-          ...entry.items,
-          { kind: "notification", text: `Session ${sessionId} has persisted messages but none could be loaded`, level: "error" },
-        ];
-      }
-      entry.items = [{ kind: "status", text: `${statusText} (no stored messages)` }];
-    }
-
-    entry.toolExecutions = new Map();
-    entry.streamingMessage = null;
-    entry.lastUsage = undefined;
-    entry.currentToolGroup = null;
-    entry.activityStatus = "";
-    entry.eventCount = 0;
-    pendingExtensionRequest = null;
-    showStderr = false;
-    scrollToBottom();
-  }
-
-  function handleEvent(raw: string, targetAgentId: string) {
-    let event: PiEvent;
+  /**
+   * `agent-event-{id}` is reduced in Phase 2 to out-of-band channels only:
+   * session_ready, sidecar_error, and extension_ui_request. Message/tool
+   * events are assembled by Rust and arrive on `agent-state-{id}` instead.
+   */
+  function handleNarrowEvent(raw: string, targetAgentId: string) {
+    let event: NarrowEvent;
     try {
       event = JSON.parse(raw);
     } catch {
       return;
     }
-
-    const l = writeLive(targetAgentId);
-    l.eventCount++;
-
-    // DB writes are now handled by Rust on the event handler thread
 
     switch (event.type) {
       case "session_ready":
@@ -373,224 +154,48 @@
           }),
           targetAgentId,
         );
-        if (sessionReadyResolve) { sessionReadyResolve(); sessionReadyResolve = null; }
-        l.activityStatus = "Shadow ready";
-        l.items = [...l.items, { kind: "status", text: "Session ready" }];
-        // If restoring, replay past messages into the sidecar's LLM context
+        if (sessionReadyResolve) {
+          sessionReadyResolve();
+          sessionReadyResolve = null;
+        }
+        // If restoring, replay past messages into the sidecar's LLM context.
+        // Rust will emit an updated `agent-state-{id}` snapshot once the
+        // load_session command lands; no frontend assembly needed.
         if (pendingSourceSessionId) {
           const sourceSessionId = pendingSourceSessionId;
           pendingSourceSessionId = undefined;
           invoke("load_session_context", {
             agentId: targetAgentId,
             sourceSessionId,
-          }).then(() => {
-            const cur = writeLive(targetAgentId);
-            cur.items = [...cur.items, { kind: "status", text: "Context restored from previous session" }];
-            scrollToBottom();
           }).catch((e) => {
             console.error("Failed to load session context:", e);
           });
         }
         scrollToBottom();
         break;
-      case "agent_start":
-        isStreaming = true;
-        updateAgent((current) => ({ ...current, isStreaming: true }), targetAgentId);
-        l.activityStatus = "Agent processing...";
-        l.items = [...l.items, { kind: "status", text: "Agent started" }];
-        scrollToBottom();
-        break;
 
-      case "agent_end":
-        isStreaming = false;
-        updateAgent((current) => ({ ...current, isStreaming: false }), targetAgentId);
-        l.activityStatus = "";
-        if (l.streamingMessage) {
-          l.items = [
-            ...l.items,
-            {
-              kind: "assistant",
-              content: l.streamingMessage.content,
-              usage: l.streamingMessage.usage,
-              model: l.streamingMessage.model,
-              timestamp: l.streamingMessage.timestamp,
-            },
-          ];
-          l.streamingMessage = null;
-        }
-        l.items = [...l.items, { kind: "status", text: "Agent finished" }];
-        refreshSessionsFromDb(targetAgentId);
-        scrollToBottom();
-        break;
-
-      case "turn_start":
-        l.activityStatus = "LLM call in progress...";
-        // Start a new tool group for this turn
-        l.currentToolGroup = null;
-        break;
-
-      case "turn_end":
-        l.activityStatus = "Processing response...";
-        // Mark current tool group as complete
-        if (l.currentToolGroup) {
-          l.currentToolGroup.turnComplete = true;
-          l.items = [...l.items];
-        }
-        l.currentToolGroup = null;
-        break;
-
-      case "message_start":
-        if (event.message.role === "user") {
-          const content =
-            typeof event.message.content === "string"
-              ? event.message.content
-              : event.message.content
-                  .filter((b): b is { type: "text"; text: string } => b.type === "text")
-                  .map((b) => b.text)
-                  .join("");
-          l.items = [
-            ...l.items,
-            {
-              kind: "user",
-              content,
-              timestamp: event.message.timestamp,
-            },
-          ];
-        } else if (event.message.role === "assistant") {
-          l.streamingMessage = event.message as AssistantMessage;
-          l.activityStatus = "Receiving response...";
-        }
-        scrollToBottom();
-        break;
-
-      case "message_update":
-        if (event.message.role === "assistant") {
-          l.streamingMessage = event.message as AssistantMessage;
-          if (l.streamingMessage.usage) {
-            l.lastUsage = l.streamingMessage.usage;
-          }
-        }
-        scrollToBottom();
-        break;
-
-      case "message_end":
-        if (event.message.role === "assistant" && l.streamingMessage) {
-          const msg = event.message as AssistantMessage;
-          l.items = [
-            ...l.items,
-            {
-              kind: "assistant",
-              content: msg.content,
-              usage: msg.usage,
-              model: msg.model,
-              timestamp: msg.timestamp,
-            },
-          ];
-          if (msg.usage) l.lastUsage = msg.usage;
-          l.streamingMessage = null;
-        }
-        scrollToBottom();
-        break;
-
-      case "tool_execution_start": {
-        l.activityStatus = `Running tool: ${event.toolName}`;
-        const exec: ToolExecution = {
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          args: event.args,
-          status: "running",
-        };
-        l.toolExecutions.set(event.toolCallId, exec);
-
-        // Add to current tool group, or create one
-        if (!l.currentToolGroup) {
-          l.currentToolGroup = { kind: "tool-group", executions: [exec], turnComplete: false };
-          l.items = [...l.items, l.currentToolGroup];
-        } else {
-          l.currentToolGroup.executions = [...l.currentToolGroup.executions, exec];
-          l.items = [...l.items]; // trigger reactivity
-        }
-        scrollToBottom();
-        break;
-      }
-
-      case "tool_execution_end": {
-        l.activityStatus = "";
-        const existing = l.toolExecutions.get(event.toolCallId);
-        if (existing) {
-          const updated = {
-            ...existing,
-            result: event.result,
-            isError: event.isError,
-            status: (event.isError ? "error" : "done") as ToolExecution["status"],
-          };
-          l.toolExecutions.set(event.toolCallId, updated);
-
-          // Update within the tool group
-          if (l.currentToolGroup) {
-            l.currentToolGroup.executions = l.currentToolGroup.executions.map((e) =>
-              e.toolCallId === event.toolCallId ? updated : e,
-            );
-            l.items = [...l.items];
-          }
-
-        }
-        scrollToBottom();
-        break;
-      }
-
-      case "compaction_start":
-        l.activityStatus = "Compacting context...";
-        l.items = [...l.items, { kind: "status", text: `Context compaction started (${event.reason})` }];
-        scrollToBottom();
-        break;
-
-      case "compaction_end":
-        l.activityStatus = "";
-        l.items = [...l.items, { kind: "status", text: event.aborted ? "Compaction aborted" : "Context compacted" }];
-        scrollToBottom();
-        break;
-
-      case "auto_retry_start":
-        l.activityStatus = `Auto-retry attempt ${event.attempt}...`;
-        l.items = [...l.items, { kind: "status", text: `Auto-retry attempt ${event.attempt}` }];
-        scrollToBottom();
+      case "sidecar_error":
+        // Error pings are still logged to the console; the Rust side does
+        // not fold them into LiveAgentState (see agent.rs).
+        console.error("[sidecar] error:", event.error);
         break;
 
       case "extension_ui_request":
         handleExtensionUIRequest(event as unknown as ExtensionUIRequest);
         break;
-
-      case "sidecar_error": {
-        const errorMsg = (event as any).error || "Unknown sidecar error";
-        l.items = [...l.items, { kind: "notification", text: errorMsg, level: "error" }];
-        l.activityStatus = "";
-        scrollToBottom();
-        break;
-      }
     }
   }
 
   function handleExtensionUIRequest(request: ExtensionUIRequest) {
-    const l = writeLive(boundAgentId);
     // Fire-and-forget methods — no response needed
     switch (request.method) {
       case "notify":
-        l.items = [
-          ...l.items,
-          {
-            kind: "notification",
-            text: request.message || "",
-            level: request.notifyType || "info",
-          },
-        ];
-        scrollToBottom();
-        return;
       case "setStatus":
-        // Could show in controls area — for now, log it
-        if (request.statusText) {
-          l.items = [...l.items, { kind: "status", text: `[${request.statusKey}] ${request.statusText}` }];
-          scrollToBottom();
+        // Informational pings are no longer rendered as notifications in
+        // the message list (Rust does not assemble these). Log them so dev
+        // surfaces can still observe them.
+        if (request.message || request.statusText) {
+          console.info("[extension-ui]", request.method, request.message ?? request.statusText);
         }
         return;
       case "setTitle":
@@ -610,21 +215,25 @@
 
   function respondToExtension(value: any) {
     if (!pendingExtensionRequest) return;
-    invoke("respond_extension_ui", {
-      agentId: agent.id,
-      requestId: pendingExtensionRequest.requestId,
-      value,
-    }).catch((e) => console.error("Failed to respond to extension UI:", e));
+    commands
+      .respondExtensionUi({
+        agentId: agent.id,
+        requestId: pendingExtensionRequest.requestId,
+        value,
+      } as any)
+      .catch((e) => console.error("Failed to respond to extension UI:", e));
     pendingExtensionRequest = null;
   }
 
   function cancelExtensionRequest() {
     if (!pendingExtensionRequest) return;
-    invoke("respond_extension_ui", {
-      agentId: agent.id,
-      requestId: pendingExtensionRequest.requestId,
-      value: { cancelled: true },
-    }).catch(() => {});
+    commands
+      .respondExtensionUi({
+        agentId: agent.id,
+        requestId: pendingExtensionRequest.requestId,
+        value: { cancelled: true },
+      } as any)
+      .catch(() => {});
     pendingExtensionRequest = null;
   }
 
@@ -634,12 +243,10 @@
 
   async function sendPrompt(message: string) {
     if (agent.status === "stopped" && onspawn) {
-      setActivity("Waking agent...");
       const sessionReady = new Promise<void>((resolve) => { sessionReadyResolve = resolve; });
       await onspawn(agent.id);
       await sessionReady;
     }
-    setActivity("Sending prompt...");
     await sendPiCommand({ type: "prompt", message });
   }
 
@@ -687,8 +294,7 @@
         newSessionId,
       });
     } catch (e) {
-      const entry = writeLive(agent.id);
-      entry.items = [...entry.items, { kind: "notification", text: `Failed to create new session: ${e}`, level: "error" }];
+      console.error("Failed to create new session:", e);
       return;
     }
 
@@ -715,8 +321,19 @@
       sessions: nextSessions,
     }));
     boundSessionId = newSessionId;
-    const fresh = resetLiveState(agent.id);
-    fresh.items = [{ kind: "status", text: "New session started" }];
+
+    // Clear Rust-owned live state and emit a fresh snapshot. Passing
+    // sessionId=null resets to an empty state with a single status item.
+    try {
+      const snapshot = await invoke<WireLiveAgentState>("rebuild_agent_state_from_session", {
+        agentId: agent.id,
+        sessionId: null,
+        statusText: "New session started",
+      });
+      seedFromSnapshot(agent.id, snapshot);
+    } catch (e) {
+      console.error("Failed to reset live state:", e);
+    }
     refreshSessionsFromDb();
   }
 
@@ -730,12 +347,81 @@
   }
 
   function clearListeners() {
+    unlistenState?.();
     unlistenEvent?.();
     unlistenExit?.();
     unlistenStderr?.();
+    unlistenState = undefined;
     unlistenEvent = undefined;
     unlistenExit = undefined;
     unlistenStderr = undefined;
+  }
+
+  async function seedAgentState(target: Agent) {
+    // Pull-then-subscribe: ask Rust for the current assembled state and
+    // decide whether a DB rebuild is needed.
+    let snapshot: WireLiveAgentState | null = null;
+    try {
+      snapshot = await invoke<WireLiveAgentState | null>("get_agent_state", {
+        agentId: target.id,
+      });
+    } catch (e) {
+      console.error("Failed to fetch agent state:", e);
+    }
+
+    const hasLiveItems = !!snapshot && snapshot.items.length > 0;
+
+    // Decide whether we need to rebuild from SQLite. Cases:
+    //   1. target.sourceSessionId set → restore ancestry for a continued session.
+    //   2. existing session with stored messages but no live state → reopen.
+    //   3. nothing → seed with an empty "viewing" status snapshot.
+    if (target.sourceSessionId) {
+      pendingSourceSessionId = target.sourceSessionId;
+      try {
+        const rebuilt = await invoke<WireLiveAgentState>("rebuild_agent_state_from_session", {
+          agentId: target.id,
+          sessionId: target.sourceSessionId,
+          statusText: "Restored previous session",
+        });
+        seedFromSnapshot(target.id, rebuilt);
+      } catch (e) {
+        console.error("Failed to rebuild agent state from source session:", e);
+      }
+      updateAgent((current) => ({ ...current, sourceSessionId: undefined }), target.id);
+      return;
+    }
+
+    if (!hasLiveItems && target.sessionId) {
+      try {
+        const rebuilt = await invoke<WireLiveAgentState>("rebuild_agent_state_from_session", {
+          agentId: target.id,
+          sessionId: target.sessionId,
+          statusText: "Reopened current session",
+        });
+        seedFromSnapshot(target.id, rebuilt);
+      } catch (e) {
+        console.error("Failed to rebuild agent state:", e);
+      }
+      return;
+    }
+
+    if (snapshot) {
+      seedFromSnapshot(target.id, snapshot);
+      return;
+    }
+
+    // Brand-new agent with no session yet — seed an empty state with a
+    // "viewing" status item via the rebuild command (sessionId=null).
+    try {
+      const rebuilt = await invoke<WireLiveAgentState>("rebuild_agent_state_from_session", {
+        agentId: target.id,
+        sessionId: null,
+        statusText: `Viewing ${target.shadow?.shadowName || target.name}`,
+      });
+      seedFromSnapshot(target.id, rebuilt);
+    } catch (e) {
+      console.error("Failed to seed empty agent state:", e);
+    }
   }
 
   async function bindAgent(target: Agent) {
@@ -746,66 +432,38 @@
     resetUiLocalState();
     isStreaming = target.isStreaming;
 
-    // The live store survives {#key} remounts, so we only load from SQLite
-    // when there's nothing in the store yet (first-time bind or after a reset).
-    const existing = liveAgentStore.byAgent.get(target.id);
-    const hasLiveState = !!existing && existing.items.length > 0;
-    ensureLiveState(target.id);
-
-    const sessions = await refreshSessionsFromDb(target.id);
+    const sessionsPromise = refreshSessionsFromDb(target.id);
     const promptPromise = invoke<string | null>("get_agent_prompt", { agentId: target.id })
       .catch(() => null);
+
+    await seedAgentState(target);
     if (version !== activationVersion) return;
 
+    await sessionsPromise;
+    if (version !== activationVersion) return;
     customPrompt = await promptPromise;
     if (version !== activationVersion) return;
 
-    const currentSession = target.sessionId
-      ? sessions.find((session) => session.sessionId === target.sessionId)
-      : undefined;
-    const dbMessageCount = currentSession?.messageCount || 0;
+    // Pull-then-subscribe: after the initial seed, follow incremental
+    // snapshots on `agent-state-{id}`. Rust passes the `LiveAgentState`
+    // straight to `Emitter::emit`, so the payload arrives as the already-
+    // deserialized object — no inner `JSON.parse` step.
+    unlistenState = await listen<WireLiveAgentState>(
+      `agent-state-${target.id}`,
+      (event) => {
+        if (version !== activationVersion) return;
+        applyUpdate(target.id, event.payload);
+        scrollToBottom();
+      },
+    );
 
-    if (target.sourceSessionId) {
-      pendingSourceSessionId = target.sourceSessionId;
-      try {
-        await loadSessionMessages(target.sourceSessionId, "Restored previous session");
-      } catch (e) {
-        console.error("Failed to restore messages from DB:", e);
-        const l = writeLive(target.id);
-        l.items = [...l.items, { kind: "notification", text: `Failed to restore stored messages: ${e}`, level: "error" }];
-      }
-      updateAgent((current) => ({ ...current, sourceSessionId: undefined }), target.id);
-    } else if (!hasLiveState && target.sessionId && dbMessageCount > 0) {
-      try {
-        await loadSessionMessages(target.sessionId, "Reopened current session");
-      } catch (e) {
-        console.error("Failed to load current session messages from DB:", e);
-        const l = writeLive(target.id);
-        l.items = [...l.items, { kind: "notification", text: `Failed to load current session messages: ${e}`, level: "error" }];
-      }
-    } else if (!hasLiveState) {
-      const l = writeLive(target.id);
-      l.items = [{ kind: "status", text: `Viewing ${target.shadow?.shadowName || target.name}` }];
-    }
-
-    if (version !== activationVersion) return;
-
-    if (target.status === "stopped") {
-      setActivity("", target.id);
-    } else {
-      setActivity("Shadow connected — waiting for Pi process...", target.id);
-    }
-
+    // Narrowed agent-event-{id} listener for out-of-band signals only.
+    // Message/tool events are fully owned by Rust on `agent-state-{id}`.
     unlistenEvent = await listen<string>(
       `agent-event-${target.id}`,
       (event) => {
         if (version !== activationVersion) return;
-        const entry = writeLive(target.id);
-        if (entry.eventCount === 0) {
-          entry.items = [...entry.items, { kind: "status", text: "Pi process started — receiving events" }];
-          scrollToBottom();
-        }
-        handleEvent(event.payload, target.id);
+        handleNarrowEvent(event.payload, target.id);
       },
     );
 
@@ -818,13 +476,7 @@
         status: "stopped",
         exitCode: event.payload,
       }), target.id);
-      setActivity("", target.id);
       const code = event.payload;
-      const msg = code != null && code !== 0
-        ? `Agent process exited with code ${code}`
-        : "Agent process exited";
-      const l = writeLive(target.id);
-      l.items = [...l.items, { kind: "status", text: msg }];
       if (code != null && code !== 0) {
         showStderr = true;
       }
@@ -949,6 +601,12 @@
       </div>
     {/if}
 
+    {#if DEBUG_DESYNC && live.desynced}
+      <div class="desync-badge" title="Rust-side state desync detected. See VITE_MONARCH_DEBUG_DESYNC.">
+        desynced (v{live.stateVersion})
+      </div>
+    {/if}
+
     <div class="input-area">
       <AgentControls
         {isStreaming}
@@ -996,8 +654,7 @@
           sessionId: session.sessionId,
         });
       } catch (e) {
-        const l = writeLive(agent.id);
-        l.items = [...l.items, { kind: "notification", text: `Failed to switch session: ${e}`, level: "error" }];
+        console.error("Failed to switch session:", e);
         return;
       }
 
@@ -1033,12 +690,18 @@
         console.error("Failed to load session context:", e);
       }
 
-      // Load messages for display
+      // Rebuild Rust-owned LiveAgentState from the target session and seed
+      // the store. Rust emits a snapshot on `agent-state-{id}` too, but we
+      // take the direct return value to avoid an event round-trip.
       try {
-        await loadSessionMessages(session.sessionId, `Continuing from previous session`);
+        const snapshot = await invoke<WireLiveAgentState>("rebuild_agent_state_from_session", {
+          agentId: agent.id,
+          sessionId: session.sessionId,
+          statusText: "Continuing from previous session",
+        });
+        seedFromSnapshot(agent.id, snapshot);
       } catch (e) {
-        const l = writeLive(agent.id);
-        l.items = [...l.items, { kind: "notification", text: `Failed to load stored session messages: ${e}`, level: "error" }];
+        console.error("Failed to rebuild agent state for switched session:", e);
       }
     }}
     onclose={() => (showHistory = false)}
@@ -1315,6 +978,21 @@
   .event-count {
     color: var(--text-muted);
     font-size: 10px;
+  }
+
+  .desync-badge {
+    align-self: flex-end;
+    margin: 4px 20px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(238, 83, 150, 0.12);
+    border: 1px solid rgba(238, 83, 150, 0.4);
+    color: var(--error, #ee5396);
+    font-size: 10px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    cursor: help;
   }
 
   .standby-banner {

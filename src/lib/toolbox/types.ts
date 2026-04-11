@@ -8,9 +8,14 @@ import type {
 } from "../types";
 
 /**
- * Live, event-stream-derived state for a single agent.
- * Owned by liveAgentStore, written by AgentView's event handler,
- * read by AgentView's rendering and by toolbox tools.
+ * Live, Rust-assembled state for a single agent.
+ *
+ * Wire shape (Rust-authored): see `LiveAgentState` in src/lib/bindings.ts,
+ * emitted on `agent-state-{id}` as a JSON object. The `liveAgentStore`
+ * adapter converts the wire shape to this frontend shape on seed/update so
+ * tool components continue to see `toolExecutions: Map`, `lastUsage?: Usage`,
+ * and a derived `currentToolGroup`. This keeps the toolbox contract frozen
+ * (MON-14 Phase 2 zero-diff rule for tool components).
  */
 export interface LiveAgentState {
   items: DisplayItem[];
@@ -22,13 +27,17 @@ export interface LiveAgentState {
     | null;
   activityStatus: string;
   eventCount: number;
+  /** Monotonically increasing per-agent. Used to drop out-of-order snapshots. */
+  stateVersion: number;
+  /** True when Rust-side reader hit a parse failure or unreconcilable event. */
+  desynced: boolean;
 }
 
 /**
- * Setup-time configuration surfaced to tools alongside the event-stream state.
+ * Setup-time configuration surfaced to tools alongside the live state.
  * Sourced from the parent mount site (prompt file, project instructions),
- * not the Pi event stream — kept separate from `live` so MON-14 can swap the
- * `live` producer to Rust without touching tool components.
+ * not the Pi event stream — kept separate from `live` so MON-14 could swap
+ * the `live` producer to Rust without touching tool components.
  */
 export interface AgentSetupContext {
   customPrompt: string | null;
