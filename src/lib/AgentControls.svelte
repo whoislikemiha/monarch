@@ -232,25 +232,16 @@
     min-width: min(320px, 52vw);
     padding: 4px 9px;
     border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--success) 32%, var(--border-subtle));
-    background:
-      linear-gradient(180deg, var(--success-bg-subtle), transparent),
-      var(--bg-panel-2);
-    box-shadow: inset 0 1px 0 var(--shadow-inset-white);
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-panel-2);
   }
 
   .context-meter.warning {
-    border-color: color-mix(in srgb, var(--warning) 50%, var(--border-subtle));
-    background:
-      linear-gradient(180deg, var(--warning-bg-subtle), transparent),
-      var(--bg-panel-2);
+    border-color: var(--border-subtle);
   }
 
   .context-meter.critical {
-    border-color: color-mix(in srgb, var(--error) 48%, var(--border-subtle));
-    background:
-      linear-gradient(180deg, var(--error-bg-subtle), transparent),
-      var(--bg-panel-2);
+    border-color: var(--border-subtle);
   }
 
   .context-label,
@@ -278,39 +269,22 @@
     height: 8px;
     overflow: hidden;
     border-radius: 999px;
-    background:
-      linear-gradient(90deg, var(--context-track-overlay), transparent),
-      var(--context-track-bg);
-    box-shadow:
-      inset 0 0 0 1px var(--context-track-inset),
-      inset 0 1px 3px var(--shadow-dark);
+    background: var(--context-track-bg);
   }
 
   .context-fill {
     height: 100%;
     border-radius: inherit;
-    background:
-      linear-gradient(90deg, color-mix(in srgb, var(--success) 76%, white 10%), var(--success));
-    box-shadow:
-      0 0 14px var(--success-glow),
-      inset 0 0 12px var(--active-overlay);
-    transition: width 0.25s ease, background 0.2s ease, box-shadow 0.2s ease;
+    background: var(--success);
+    transition: width 0.25s ease, background 0.2s ease;
   }
 
   .context-meter.warning .context-fill {
-    background:
-      linear-gradient(90deg, color-mix(in srgb, var(--warning) 88%, white 10%), var(--warning));
-    box-shadow:
-      0 0 14px var(--warning-glow),
-      inset 0 0 10px var(--active-overlay);
+    background: var(--warning);
   }
 
   .context-meter.critical .context-fill {
-    background:
-      linear-gradient(90deg, color-mix(in srgb, var(--error) 78%, white 8%), var(--error));
-    box-shadow:
-      0 0 16px var(--error-glow),
-      inset 0 0 12px var(--active-overlay);
+    background: var(--error);
   }
 
   .control-btn {

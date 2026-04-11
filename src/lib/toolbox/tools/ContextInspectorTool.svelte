@@ -464,19 +464,16 @@
   .health-fill {
     height: 100%;
     border-radius: 2px;
-    background:
-      linear-gradient(90deg, color-mix(in srgb, var(--success) 76%, white 10%), var(--success));
+    background: var(--success);
     transition: width 0.25s ease, background 0.2s ease;
   }
 
   .health-track.warning .health-fill {
-    background:
-      linear-gradient(90deg, color-mix(in srgb, var(--warning) 88%, white 10%), var(--warning));
+    background: var(--warning);
   }
 
   .health-track.critical .health-fill {
-    background:
-      linear-gradient(90deg, color-mix(in srgb, var(--error) 78%, white 8%), var(--error));
+    background: var(--error);
   }
 
   .inspector-categories {
@@ -530,7 +527,7 @@
 
   .category-tokens {
     font-size: 10px;
-    color: color-mix(in srgb, var(--success) 72%, white 12%);
+    color: var(--success);
     flex-shrink: 0;
     min-width: 40px;
     text-align: right;
