@@ -76,11 +76,10 @@
     canvasEl.width = size * dpr;
     canvasEl.height = size * dpr;
 
-    console.log("[ShadowAvatar] mounting, src:", riveFile, "sm:", stateMachine, "canvas:", canvasEl?.width, canvasEl?.height);
-
     riveInstance = new Rive({
       src: riveFile,
       canvas: canvasEl,
+      stateMachines: "State Machine 1",
       autoplay: true,
       useOffscreenRenderer,
     });
@@ -91,24 +90,8 @@
 
     riveInstance.on(EventType.Load, () => {
       riveInstance!.resizeDrawingSurfaceToCanvas();
-      // Debug: log what the .riv file actually contains
-      const r = riveInstance! as any;
-      const smNames: string[] = r.stateMachineNames ?? [];
-      const animNames: string[] = r.animationNames ?? [];
-      console.log("[ShadowAvatar] .riv loaded:", riveFile);
-      console.log("[ShadowAvatar] stateMachineNames:", JSON.stringify(smNames));
-      console.log("[ShadowAvatar] animationNames:", JSON.stringify(animNames));
-
-      // Start the first available state machine
-      const smToUse = smNames[0];
-      if (smToUse) {
-        console.log("[ShadowAvatar] starting state machine:", smToUse);
-        r.play(smToUse);
-        cacheInputs(riveInstance!, smToUse);
-      } else if (animNames[0]) {
-        console.log("[ShadowAvatar] no SM, playing animation:", animNames[0]);
-        r.play(animNames[0]);
-      }
+      console.log("[ShadowAvatar] loaded and playing, canvas:", canvasEl.width, canvasEl.height);
+      cacheInputs(riveInstance!, "State Machine 1");
     });
 
     return () => {
@@ -166,5 +149,7 @@
   .shadow-avatar {
     display: block;
     image-rendering: auto;
+    /* debug: visible border to confirm canvas placement */
+    border: 1px solid var(--accent);
   }
 </style>
