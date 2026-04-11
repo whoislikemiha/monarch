@@ -30,6 +30,7 @@ impl Database {
             conn: Mutex::new(conn),
         };
         db.init_schema()?;
+        db.migrate_timestamps_to_rfc3339()?;
         Ok(db)
     }
 
@@ -44,7 +45,65 @@ impl Database {
             conn: Mutex::new(conn),
         };
         db.init_schema()?;
+        db.migrate_timestamps_to_rfc3339()?;
         Ok(db)
+    }
+
+    /// MON-39 item 4: one-shot conversion of pre-existing timestamp rows to
+    /// the canonical `%Y-%m-%dT%H:%M:%SZ` RFC3339 shape.
+    ///
+    /// Before this migration the codebase wrote two incompatible formats to
+    /// the same TEXT columns:
+    /// * Rust's `chrono_now()` wrote Unix seconds as a numeric string
+    /// * SQLite DEFAULT `datetime('now')` wrote `YYYY-MM-DD HH:MM:SS` (space
+    ///   separator, no timezone)
+    ///
+    /// `parse_timestamp` in `agent_state.rs` only accepted the former, so
+    /// sessions created by DEFAULT restored with `timestamp: None`. This
+    /// migration normalises both shapes to RFC3339 per column. It is
+    /// idempotent: already-RFC3339 rows match neither WHERE clause and are
+    /// skipped on re-run.
+    fn migrate_timestamps_to_rfc3339(&self) -> Result<(), MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        let cols: &[(&str, &str)] = &[
+            ("projects", "created_at"),
+            ("projects", "updated_at"),
+            ("agents", "created_at"),
+            ("agents", "updated_at"),
+            ("sessions", "started_at"),
+            ("sessions", "ended_at"),
+            ("messages", "timestamp"),
+            ("memories", "created_at"),
+            ("memories", "last_accessed"),
+            ("events", "timestamp"),
+            ("agent_templates", "created_at"),
+            ("agent_templates", "updated_at"),
+        ];
+        let tx = conn.unchecked_transaction()?;
+        for (tbl, col) in cols {
+            // Unix-seconds-as-string: purely numeric, no '-' separator.
+            tx.execute(
+                &format!(
+                    "UPDATE {t} SET {c} = strftime('%Y-%m-%dT%H:%M:%SZ', {c}, 'unixepoch') \
+                     WHERE {c} IS NOT NULL AND {c} GLOB '[0-9]*' AND {c} NOT GLOB '*-*'",
+                    t = tbl,
+                    c = col
+                ),
+                [],
+            )?;
+            // SQLite datetime('now') default: 'YYYY-MM-DD HH:MM:SS', no 'T'.
+            tx.execute(
+                &format!(
+                    "UPDATE {t} SET {c} = strftime('%Y-%m-%dT%H:%M:%SZ', {c}) \
+                     WHERE {c} IS NOT NULL AND {c} GLOB '*-*-* *:*:*' AND {c} NOT GLOB '*T*'",
+                    t = tbl,
+                    c = col
+                ),
+                [],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     fn init_schema(&self) -> Result<(), MonarchError> {
@@ -56,8 +115,8 @@ impl Database {
                 name TEXT NOT NULL,
                 root_path TEXT NOT NULL UNIQUE,
                 instructions TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             );
 
             CREATE TABLE IF NOT EXISTS agents (
@@ -72,8 +131,8 @@ impl Database {
                 thinking_level TEXT,
                 cwd TEXT,
                 custom_prompt TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             );
 
             CREATE TABLE IF NOT EXISTS sessions (
@@ -82,7 +141,7 @@ impl Database {
                 pi_session_file TEXT,
                 model TEXT,
                 provider TEXT,
-                started_at TEXT NOT NULL DEFAULT (datetime('now')),
+                started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 ended_at TEXT,
                 message_count INTEGER DEFAULT 0,
                 total_tokens INTEGER DEFAULT 0,
@@ -97,7 +156,7 @@ impl Database {
                 model TEXT,
                 tokens INTEGER DEFAULT 0,
                 cost REAL DEFAULT 0.0,
-                timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+                timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             );
 
             CREATE TABLE IF NOT EXISTS memories (
@@ -107,7 +166,7 @@ impl Database {
                 category TEXT NOT NULL DEFAULT 'general',
                 content TEXT NOT NULL,
                 relevance REAL DEFAULT 1.0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                 last_accessed TEXT,
                 access_count INTEGER DEFAULT 0
             );
@@ -118,7 +177,7 @@ impl Database {
                 session_id TEXT,
                 event_type TEXT NOT NULL,
                 data TEXT,
-                timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+                timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             );
 
             CREATE TABLE IF NOT EXISTS agent_templates (
@@ -131,8 +190,8 @@ impl Database {
                 shadow_name TEXT,
                 shadow_title TEXT,
                 shadow_grade TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             );
 
             CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id);
@@ -154,8 +213,8 @@ impl Database {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 root_path TEXT NOT NULL UNIQUE,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
             );",
         );
         let _ = conn.execute_batch(
@@ -285,7 +344,7 @@ impl Database {
         conn.execute(
             "INSERT INTO projects (id, name, root_path, instructions, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(root_path) DO UPDATE SET updated_at=datetime('now')",
+             ON CONFLICT(root_path) DO UPDATE SET updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')",
             params![project.id, project.name, project.root_path, project.instructions, project.created_at, project.updated_at],
         )
         ?;
@@ -375,7 +434,7 @@ impl Database {
                shadow_grade=excluded.shadow_grade, provider=excluded.provider, model=excluded.model,
                thinking_level=excluded.thinking_level, cwd=excluded.cwd, custom_prompt=excluded.custom_prompt,
                context_window=excluded.context_window,
-               updated_at=datetime('now')",
+               updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')",
             params![
                 agent.id, agent.name, agent.project_id, agent.shadow_name, agent.shadow_title,
                 agent.shadow_grade, agent.provider, agent.model, agent.thinking_level,
@@ -437,8 +496,9 @@ impl Database {
     ) -> Result<(), MonarchError> {
         let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
         conn.execute(
-            "INSERT INTO events (agent_id, session_id, event_type, data) VALUES (?1, ?2, ?3, ?4)",
-            params![agent_id, session_id, event_type, data],
+            "INSERT INTO events (agent_id, session_id, event_type, data, timestamp) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![agent_id, session_id, event_type, data, crate::agent::chrono_now()],
         )
         ?;
         Ok(())
@@ -667,7 +727,7 @@ impl Database {
             .ok();
         if let Some(existing_id) = existing {
             conn.execute(
-                "UPDATE projects SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
+                "UPDATE projects SET name = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?2",
                 params![project.name, existing_id],
             )?;
         } else {
@@ -675,7 +735,7 @@ impl Database {
                 "INSERT INTO projects (id, name, root_path, instructions, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(id) DO UPDATE SET
-                   name=excluded.name, root_path=excluded.root_path, instructions=excluded.instructions, updated_at=datetime('now')",
+                   name=excluded.name, root_path=excluded.root_path, instructions=excluded.instructions, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')",
                 params![project.id, project.name, project.root_path, project.instructions, project.created_at, project.updated_at],
             )?;
         }
@@ -705,7 +765,7 @@ impl Database {
     pub fn rename_project_internal(&self, project_id: &str, name: &str) -> Result<(), MonarchError> {
         let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
         conn.execute(
-            "UPDATE projects SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
+            "UPDATE projects SET name = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?2",
             params![name, project_id],
         )?;
         Ok(())
@@ -718,7 +778,7 @@ impl Database {
     ) -> Result<(), MonarchError> {
         let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
         conn.execute(
-            "UPDATE projects SET instructions = ?1, updated_at = datetime('now') WHERE id = ?2",
+            "UPDATE projects SET instructions = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?2",
             params![instructions, project_id],
         )?;
         Ok(())
@@ -772,7 +832,7 @@ impl Database {
                shadow_name=excluded.shadow_name,
                shadow_title=excluded.shadow_title,
                shadow_grade=excluded.shadow_grade,
-               updated_at=datetime('now')",
+               updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')",
             params![
                 template.id, template.name, template.provider, template.model,
                 template.thinking_level, template.cwd, template.shadow_name,
@@ -1017,8 +1077,9 @@ pub fn db_log_event(
 ) -> Result<(), MonarchError> {
     let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
     conn.execute(
-        "INSERT INTO events (agent_id, session_id, event_type, data) VALUES (?1, ?2, ?3, ?4)",
-        params![agent_id, session_id, event_type, data],
+        "INSERT INTO events (agent_id, session_id, event_type, data, timestamp) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![agent_id, session_id, event_type, data, crate::agent::chrono_now()],
     )
     ?;
     Ok(())

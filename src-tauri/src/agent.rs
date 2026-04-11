@@ -1574,12 +1574,14 @@ async fn run_persist_consumer(
     eprintln!("[monarch] persist consumer exited");
 }
 
+/// RFC3339 UTC timestamp with second precision, matching the schema
+/// DEFAULT `strftime('%Y-%m-%dT%H:%M:%SZ','now')`. MON-39 item 4: before
+/// the migration, Rust wrote Unix-seconds strings while SQLite DEFAULTs
+/// wrote `datetime('now')` (space-separated, no timezone), and
+/// `parse_timestamp` only handled the former. Now both sides produce the
+/// same RFC3339 shape.
 pub(crate) fn chrono_now() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    format!("{}", secs)
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 pub(crate) fn uuid_v4_simple() -> String {
