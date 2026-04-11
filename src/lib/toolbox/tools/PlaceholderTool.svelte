@@ -86,7 +86,6 @@
 
   .value.mono {
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    font-size: 10px;
     word-break: break-all;
     text-align: right;
   }
