@@ -727,7 +727,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    background: var(--bg-panel, #171126);
+    background: var(--bg-panel);
     min-width: 0;
     height: 100%;
   }
@@ -742,7 +742,7 @@
   .input-area {
     border-top: 1px solid var(--border-subtle);
     padding: 12px 20px;
-    background: var(--bg-sidebar, #0c0816);
+    background: var(--bg-sidebar);
   }
 
   .exit-banner {
@@ -764,7 +764,7 @@
     border: 1px solid var(--border-strong);
     border-radius: 6px;
     background: var(--bg-panel-3);
-    color: var(--accent-purple);
+    color: var(--accent);
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
@@ -773,7 +773,7 @@
 
   .restart-btn:hover {
     background: var(--bg-panel-2);
-    border-color: var(--accent-purple);
+    border-color: var(--accent);
   }
 
   /* --- Compact error view --- */
@@ -791,8 +791,8 @@
     width: 48px;
     height: 48px;
     border-radius: 50%;
-    background: rgba(238, 83, 150, 0.12);
-    color: var(--error, #ee5396);
+    background: var(--error-bg-faint);
+    color: var(--error);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -805,14 +805,14 @@
     margin: 0;
     font-size: 14px;
     font-weight: 600;
-    color: var(--text-primary, #f2f4f8);
+    color: var(--text-primary);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
   .compact-stderr {
     width: 100%;
     max-width: 600px;
-    border: 1px solid rgba(255, 233, 123, 0.2);
+    border: 1px solid var(--warning-border-subtle);
     border-radius: 8px;
     overflow: hidden;
   }
@@ -822,10 +822,10 @@
     justify-content: space-between;
     align-items: center;
     padding: 6px 12px;
-    background: rgba(255, 233, 123, 0.06);
-    border-bottom: 1px solid rgba(255, 233, 123, 0.1);
+    background: var(--warning-bg-subtle);
+    border-bottom: 1px solid var(--warning-border-faint);
     font-size: 11px;
-    color: var(--warning, #ffe97b);
+    color: var(--warning);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
@@ -834,8 +834,8 @@
     margin: 0;
     font-size: 12px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    color: var(--warning, #ffe97b);
-    background: rgba(255, 233, 123, 0.03);
+    color: var(--warning);
+    background: var(--warning-bg-faint);
     max-height: 200px;
     overflow-y: auto;
     white-space: pre-wrap;
@@ -855,9 +855,9 @@
   .compact-error-msg {
     padding: 8px 12px;
     border-radius: 6px;
-    background: rgba(238, 83, 150, 0.06);
-    border: 1px solid rgba(238, 83, 150, 0.15);
-    color: var(--error, #ee5396);
+    background: var(--error-bg-subtle);
+    border: 1px solid var(--error-border-subtle);
+    color: var(--error);
     font-size: 12px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     user-select: text;
@@ -873,8 +873,8 @@
     padding: 8px 20px;
     border: none;
     border-radius: 8px;
-    background: var(--accent-purple, #be95ff);
-    color: #140d22;
+    background: var(--accent);
+    color: var(--text-on-accent);
     font-size: 12px;
     font-weight: 600;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
@@ -883,7 +883,7 @@
   }
 
   .restore-btn:hover {
-    background: #d5bbff;
+    background: var(--accent-hover);
   }
 
   /* --- Stderr section (in chat view) --- */
@@ -916,9 +916,9 @@
   .copy-btn {
     padding: 2px 10px;
     background: none;
-    border: 1px solid var(--border-subtle, #35274f);
+    border: 1px solid var(--border-subtle);
     border-radius: 4px;
-    color: var(--text-muted, #8f7aa8);
+    color: var(--text-muted);
     font-size: 10px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
@@ -937,7 +937,7 @@
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     color: var(--warning);
-    background: rgba(255, 233, 123, 0.04);
+    background: var(--warning-bg-faint);
     max-height: 200px;
     overflow-y: auto;
     white-space: pre-wrap;
@@ -951,18 +951,18 @@
     align-items: center;
     gap: 8px;
     padding: 6px 20px;
-    background: rgba(51, 177, 255, 0.06);
-    border-top: 1px solid rgba(51, 177, 255, 0.15);
+    background: var(--accent-blue-bg-subtle);
+    border-top: 1px solid var(--accent-blue-border-subtle);
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    color: var(--accent-blue, #33b1ff);
+    color: var(--accent-blue);
   }
 
   .activity-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--accent-blue, #33b1ff);
+    background: var(--accent-blue);
     animation: pulse 1s ease-in-out infinite;
     flex-shrink: 0;
   }
@@ -981,9 +981,9 @@
     margin: 4px 20px;
     padding: 3px 10px;
     border-radius: 999px;
-    background: rgba(238, 83, 150, 0.12);
-    border: 1px solid rgba(238, 83, 150, 0.4);
-    color: var(--error, #ee5396);
+    background: var(--error-bg-faint);
+    border: 1px solid var(--error-border-faint);
+    color: var(--error);
     font-size: 10px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     letter-spacing: 0.05em;
@@ -998,8 +998,8 @@
     padding: 10px 12px;
     margin-top: 12px;
     border-radius: 8px;
-    background: rgba(190, 149, 255, 0.06);
-    border: 1px dashed var(--accent-purple, #be95ff);
+    background: var(--accent-bg-subtle);
+    border: 1px dashed var(--accent);
     color: var(--text-muted);
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;

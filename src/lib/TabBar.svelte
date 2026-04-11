@@ -95,8 +95,8 @@
     align-items: stretch;
     height: 34px;
     min-height: 34px;
-    background: var(--bg-sidebar, #0c0816);
-    border-bottom: 1px solid var(--border-subtle, #35274f);
+    background: var(--bg-sidebar);
+    border-bottom: 1px solid var(--border-subtle);
     user-select: none;
     overflow: hidden;
   }
@@ -120,8 +120,8 @@
     min-width: 0;
     max-width: 180px;
     cursor: pointer;
-    border-right: 1px solid var(--border-subtle, #35274f);
-    color: var(--text-muted, #8f7aa8);
+    border-right: 1px solid var(--border-subtle);
+    color: var(--text-muted);
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     transition: background 0.12s, color 0.12s;
@@ -129,14 +129,14 @@
   }
 
   .tab:hover {
-    background: var(--bg-panel-2, #201734);
-    color: var(--text-secondary, #dde1e6);
+    background: var(--bg-panel-2);
+    color: var(--text-secondary);
   }
 
   .tab.active {
-    background: var(--bg-panel, #171126);
-    color: var(--text-primary, #f2f4f8);
-    border-bottom: 2px solid var(--accent-purple, #be95ff);
+    background: var(--bg-panel);
+    color: var(--text-primary);
+    border-bottom: 2px solid var(--accent);
   }
 
   .tab.standby {
@@ -152,7 +152,7 @@
   .tab-close {
     border: none;
     background: none;
-    color: var(--text-muted, #8f7aa8);
+    color: var(--text-muted);
     cursor: pointer;
     font-size: 14px;
     line-height: 1;
@@ -164,7 +164,7 @@
     opacity: 1;
   }
   .tab-close:hover {
-    color: var(--error, #ee5396);
+    color: var(--error);
   }
 
   .tab-actions {
@@ -180,7 +180,7 @@
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: var(--text-muted, #8f7aa8);
+    color: var(--text-muted);
     font-size: 16px;
     cursor: pointer;
     display: flex;
@@ -189,8 +189,8 @@
     transition: background 0.12s, color 0.12s;
   }
   .tab-add:hover {
-    background: var(--bg-panel-2, #201734);
-    color: var(--accent-purple, #be95ff);
+    background: var(--bg-panel-2);
+    color: var(--accent);
   }
 
   .dropdown-backdrop {
@@ -209,10 +209,10 @@
     overflow-y: auto;
     padding: 4px;
     margin-top: 4px;
-    background: var(--bg-panel, #171126);
-    border: 1px solid var(--border-subtle, #35274f);
+    background: var(--bg-panel);
+    border: 1px solid var(--border-subtle);
     border-radius: 6px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 12px 32px var(--shadow-dark);
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -220,7 +220,7 @@
 
   .dropdown-empty {
     padding: 12px 10px;
-    color: var(--text-muted, #8f7aa8);
+    color: var(--text-muted);
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     text-align: center;
@@ -234,7 +234,7 @@
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: var(--text-secondary, #dde1e6);
+    color: var(--text-secondary);
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     text-align: left;
@@ -242,8 +242,8 @@
     transition: background 0.12s, color 0.12s;
   }
   .dropdown-item:hover {
-    background: var(--bg-panel-2, #201734);
-    color: var(--accent-purple, #be95ff);
+    background: var(--bg-panel-2);
+    color: var(--accent);
   }
 
   .dropdown-name {
@@ -255,7 +255,7 @@
 
   .dropdown-model {
     font-size: 10px;
-    color: var(--text-muted, #8f7aa8);
+    color: var(--text-muted);
     flex-shrink: 0;
   }
 </style>

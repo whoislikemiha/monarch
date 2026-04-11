@@ -204,7 +204,7 @@ Current date: ${date}`;
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--overlay-backdrop);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -212,8 +212,8 @@ Current date: ${date}`;
   }
 
   .editor-panel {
-    background: var(--bg-panel, #171126);
-    border: 1px solid var(--border-subtle, #35274f);
+    background: var(--bg-panel);
+    border: 1px solid var(--border-subtle);
     border-radius: 12px;
     width: 800px;
     max-width: 90vw;
@@ -228,7 +228,7 @@ Current date: ${date}`;
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px;
-    border-bottom: 1px solid var(--border-subtle, #35274f);
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
   }
 
@@ -236,7 +236,7 @@ Current date: ${date}`;
     margin: 0;
     font-size: 14px;
     font-weight: 600;
-    color: var(--text-primary, #f2f4f8);
+    color: var(--text-primary);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
@@ -249,16 +249,16 @@ Current date: ${date}`;
   .editor-hint {
     padding: 8px 20px;
     font-size: 11px;
-    color: var(--text-muted, #8f7aa8);
+    color: var(--text-muted);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    border-bottom: 1px solid var(--border-subtle, #35274f);
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
   }
 
   .prompt-textarea {
     flex: 1;
-    background: var(--bg-panel-2, #201734);
-    color: var(--text-primary, #f2f4f8);
+    background: var(--bg-panel-2);
+    color: var(--text-primary);
     font-size: 12px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     line-height: 1.6;
@@ -271,7 +271,7 @@ Current date: ${date}`;
   }
 
   .prompt-textarea::placeholder {
-    color: var(--text-muted, #8f7aa8);
+    color: var(--text-muted);
   }
 
   .loading {
@@ -288,8 +288,8 @@ Current date: ${date}`;
     padding: 6px 14px;
     border: none;
     border-radius: 6px;
-    background: var(--accent-purple, #be95ff);
-    color: #140d22;
+    background: var(--accent);
+    color: var(--text-on-accent);
     font-size: 11px;
     font-weight: 600;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
@@ -301,7 +301,7 @@ Current date: ${date}`;
   }
 
   .btn-save:hover {
-    background: #d5bbff;
+    background: var(--accent-hover);
   }
 
   .btn-save:disabled {
@@ -311,10 +311,10 @@ Current date: ${date}`;
 
   .btn-reset {
     padding: 6px 12px;
-    border: 1px solid var(--border-subtle, #35274f);
+    border: 1px solid var(--border-subtle);
     border-radius: 6px;
     background: transparent;
-    color: var(--warning, #ffe97b);
+    color: var(--warning);
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
@@ -322,15 +322,15 @@ Current date: ${date}`;
   }
 
   .btn-reset:hover {
-    background: rgba(255, 233, 123, 0.08);
+    background: var(--warning-bg-subtle);
   }
 
   .btn-close {
     padding: 6px 12px;
-    border: 1px solid var(--border-subtle, #35274f);
+    border: 1px solid var(--border-subtle);
     border-radius: 6px;
     background: transparent;
-    color: var(--text-secondary, #dde1e6);
+    color: var(--text-secondary);
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
@@ -338,7 +338,7 @@ Current date: ${date}`;
   }
 
   .btn-close:hover {
-    background: var(--bg-panel-2, #201734);
+    background: var(--bg-panel-2);
   }
 
   .shortcut {

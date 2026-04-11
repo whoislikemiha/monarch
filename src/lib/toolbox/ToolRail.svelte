@@ -52,8 +52,8 @@
     width: 44px;
     flex-shrink: 0;
     padding: 8px 0;
-    background: var(--bg-sidebar, #0c0816);
-    border-left: 1px solid var(--border-subtle, #35274f);
+    background: var(--bg-sidebar);
+    border-left: 1px solid var(--border-subtle);
     overflow: hidden;
   }
 
@@ -71,24 +71,24 @@
     border: 1px solid transparent;
     border-radius: 6px;
     background: transparent;
-    color: var(--text-muted, #9aa0a6);
+    color: var(--text-muted);
     cursor: pointer;
     transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
 
   .rail-btn:hover {
-    background: var(--bg-panel-2, #201734);
-    color: var(--text-primary, #f2f4f8);
+    background: var(--bg-panel-2);
+    color: var(--text-primary);
   }
 
   .rail-btn:focus-visible {
     outline: none;
-    border-color: var(--accent-purple, #be95ff);
+    border-color: var(--accent);
   }
 
   .rail-btn.active {
-    color: var(--accent-purple, #be95ff);
-    background: rgba(190, 149, 255, 0.12);
+    color: var(--accent);
+    background: var(--accent-bg-hover);
   }
 
   .rail-btn :global(svg) {

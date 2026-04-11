@@ -202,7 +202,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--overlay-backdrop);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -210,8 +210,8 @@
   }
 
   .editor-panel {
-    background: var(--bg-panel, #171126);
-    border: 1px solid var(--border-subtle, #35274f);
+    background: var(--bg-panel);
+    border: 1px solid var(--border-subtle);
     border-radius: 12px;
     width: 800px;
     max-width: 90vw;
@@ -226,7 +226,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px;
-    border-bottom: 1px solid var(--border-subtle, #35274f);
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
     gap: 12px;
   }
@@ -248,16 +248,16 @@
   }
 
   .name-btn:hover {
-    background: rgba(190, 149, 255, 0.08);
+    background: var(--accent-bg-subtle);
   }
 
   .name-input {
     font-size: 14px;
     font-weight: 600;
-    color: var(--text-primary, #f2f4f8);
+    color: var(--text-primary);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    background: var(--bg-panel-2, #201734);
-    border: 1px solid var(--accent-purple, #be95ff);
+    background: var(--bg-panel-2);
+    border: 1px solid var(--accent);
     border-radius: 4px;
     padding: 2px 6px;
     outline: none;
@@ -268,13 +268,13 @@
     margin: 0;
     font-size: 14px;
     font-weight: 600;
-    color: var(--text-primary, #f2f4f8);
+    color: var(--text-primary);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     white-space: nowrap;
   }
 
   .project-icon {
-    color: var(--accent-purple, #be95ff);
+    color: var(--accent);
     font-weight: 700;
     font-size: 14px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
@@ -282,7 +282,7 @@
 
   .header-path {
     font-size: 10px;
-    color: var(--text-muted, #8f7aa8);
+    color: var(--text-muted);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -299,9 +299,9 @@
   .editor-hint {
     padding: 8px 20px;
     font-size: 11px;
-    color: var(--text-muted, #8f7aa8);
+    color: var(--text-muted);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    border-bottom: 1px solid var(--border-subtle, #35274f);
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -313,14 +313,14 @@
     font-size: 10px;
     padding: 2px 8px;
     border-radius: 4px;
-    background: rgba(255, 176, 32, 0.15);
-    color: var(--warning, #ffe97b);
+    background: var(--unsaved-badge-bg);
+    color: var(--warning);
   }
 
   .prompt-textarea {
     flex: 1;
-    background: var(--bg-panel-2, #201734);
-    color: var(--text-primary, #f2f4f8);
+    background: var(--bg-panel-2);
+    color: var(--text-primary);
     font-size: 12px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     line-height: 1.6;
@@ -333,15 +333,15 @@
   }
 
   .prompt-textarea::placeholder {
-    color: var(--text-muted, #8f7aa8);
+    color: var(--text-muted);
   }
 
   .btn-save {
     padding: 6px 14px;
     border: none;
     border-radius: 6px;
-    background: var(--accent-purple, #be95ff);
-    color: #140d22;
+    background: var(--accent);
+    color: var(--text-on-accent);
     font-size: 11px;
     font-weight: 600;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
@@ -353,7 +353,7 @@
   }
 
   .btn-save:hover {
-    background: #d5bbff;
+    background: var(--accent-hover);
   }
 
   .btn-save:disabled {
@@ -363,10 +363,10 @@
 
   .btn-reload {
     padding: 6px 12px;
-    border: 1px solid var(--border-subtle, #35274f);
+    border: 1px solid var(--border-subtle);
     border-radius: 6px;
     background: transparent;
-    color: var(--text-secondary, #dde1e6);
+    color: var(--text-secondary);
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
@@ -374,7 +374,7 @@
   }
 
   .btn-reload:hover {
-    background: var(--bg-panel-2, #201734);
+    background: var(--bg-panel-2);
   }
 
   .btn-reload:disabled {
@@ -384,10 +384,10 @@
 
   .btn-close {
     padding: 6px 12px;
-    border: 1px solid var(--border-subtle, #35274f);
+    border: 1px solid var(--border-subtle);
     border-radius: 6px;
     background: transparent;
-    color: var(--text-secondary, #dde1e6);
+    color: var(--text-secondary);
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
@@ -395,7 +395,7 @@
   }
 
   .btn-close:hover {
-    background: var(--bg-panel-2, #201734);
+    background: var(--bg-panel-2);
   }
 
   .shortcut {

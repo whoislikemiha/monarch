@@ -198,7 +198,7 @@
   .sidebar {
     width: 220px;
     min-width: 220px;
-    background: var(--bg-sidebar, #0c0816);
+    background: var(--bg-sidebar);
     border-right: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
@@ -227,7 +227,7 @@
     justify-content: center;
     font-size: 14px;
     font-weight: 700;
-    color: var(--accent-purple, #be95ff);
+    color: var(--accent);
     font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
     border-bottom: 1px solid var(--border-subtle);
     padding-bottom: 8px;
@@ -240,7 +240,7 @@
     border: 1px solid var(--border-strong);
     border-radius: 6px;
     background: var(--bg-panel-2);
-    color: var(--accent-purple);
+    color: var(--accent);
     font-size: 16px;
     cursor: pointer;
     display: flex;
@@ -252,7 +252,7 @@
 
   .rail-btn:hover {
     background: var(--bg-panel-3);
-    color: #e2d4ff;
+    color: var(--accent-light);
   }
 
   .sidebar-header {
@@ -278,7 +278,7 @@
     border: 1px solid var(--border-strong);
     border-radius: 6px;
     background: var(--bg-panel-2);
-    color: var(--accent-purple);
+    color: var(--accent);
     font-size: 18px;
     cursor: pointer;
     display: flex;
@@ -288,7 +288,7 @@
   }
   .btn-new:hover {
     background: var(--bg-panel-3);
-    color: #e2d4ff;
+    color: var(--accent-light);
   }
 
   .agent-list {
@@ -326,11 +326,11 @@
   }
 
   .project-name-btn:hover {
-    color: var(--accent-purple, #be95ff);
+    color: var(--accent);
   }
 
   .project-icon {
-    color: var(--accent-purple, #be95ff);
+    color: var(--accent);
     font-weight: 700;
   }
 
@@ -388,7 +388,7 @@
 
   .agent-grade {
     font-size: 10px;
-    color: var(--accent-purple, #be95ff);
+    color: var(--accent);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -428,10 +428,10 @@
     z-index: 501;
     min-width: 160px;
     padding: 4px;
-    background: var(--bg-panel, #171126);
-    border: 1px solid var(--border-subtle, #35274f);
+    background: var(--bg-panel);
+    border: 1px solid var(--border-subtle);
     border-radius: 6px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 12px 32px var(--shadow-dark);
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -442,7 +442,7 @@
     border: none;
     border-radius: 4px;
     background: transparent;
-    color: var(--text-secondary, #dde1e6);
+    color: var(--text-secondary);
     font-size: 11px;
     font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
     text-align: left;
@@ -451,7 +451,7 @@
   }
 
   .context-menu-item:hover {
-    background: var(--bg-panel-2, #201734);
-    color: var(--accent-purple, #be95ff);
+    background: var(--bg-panel-2);
+    color: var(--accent);
   }
 </style>

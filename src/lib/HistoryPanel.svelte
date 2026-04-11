@@ -186,7 +186,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--overlay-backdrop);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -194,8 +194,8 @@
   }
 
   .history-panel {
-    background: var(--bg-panel, #171126);
-    border: 1px solid var(--border-subtle, #35274f);
+    background: var(--bg-panel);
+    border: 1px solid var(--border-subtle);
     border-radius: 12px;
     width: 900px;
     max-width: 90vw;
@@ -283,7 +283,7 @@
 
   .session-item.active {
     background: var(--bg-panel-2);
-    border-color: var(--accent-purple);
+    border-color: var(--accent);
   }
 
   .session-item.current {
@@ -297,7 +297,7 @@
   }
 
   .session-model {
-    color: var(--accent-purple);
+    color: var(--accent);
     font-size: 11px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -344,10 +344,10 @@
 
   .load-btn {
     padding: 4px 14px;
-    border: 1px solid var(--accent-purple);
+    border: 1px solid var(--accent);
     border-radius: 6px;
     background: transparent;
-    color: var(--accent-purple);
+    color: var(--accent);
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
@@ -355,7 +355,7 @@
   }
 
   .load-btn:hover:not(:disabled) {
-    background: rgba(190, 149, 255, 0.1);
+    background: var(--accent-bg-hover);
   }
 
   .load-btn:disabled {
@@ -403,7 +403,7 @@
   }
 
   .preview-msg.assistant .msg-role {
-    color: var(--accent-purple);
+    color: var(--accent);
   }
 
   .msg-text {

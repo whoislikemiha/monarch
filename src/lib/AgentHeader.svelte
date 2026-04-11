@@ -98,7 +98,7 @@
     justify-content: space-between;
     padding: 10px 20px;
     border-bottom: 1px solid var(--border-subtle);
-    background: var(--bg-sidebar, #0c0816);
+    background: var(--bg-sidebar);
     flex-shrink: 0;
   }
 
@@ -118,7 +118,7 @@
 
   .agent-title {
     font-size: 11px;
-    color: var(--accent-purple, #be95ff);
+    color: var(--accent);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -130,9 +130,9 @@
     align-items: center;
     gap: 2px;
     padding: 2px 8px;
-    border: 1px solid rgba(190, 149, 255, 0.2);
+    border: 1px solid var(--accent-border-subtle);
     border-radius: 4px;
-    background: rgba(190, 149, 255, 0.06);
+    background: var(--accent-bg-subtle);
     color: var(--text-muted);
     font-size: 10px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
@@ -142,13 +142,13 @@
   }
 
   .project-badge:hover {
-    background: rgba(190, 149, 255, 0.12);
-    color: var(--accent-purple, #be95ff);
-    border-color: rgba(190, 149, 255, 0.4);
+    background: var(--accent-bg-hover);
+    color: var(--accent);
+    border-color: var(--accent-border-hover);
   }
 
   .project-slash {
-    color: var(--accent-purple, #be95ff);
+    color: var(--accent);
     font-weight: 700;
   }
 
@@ -182,8 +182,8 @@
 
   .new-session-btn:hover {
     background: var(--bg-panel-2);
-    color: var(--accent-purple);
-    border-color: var(--accent-purple);
+    color: var(--accent);
+    border-color: var(--accent);
   }
 
   .menu-wrap {
@@ -218,7 +218,7 @@
     right: 0;
     margin-top: 4px;
     min-width: 180px;
-    background: var(--bg-panel-2, #201734);
+    background: var(--bg-panel-2);
     border: 1px solid var(--border-subtle);
     border-radius: 8px;
     padding: 4px;

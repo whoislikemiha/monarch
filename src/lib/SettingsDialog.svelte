@@ -59,7 +59,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--overlay-backdrop);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -67,8 +67,8 @@
   }
 
   .dialog {
-    background: var(--bg-panel, #171126);
-    border: 1px solid var(--border-subtle, #35274f);
+    background: var(--bg-panel);
+    border: 1px solid var(--border-subtle);
     border-radius: 12px;
     width: 720px;
     max-width: 90vw;
@@ -84,7 +84,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px;
-    border-bottom: 1px solid var(--border-subtle, #35274f);
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
   }
 
@@ -92,7 +92,7 @@
     margin: 0;
     font-size: 14px;
     font-weight: 600;
-    color: var(--text-primary, #f2f4f8);
+    color: var(--text-primary);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
@@ -109,7 +109,7 @@
     padding: 12px;
     width: 180px;
     flex-shrink: 0;
-    border-right: 1px solid var(--border-subtle, #35274f);
+    border-right: 1px solid var(--border-subtle);
     overflow-y: auto;
   }
 
@@ -118,7 +118,7 @@
     border: none;
     border-radius: 6px;
     background: transparent;
-    color: var(--text-secondary, #dde1e6);
+    color: var(--text-secondary);
     font-size: 12px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
@@ -127,13 +127,13 @@
   }
 
   .category-btn:hover {
-    background: var(--bg-panel-2, #201734);
-    color: var(--text-primary, #f2f4f8);
+    background: var(--bg-panel-2);
+    color: var(--text-primary);
   }
 
   .category-btn.active {
-    background: rgba(190, 149, 255, 0.12);
-    color: var(--accent-purple, #be95ff);
+    background: var(--accent-bg-hover);
+    color: var(--accent);
   }
 
   .category-content {
@@ -146,23 +146,23 @@
     margin: 0 0 16px 0;
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-primary, #f2f4f8);
+    color: var(--text-primary);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
   .placeholder-text {
     font-size: 12px;
-    color: var(--text-muted, #8f7aa8);
+    color: var(--text-muted);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     margin: 0;
   }
 
   .btn-close {
     padding: 6px 12px;
-    border: 1px solid var(--border-subtle, #35274f);
+    border: 1px solid var(--border-subtle);
     border-radius: 6px;
     background: transparent;
-    color: var(--text-secondary, #dde1e6);
+    color: var(--text-secondary);
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
@@ -170,6 +170,6 @@
   }
 
   .btn-close:hover {
-    background: var(--bg-panel-2, #201734);
+    background: var(--bg-panel-2);
   }
 </style>

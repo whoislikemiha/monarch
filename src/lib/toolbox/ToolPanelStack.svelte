@@ -97,8 +97,8 @@
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
-    background: var(--bg-panel, #171126);
-    border-left: 1px solid var(--border-subtle, #35274f);
+    background: var(--bg-panel);
+    border-left: 1px solid var(--border-subtle);
     min-height: 0;
     overflow: hidden;
   }
@@ -121,7 +121,7 @@
 
   .resize-handle:hover,
   .resize-handle:active {
-    background: rgba(190, 149, 255, 0.35);
+    background: var(--resize-handle-active);
   }
 
   .panels {
@@ -138,7 +138,7 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
-    border-bottom: 1px solid var(--border-subtle, #35274f);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .panel:last-child {
@@ -150,8 +150,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 6px 10px;
-    background: var(--bg-sidebar, #0c0816);
-    border-bottom: 1px solid var(--border-subtle, #35274f);
+    background: var(--bg-sidebar);
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
   }
 
@@ -159,7 +159,7 @@
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-secondary, #dde1e6);
+    color: var(--text-secondary);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
@@ -169,7 +169,7 @@
     padding: 0;
     border: none;
     background: transparent;
-    color: var(--text-muted, #9aa0a6);
+    color: var(--text-muted);
     font-size: 16px;
     line-height: 1;
     cursor: pointer;
@@ -177,8 +177,8 @@
   }
 
   .panel-close:hover {
-    background: var(--bg-panel-2, #201734);
-    color: var(--text-primary, #f2f4f8);
+    background: var(--bg-panel-2);
+    color: var(--text-primary);
   }
 
   .panel-body {
@@ -187,7 +187,7 @@
     overflow: auto;
     padding: 12px;
     font-size: 12px;
-    color: var(--text-primary, #f2f4f8);
+    color: var(--text-primary);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 </style>

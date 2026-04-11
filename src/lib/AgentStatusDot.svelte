@@ -18,22 +18,22 @@
     flex-shrink: 0;
   }
   .tab-dot.running {
-    background: var(--success, #42be65);
-    box-shadow: 0 0 3px rgba(66, 190, 101, 0.5);
+    background: var(--success);
+    box-shadow: 0 0 3px var(--success-glow);
   }
   .tab-dot.stopped {
-    background: var(--text-muted, #8f7aa8);
+    background: var(--text-muted);
   }
   .tab-dot.starting {
-    background: var(--warning, #ffe97b);
+    background: var(--warning);
   }
   .tab-dot.streaming {
-    background: var(--accent-blue, #33b1ff);
-    box-shadow: 0 0 3px rgba(51, 177, 255, 0.5);
+    background: var(--accent-blue);
+    box-shadow: 0 0 3px var(--success-glow);
     animation: pulse 1s ease-in-out infinite;
   }
   .tab-dot.error {
-    background: var(--error, #ee5396);
+    background: var(--error);
   }
 
   .status-dot {
@@ -44,7 +44,7 @@
   }
   .status-dot.running {
     background: var(--success);
-    box-shadow: 0 0 4px rgba(66, 190, 101, 0.55);
+    box-shadow: 0 0 4px var(--success-glow);
   }
   .status-dot.stopped {
     background: var(--text-muted);
@@ -54,7 +54,7 @@
   }
   .status-dot.streaming {
     background: var(--accent-blue);
-    box-shadow: 0 0 4px rgba(51, 177, 255, 0.55);
+    box-shadow: 0 0 4px var(--success-glow);
     animation: pulse 1s ease-in-out infinite;
   }
   .status-dot.error {

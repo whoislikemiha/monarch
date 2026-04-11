@@ -98,7 +98,7 @@
   }
 
   .assistant-message .message-label {
-    color: var(--accent-purple);
+    color: var(--accent);
   }
 
   .model-tag,
@@ -118,7 +118,7 @@
 
   .user-message .message-content {
     padding: 10px 14px;
-    background: var(--bg-panel-2, #201734);
+    background: var(--bg-panel-2);
     border-radius: 8px;
     border: 1px solid var(--border-subtle);
   }
@@ -163,7 +163,7 @@
     font-size: 48px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     margin-bottom: 12px;
-    color: var(--accent-purple);
+    color: var(--accent);
   }
 
   .streaming-content {
@@ -202,19 +202,19 @@
 
   .notification-message.info {
     color: var(--accent-blue);
-    background: rgba(51, 177, 255, 0.06);
-    border: 1px solid rgba(51, 177, 255, 0.15);
+    background: var(--accent-blue-bg-subtle);
+    border: 1px solid var(--accent-blue-border-subtle);
   }
 
   .notification-message.warning {
     color: var(--warning);
-    background: rgba(255, 233, 123, 0.06);
-    border: 1px solid rgba(255, 233, 123, 0.15);
+    background: var(--warning-bg-subtle);
+    border: 1px solid var(--warning-border-subtle);
   }
 
   .notification-message.error {
     color: var(--error);
-    background: rgba(238, 83, 150, 0.06);
-    border: 1px solid rgba(238, 83, 150, 0.15);
+    background: var(--error-bg-subtle);
+    border: 1px solid var(--error-border-subtle);
   }
 </style>
