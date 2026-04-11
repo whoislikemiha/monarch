@@ -33,6 +33,20 @@ impl Database {
         Ok(db)
     }
 
+    /// In-memory SQLite instance for unit tests. Not WAL (in-memory databases
+    /// don't support it) and schema is initialised the same way as the
+    /// on-disk constructor.
+    #[cfg(test)]
+    pub fn new_in_memory() -> Result<Self, MonarchError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
+        db.init_schema()?;
+        Ok(db)
+    }
+
     fn init_schema(&self) -> Result<(), MonarchError> {
         let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
         conn.execute_batch(
@@ -525,6 +539,255 @@ impl Database {
 
         Ok(all_messages)
     }
+
+    pub fn get_agents_internal(&self) -> Result<Vec<AgentRow>, MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        let mut stmt = conn
+            .prepare("SELECT id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at FROM agents ORDER BY updated_at DESC")
+            ?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(AgentRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    project_id: row.get(2)?,
+                    shadow_name: row.get(3)?,
+                    shadow_title: row.get(4)?,
+                    shadow_grade: row.get(5)?,
+                    provider: row.get(6)?,
+                    model: row.get(7)?,
+                    thinking_level: row.get(8)?,
+                    cwd: row.get(9)?,
+                    custom_prompt: row.get(10)?,
+                    context_window: row.get(11)?,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
+                })
+            })
+            ?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn delete_agent_internal(&self, agent_id: &str) -> Result<(), MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        conn.execute("DELETE FROM agents WHERE id = ?1", params![agent_id])?;
+        Ok(())
+    }
+
+    pub fn get_sessions_internal(&self, agent_id: &str) -> Result<Vec<SessionRow>, MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        let mut stmt = conn
+            .prepare("SELECT id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id FROM sessions WHERE agent_id = ?1 ORDER BY started_at DESC")
+            ?;
+        let rows = stmt
+            .query_map(params![agent_id], |row| {
+                Ok(SessionRow {
+                    id: row.get(0)?,
+                    agent_id: row.get(1)?,
+                    pi_session_file: row.get(2)?,
+                    model: row.get(3)?,
+                    provider: row.get(4)?,
+                    started_at: row.get(5)?,
+                    ended_at: row.get(6)?,
+                    message_count: row.get(7)?,
+                    total_tokens: row.get(8)?,
+                    total_cost: row.get(9)?,
+                    parent_session_id: row.get(10)?,
+                })
+            })
+            ?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn get_messages_internal(&self, session_id: &str) -> Result<Vec<MessageRow>, MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        let mut stmt = conn
+            .prepare("SELECT id, session_id, role, content, model, tokens, cost, timestamp FROM messages WHERE session_id = ?1 ORDER BY id ASC")
+            ?;
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                Ok(MessageRow {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    role: row.get(2)?,
+                    content: row.get(3)?,
+                    model: row.get(4)?,
+                    tokens: row.get(5)?,
+                    cost: row.get(6)?,
+                    timestamp: row.get(7)?,
+                })
+            })
+            ?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn save_memory_internal(&self, memory: &MemoryRow) -> Result<i64, MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        conn.execute(
+            "INSERT INTO memories (agent_id, layer, category, content, relevance, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                memory.agent_id, memory.layer, memory.category,
+                memory.content, memory.relevance, memory.created_at,
+            ],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn get_memories_internal(
+        &self,
+        agent_id: Option<&str>,
+        layer: Option<&str>,
+    ) -> Result<Vec<MemoryRow>, MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        let sql = match (agent_id, layer) {
+            (Some(_), Some(_)) => "SELECT id, agent_id, layer, category, content, relevance, created_at, last_accessed, access_count FROM memories WHERE (agent_id = ?1 OR agent_id IS NULL) AND layer = ?2 ORDER BY relevance DESC, created_at DESC",
+            (Some(_), None) => "SELECT id, agent_id, layer, category, content, relevance, created_at, last_accessed, access_count FROM memories WHERE (agent_id = ?1 OR agent_id IS NULL) ORDER BY relevance DESC, created_at DESC",
+            (None, Some(_)) => "SELECT id, agent_id, layer, category, content, relevance, created_at, last_accessed, access_count FROM memories WHERE layer = ?1 ORDER BY relevance DESC, created_at DESC",
+            (None, None) => "SELECT id, agent_id, layer, category, content, relevance, created_at, last_accessed, access_count FROM memories ORDER BY relevance DESC, created_at DESC",
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let rows = match (agent_id, layer) {
+            (Some(a), Some(l)) => stmt.query_map(params![a, l], map_memory)?,
+            (Some(a), None) => stmt.query_map(params![a], map_memory)?,
+            (None, Some(l)) => stmt.query_map(params![l], map_memory)?,
+            (None, None) => stmt.query_map([], map_memory)?,
+        };
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn upsert_project_internal(&self, project: &ProjectRow) -> Result<(), MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        let existing: Option<String> = conn
+            .query_row(
+                "SELECT id FROM projects WHERE root_path = ?1",
+                params![project.root_path],
+                |row| row.get(0),
+            )
+            .ok();
+        if let Some(existing_id) = existing {
+            conn.execute(
+                "UPDATE projects SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
+                params![project.name, existing_id],
+            )?;
+        } else {
+            conn.execute(
+                "INSERT INTO projects (id, name, root_path, instructions, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(id) DO UPDATE SET
+                   name=excluded.name, root_path=excluded.root_path, instructions=excluded.instructions, updated_at=datetime('now')",
+                params![project.id, project.name, project.root_path, project.instructions, project.created_at, project.updated_at],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn get_projects_internal(&self) -> Result<Vec<ProjectRow>, MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        let mut stmt = conn
+            .prepare("SELECT id, name, root_path, instructions, created_at, updated_at FROM projects ORDER BY updated_at DESC")
+            ?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ProjectRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    root_path: row.get(2)?,
+                    instructions: row.get(3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            })
+            ?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn rename_project_internal(&self, project_id: &str, name: &str) -> Result<(), MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        conn.execute(
+            "UPDATE projects SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![name, project_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_project_instructions_internal(
+        &self,
+        project_id: &str,
+        instructions: Option<&str>,
+    ) -> Result<(), MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        conn.execute(
+            "UPDATE projects SET instructions = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![instructions, project_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_project_internal(&self, project_id: &str) -> Result<(), MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])?;
+        Ok(())
+    }
+
+    pub fn list_agent_templates_internal(&self) -> Result<Vec<AgentTemplateRow>, MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, provider, model, thinking_level, cwd, shadow_name, shadow_title, shadow_grade, created_at, updated_at
+                 FROM agent_templates ORDER BY updated_at DESC",
+            )
+            ?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(AgentTemplateRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    provider: row.get(2)?,
+                    model: row.get(3)?,
+                    thinking_level: row.get(4)?,
+                    cwd: row.get(5)?,
+                    shadow_name: row.get(6)?,
+                    shadow_title: row.get(7)?,
+                    shadow_grade: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                })
+            })
+            ?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn save_agent_template_internal(&self, template: &AgentTemplateRow) -> Result<(), MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        conn.execute(
+            "INSERT INTO agent_templates (id, name, provider, model, thinking_level, cwd, shadow_name, shadow_title, shadow_grade, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(id) DO UPDATE SET
+               name=excluded.name,
+               provider=excluded.provider,
+               model=excluded.model,
+               thinking_level=excluded.thinking_level,
+               cwd=excluded.cwd,
+               shadow_name=excluded.shadow_name,
+               shadow_title=excluded.shadow_title,
+               shadow_grade=excluded.shadow_grade,
+               updated_at=datetime('now')",
+            params![
+                template.id, template.name, template.provider, template.model,
+                template.thinking_level, template.cwd, template.shadow_name,
+                template.shadow_title, template.shadow_grade,
+                template.created_at, template.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_agent_template_internal(&self, template_id: &str) -> Result<(), MonarchError> {
+        let conn = self.conn.lock().map_err(lock_poisoned("db"))?;
+        conn.execute("DELETE FROM agent_templates WHERE id = ?1", params![template_id])?;
+        Ok(())
+    }
 }
 
 // ---- Tauri Commands: Agents ----
@@ -538,40 +801,13 @@ pub fn db_upsert_agent(db: tauri::State<'_, Arc<Database>>, agent: AgentRow) -> 
 #[tauri::command]
 #[specta::specta]
 pub fn db_get_agents(db: tauri::State<'_, Arc<Database>>) -> Result<Vec<AgentRow>, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    let mut stmt = conn
-        .prepare("SELECT id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at FROM agents ORDER BY updated_at DESC")
-        ?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(AgentRow {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                project_id: row.get(2)?,
-                shadow_name: row.get(3)?,
-                shadow_title: row.get(4)?,
-                shadow_grade: row.get(5)?,
-                provider: row.get(6)?,
-                model: row.get(7)?,
-                thinking_level: row.get(8)?,
-                cwd: row.get(9)?,
-                custom_prompt: row.get(10)?,
-                context_window: row.get(11)?,
-                created_at: row.get(12)?,
-                updated_at: row.get(13)?,
-            })
-        })
-        ?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    db.get_agents_internal()
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn db_delete_agent(db: tauri::State<'_, Arc<Database>>, agent_id: String) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute("DELETE FROM agents WHERE id = ?1", params![agent_id])
-        ?;
-    Ok(())
+    db.delete_agent_internal(&agent_id)
 }
 
 // ---- Tauri Commands: Sessions ----
@@ -606,28 +842,7 @@ pub fn db_create_session(db: tauri::State<'_, Arc<Database>>, session: SessionRo
 #[tauri::command]
 #[specta::specta]
 pub fn db_get_sessions(db: tauri::State<'_, Arc<Database>>, agent_id: String) -> Result<Vec<SessionRow>, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    let mut stmt = conn
-        .prepare("SELECT id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id FROM sessions WHERE agent_id = ?1 ORDER BY started_at DESC")
-        ?;
-    let rows = stmt
-        .query_map(params![agent_id], |row| {
-            Ok(SessionRow {
-                id: row.get(0)?,
-                agent_id: row.get(1)?,
-                pi_session_file: row.get(2)?,
-                model: row.get(3)?,
-                provider: row.get(4)?,
-                started_at: row.get(5)?,
-                ended_at: row.get(6)?,
-                message_count: row.get(7)?,
-                total_tokens: row.get(8)?,
-                total_cost: row.get(9)?,
-                parent_session_id: row.get(10)?,
-            })
-        })
-        ?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    db.get_sessions_internal(&agent_id)
 }
 
 // ---- Tauri Commands: Messages ----
@@ -651,25 +866,7 @@ pub fn db_save_message(db: tauri::State<'_, Arc<Database>>, message: MessageRow)
 #[tauri::command]
 #[specta::specta]
 pub fn db_get_messages(db: tauri::State<'_, Arc<Database>>, session_id: String) -> Result<Vec<MessageRow>, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    let mut stmt = conn
-        .prepare("SELECT id, session_id, role, content, model, tokens, cost, timestamp FROM messages WHERE session_id = ?1 ORDER BY id ASC")
-        ?;
-    let rows = stmt
-        .query_map(params![session_id], |row| {
-            Ok(MessageRow {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                role: row.get(2)?,
-                content: row.get(3)?,
-                model: row.get(4)?,
-                tokens: row.get(5)?,
-                cost: row.get(6)?,
-                timestamp: row.get(7)?,
-            })
-        })
-        ?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    db.get_messages_internal(&session_id)
 }
 
 /// Get messages for a session, including all ancestor sessions (for continued sessions)
@@ -687,17 +884,7 @@ pub fn db_get_messages_with_ancestry(
 #[tauri::command]
 #[specta::specta]
 pub fn db_save_memory(db: tauri::State<'_, Arc<Database>>, memory: MemoryRow) -> Result<i64, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute(
-        "INSERT INTO memories (agent_id, layer, category, content, relevance, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            memory.agent_id, memory.layer, memory.category,
-            memory.content, memory.relevance, memory.created_at,
-        ],
-    )
-    ?;
-    Ok(conn.last_insert_rowid())
+    db.save_memory_internal(&memory)
 }
 
 #[tauri::command]
@@ -707,22 +894,7 @@ pub fn db_get_memories(
     agent_id: Option<String>,
     layer: Option<String>,
 ) -> Result<Vec<MemoryRow>, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    let sql = match (&agent_id, &layer) {
-        (Some(_), Some(_)) => "SELECT id, agent_id, layer, category, content, relevance, created_at, last_accessed, access_count FROM memories WHERE (agent_id = ?1 OR agent_id IS NULL) AND layer = ?2 ORDER BY relevance DESC, created_at DESC",
-        (Some(_), None) => "SELECT id, agent_id, layer, category, content, relevance, created_at, last_accessed, access_count FROM memories WHERE (agent_id = ?1 OR agent_id IS NULL) ORDER BY relevance DESC, created_at DESC",
-        (None, Some(_)) => "SELECT id, agent_id, layer, category, content, relevance, created_at, last_accessed, access_count FROM memories WHERE layer = ?1 ORDER BY relevance DESC, created_at DESC",
-        (None, None) => "SELECT id, agent_id, layer, category, content, relevance, created_at, last_accessed, access_count FROM memories ORDER BY relevance DESC, created_at DESC",
-    };
-
-    let mut stmt = conn.prepare(sql)?;
-    let rows = match (&agent_id, &layer) {
-        (Some(a), Some(l)) => stmt.query_map(params![a, l], map_memory)?,
-        (Some(a), None) => stmt.query_map(params![a], map_memory)?,
-        (None, Some(l)) => stmt.query_map(params![l], map_memory)?,
-        (None, None) => stmt.query_map([], map_memory)?,
-    };
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    db.get_memories_internal(agent_id.as_deref(), layer.as_deref())
 }
 
 fn map_memory(row: &rusqlite::Row) -> rusqlite::Result<MemoryRow> {
@@ -744,55 +916,13 @@ fn map_memory(row: &rusqlite::Row) -> rusqlite::Result<MemoryRow> {
 #[tauri::command]
 #[specta::specta]
 pub fn db_upsert_project(db: tauri::State<'_, Arc<Database>>, project: ProjectRow) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    // Check if a project with this root_path already exists (natural key).
-    // If so, update it. Otherwise insert using the provided id.
-    let existing: Option<String> = conn
-        .query_row(
-            "SELECT id FROM projects WHERE root_path = ?1",
-            params![project.root_path],
-            |row| row.get(0),
-        )
-        .ok();
-    if let Some(existing_id) = existing {
-        conn.execute(
-            "UPDATE projects SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
-            params![project.name, existing_id],
-        )
-        ?;
-    } else {
-        conn.execute(
-            "INSERT INTO projects (id, name, root_path, instructions, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(id) DO UPDATE SET
-               name=excluded.name, root_path=excluded.root_path, instructions=excluded.instructions, updated_at=datetime('now')",
-            params![project.id, project.name, project.root_path, project.instructions, project.created_at, project.updated_at],
-        )
-        ?;
-    }
-    Ok(())
+    db.upsert_project_internal(&project)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn db_get_projects(db: tauri::State<'_, Arc<Database>>) -> Result<Vec<ProjectRow>, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    let mut stmt = conn
-        .prepare("SELECT id, name, root_path, instructions, created_at, updated_at FROM projects ORDER BY updated_at DESC")
-        ?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(ProjectRow {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                root_path: row.get(2)?,
-                instructions: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
-            })
-        })
-        ?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    db.get_projects_internal()
 }
 
 #[tauri::command]
@@ -827,13 +957,7 @@ pub fn db_rename_project(
     project_id: String,
     name: String,
 ) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute(
-        "UPDATE projects SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
-        params![name, project_id],
-    )
-    ?;
-    Ok(())
+    db.rename_project_internal(&project_id, &name)
 }
 
 #[tauri::command]
@@ -843,22 +967,13 @@ pub fn db_update_project_instructions(
     project_id: String,
     instructions: Option<String>,
 ) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute(
-        "UPDATE projects SET instructions = ?1, updated_at = datetime('now') WHERE id = ?2",
-        params![instructions, project_id],
-    )
-    ?;
-    Ok(())
+    db.update_project_instructions_internal(&project_id, instructions.as_deref())
 }
 
 #[tauri::command]
 #[specta::specta]
 pub fn db_delete_project(db: tauri::State<'_, Arc<Database>>, project_id: String) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])
-        ?;
-    Ok(())
+    db.delete_project_internal(&project_id)
 }
 
 // ---- Tauri Commands: Agent Templates ----
@@ -868,31 +983,7 @@ pub fn db_delete_project(db: tauri::State<'_, Arc<Database>>, project_id: String
 pub fn db_list_agent_templates(
     db: tauri::State<'_, Arc<Database>>,
 ) -> Result<Vec<AgentTemplateRow>, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, name, provider, model, thinking_level, cwd, shadow_name, shadow_title, shadow_grade, created_at, updated_at
-             FROM agent_templates ORDER BY updated_at DESC",
-        )
-        ?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(AgentTemplateRow {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                provider: row.get(2)?,
-                model: row.get(3)?,
-                thinking_level: row.get(4)?,
-                cwd: row.get(5)?,
-                shadow_name: row.get(6)?,
-                shadow_title: row.get(7)?,
-                shadow_grade: row.get(8)?,
-                created_at: row.get(9)?,
-                updated_at: row.get(10)?,
-            })
-        })
-        ?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    db.list_agent_templates_internal()
 }
 
 #[tauri::command]
@@ -901,29 +992,7 @@ pub fn db_save_agent_template(
     db: tauri::State<'_, Arc<Database>>,
     template: AgentTemplateRow,
 ) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute(
-        "INSERT INTO agent_templates (id, name, provider, model, thinking_level, cwd, shadow_name, shadow_title, shadow_grade, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-         ON CONFLICT(id) DO UPDATE SET
-           name=excluded.name,
-           provider=excluded.provider,
-           model=excluded.model,
-           thinking_level=excluded.thinking_level,
-           cwd=excluded.cwd,
-           shadow_name=excluded.shadow_name,
-           shadow_title=excluded.shadow_title,
-           shadow_grade=excluded.shadow_grade,
-           updated_at=datetime('now')",
-        params![
-            template.id, template.name, template.provider, template.model,
-            template.thinking_level, template.cwd, template.shadow_name,
-            template.shadow_title, template.shadow_grade,
-            template.created_at, template.updated_at,
-        ],
-    )
-    ?;
-    Ok(())
+    db.save_agent_template_internal(&template)
 }
 
 #[tauri::command]
@@ -932,13 +1001,7 @@ pub fn db_delete_agent_template(
     db: tauri::State<'_, Arc<Database>>,
     template_id: String,
 ) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute(
-        "DELETE FROM agent_templates WHERE id = ?1",
-        params![template_id],
-    )
-    ?;
-    Ok(())
+    db.delete_agent_template_internal(&template_id)
 }
 
 // ---- Tauri Commands: Events ----
@@ -958,190 +1021,6 @@ pub fn db_log_event(
         params![agent_id, session_id, event_type, data],
     )
     ?;
-    Ok(())
-}
-
-// ---- WebSocket wrappers ----
-// Plain functions that take &Database instead of tauri::State.
-
-pub fn ws_get_agents(db: &Database) -> Result<Vec<AgentRow>, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    let mut stmt = conn
-        .prepare("SELECT id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, created_at, updated_at FROM agents ORDER BY updated_at DESC")
-        ?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(AgentRow {
-                id: row.get(0)?, name: row.get(1)?, project_id: row.get(2)?,
-                shadow_name: row.get(3)?, shadow_title: row.get(4)?, shadow_grade: row.get(5)?,
-                provider: row.get(6)?, model: row.get(7)?, thinking_level: row.get(8)?,
-                cwd: row.get(9)?, custom_prompt: row.get(10)?, context_window: None,
-                created_at: row.get(11)?, updated_at: row.get(12)?,
-            })
-        })
-        ?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-}
-
-pub fn ws_delete_agent(db: &Database, agent_id: String) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute("DELETE FROM agents WHERE id = ?1", params![agent_id])?;
-    Ok(())
-}
-
-pub fn ws_get_sessions(db: &Database, agent_id: String) -> Result<Vec<SessionRow>, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    let mut stmt = conn
-        .prepare("SELECT id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id FROM sessions WHERE agent_id = ?1 ORDER BY started_at DESC")
-        ?;
-    let rows = stmt
-        .query_map(params![agent_id], |row| {
-            Ok(SessionRow {
-                id: row.get(0)?, agent_id: row.get(1)?, pi_session_file: row.get(2)?,
-                model: row.get(3)?, provider: row.get(4)?, started_at: row.get(5)?,
-                ended_at: row.get(6)?, message_count: row.get(7)?, total_tokens: row.get(8)?,
-                total_cost: row.get(9)?, parent_session_id: row.get(10)?,
-            })
-        })
-        ?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-}
-
-pub fn ws_get_messages(db: &Database, session_id: String) -> Result<Vec<MessageRow>, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    let mut stmt = conn
-        .prepare("SELECT id, session_id, role, content, model, tokens, cost, timestamp FROM messages WHERE session_id = ?1 ORDER BY id ASC")
-        ?;
-    let rows = stmt
-        .query_map(params![session_id], |row| {
-            Ok(MessageRow {
-                id: row.get(0)?, session_id: row.get(1)?, role: row.get(2)?,
-                content: row.get(3)?, model: row.get(4)?, tokens: row.get(5)?,
-                cost: row.get(6)?, timestamp: row.get(7)?,
-            })
-        })
-        ?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-}
-
-pub fn ws_save_memory(db: &Database, memory: MemoryRow) -> Result<i64, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute(
-        "INSERT INTO memories (agent_id, layer, category, content, relevance, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![memory.agent_id, memory.layer, memory.category, memory.content, memory.relevance, memory.created_at],
-    )?;
-    Ok(conn.last_insert_rowid())
-}
-
-pub fn ws_get_memories(db: &Database, agent_id: Option<String>, layer: Option<String>) -> Result<Vec<MemoryRow>, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    let sql = match (&agent_id, &layer) {
-        (Some(_), Some(_)) => "SELECT id, agent_id, layer, category, content, relevance, created_at, last_accessed, access_count FROM memories WHERE (agent_id = ?1 OR agent_id IS NULL) AND layer = ?2 ORDER BY relevance DESC, created_at DESC",
-        (Some(_), None) => "SELECT id, agent_id, layer, category, content, relevance, created_at, last_accessed, access_count FROM memories WHERE (agent_id = ?1 OR agent_id IS NULL) ORDER BY relevance DESC, created_at DESC",
-        (None, Some(_)) => "SELECT id, agent_id, layer, category, content, relevance, created_at, last_accessed, access_count FROM memories WHERE layer = ?1 ORDER BY relevance DESC, created_at DESC",
-        (None, None) => "SELECT id, agent_id, layer, category, content, relevance, created_at, last_accessed, access_count FROM memories ORDER BY relevance DESC, created_at DESC",
-    };
-    let mut stmt = conn.prepare(sql)?;
-    let rows = match (&agent_id, &layer) {
-        (Some(a), Some(l)) => stmt.query_map(params![a, l], map_memory)?,
-        (Some(a), None) => stmt.query_map(params![a], map_memory)?,
-        (None, Some(l)) => stmt.query_map(params![l], map_memory)?,
-        (None, None) => stmt.query_map([], map_memory)?,
-    };
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-}
-
-pub fn ws_upsert_project(db: &Database, project: ProjectRow) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    let existing: Option<String> = conn
-        .query_row("SELECT id FROM projects WHERE root_path = ?1", params![project.root_path], |row| row.get(0))
-        .ok();
-    if let Some(existing_id) = existing {
-        conn.execute("UPDATE projects SET name = ?1, updated_at = datetime('now') WHERE id = ?2", params![project.name, existing_id])
-            ?;
-    } else {
-        conn.execute(
-            "INSERT INTO projects (id, name, root_path, instructions, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(id) DO UPDATE SET name=excluded.name, root_path=excluded.root_path, instructions=excluded.instructions, updated_at=datetime('now')",
-            params![project.id, project.name, project.root_path, project.instructions, project.created_at, project.updated_at],
-        )?;
-    }
-    Ok(())
-}
-
-pub fn ws_get_projects(db: &Database) -> Result<Vec<ProjectRow>, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    let mut stmt = conn
-        .prepare("SELECT id, name, root_path, instructions, created_at, updated_at FROM projects ORDER BY updated_at DESC")
-        ?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(ProjectRow {
-                id: row.get(0)?, name: row.get(1)?, root_path: row.get(2)?,
-                instructions: row.get(3)?, created_at: row.get(4)?, updated_at: row.get(5)?,
-            })
-        })
-        ?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-}
-
-pub fn ws_rename_project(db: &Database, project_id: String, name: String) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute("UPDATE projects SET name = ?1, updated_at = datetime('now') WHERE id = ?2", params![name, project_id])
-        ?;
-    Ok(())
-}
-
-pub fn ws_update_project_instructions(db: &Database, project_id: String, instructions: Option<String>) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute("UPDATE projects SET instructions = ?1, updated_at = datetime('now') WHERE id = ?2", params![instructions, project_id])
-        ?;
-    Ok(())
-}
-
-pub fn ws_delete_project(db: &Database, project_id: String) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])?;
-    Ok(())
-}
-
-pub fn ws_list_agent_templates(db: &Database) -> Result<Vec<AgentTemplateRow>, MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    let mut stmt = conn
-        .prepare("SELECT id, name, provider, model, thinking_level, cwd, shadow_name, shadow_title, shadow_grade, created_at, updated_at FROM agent_templates ORDER BY updated_at DESC")
-        ?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(AgentTemplateRow {
-                id: row.get(0)?, name: row.get(1)?, provider: row.get(2)?,
-                model: row.get(3)?, thinking_level: row.get(4)?, cwd: row.get(5)?,
-                shadow_name: row.get(6)?, shadow_title: row.get(7)?, shadow_grade: row.get(8)?,
-                created_at: row.get(9)?, updated_at: row.get(10)?,
-            })
-        })
-        ?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-}
-
-pub fn ws_save_agent_template(db: &Database, template: AgentTemplateRow) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute(
-        "INSERT INTO agent_templates (id, name, provider, model, thinking_level, cwd, shadow_name, shadow_title, shadow_grade, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-         ON CONFLICT(id) DO UPDATE SET name=excluded.name, provider=excluded.provider, model=excluded.model,
-           thinking_level=excluded.thinking_level, cwd=excluded.cwd, shadow_name=excluded.shadow_name,
-           shadow_title=excluded.shadow_title, shadow_grade=excluded.shadow_grade, updated_at=datetime('now')",
-        params![template.id, template.name, template.provider, template.model,
-                template.thinking_level, template.cwd, template.shadow_name,
-                template.shadow_title, template.shadow_grade, template.created_at, template.updated_at],
-    )?;
-    Ok(())
-}
-
-pub fn ws_delete_agent_template(db: &Database, template_id: String) -> Result<(), MonarchError> {
-    let conn = db.conn.lock().map_err(lock_poisoned("db"))?;
-    conn.execute("DELETE FROM agent_templates WHERE id = ?1", params![template_id])?;
     Ok(())
 }
 

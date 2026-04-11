@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { invoke, listen, type UnlistenFn } from "$lib/api";
+  import { commands } from "$lib/bindings";
   import MessageList from "./MessageList.svelte";
   import ChatInput from "./ChatInput.svelte";
   import AgentControls from "./AgentControls.svelte";
@@ -214,21 +215,25 @@
 
   function respondToExtension(value: any) {
     if (!pendingExtensionRequest) return;
-    invoke("respond_extension_ui", {
-      agentId: agent.id,
-      requestId: pendingExtensionRequest.requestId,
-      value,
-    }).catch((e) => console.error("Failed to respond to extension UI:", e));
+    commands
+      .respondExtensionUi({
+        agentId: agent.id,
+        requestId: pendingExtensionRequest.requestId,
+        value,
+      } as any)
+      .catch((e) => console.error("Failed to respond to extension UI:", e));
     pendingExtensionRequest = null;
   }
 
   function cancelExtensionRequest() {
     if (!pendingExtensionRequest) return;
-    invoke("respond_extension_ui", {
-      agentId: agent.id,
-      requestId: pendingExtensionRequest.requestId,
-      value: { cancelled: true },
-    }).catch(() => {});
+    commands
+      .respondExtensionUi({
+        agentId: agent.id,
+        requestId: pendingExtensionRequest.requestId,
+        value: { cancelled: true },
+      } as any)
+      .catch(() => {});
     pendingExtensionRequest = null;
   }
 

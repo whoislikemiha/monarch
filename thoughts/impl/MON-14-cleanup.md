@@ -498,6 +498,73 @@ about the shape left behind. -->
     collapsing the WS twin layer into a shared service function — which
     is exactly what MON-33 wants.
 
+- **MON-33 — PR open against phase-1 (2026-04-11).** All agent-lifecycle
+  logic now lives in `impl AgentManager` as shared methods — `spawn`,
+  `send_command`, `kill`, `load_session_context`, `new_session`,
+  `switch_session`, `respond_extension_ui`. Each Tauri command body and
+  each `ws::dispatch_command` arm is a one-line adapter that calls the
+  same method. The `ws_spawn_agent` / `ws_send_command` / etc. free
+  functions in `agent.rs` are gone; the `ws_*` block in `db.rs` is gone;
+  `ws_save_agent_prompt` / `ws_get_prompts_dir` in `persistence.rs` are
+  gone. Project detection helpers (`find_project_root`,
+  `read_instructions_from_root`, `resolve_project`, plus `detect_project`
+  and `read_project_instructions`) moved into a new `src-tauri/src/project.rs`
+  so both the spawn path and the two standalone commands funnel through
+  one module. Full impl notes: `thoughts/impl/MON-33.md`.
+  - **Deviations from plan:**
+    - `respond_extension_ui` (decision #5 in the plan) was folded in as
+      a typed `ExtensionUiResponseRequest` struct. The inner `value`
+      field stays `serde_json::Value` because the extension UI contract
+      is intentionally open-ended; specta's inline emission for the Value
+      enum is cosmetically the same as the pre-refactor command-arg case,
+      so there is no wire-shape regression. The frontend call sites in
+      `AgentView.svelte` now go through the typed `commands.respondExtensionUi`
+      wrapper (with an `as any` on the inner value because specta's Value
+      type signature doesn't match the free-form runtime shape).
+    - `chrono_now` and `uuid_v4_simple` stayed in `agent.rs` but were bumped
+      to `pub(crate)` so the new `project.rs` could reuse them without a
+      second copy. No new util module.
+    - The `_internal` suffix convention on `impl Database` methods was
+      preserved (decision #2) — all newly-extracted methods use it.
+      `get_agents_internal`, `delete_agent_internal`, `get_sessions_internal`,
+      `get_messages_internal`, `save_memory_internal`, `get_memories_internal`,
+      `upsert_project_internal`, `get_projects_internal`,
+      `rename_project_internal`, `update_project_instructions_internal`,
+      `delete_project_internal`, `list_agent_templates_internal`,
+      `save_agent_template_internal`, `delete_agent_template_internal`.
+  - **Drift bugs closed:**
+    - `ws_get_agents` in `db.rs` was hardcoding `context_window: None`
+      while `db_get_agents` was selecting the real column. With a single
+      implementation (`Database::get_agents_internal` selects and returns
+      the column) there is no longer a second copy to forget. This was
+      invisible from the frontend today because no WS consumer polls the
+      agent list, but it was a latent consistency bug waiting for a
+      caller.
+  - **Testing notes:** added `agent::tests::kill_agent_round_trip_funnels_through_shared_method`
+    exercising `AgentManager::kill` through both the direct-method call
+    (what the Tauri command body does) and through `ws::dispatch_command`
+    (the full WS adapter surface) on the same seeded `AgentManager`. The
+    test compiles (`cargo check --tests` passes) but **cannot be run on
+    this Windows dev machine** — the same `STATUS_ENTRYPOINT_NOT_FOUND`
+    Tauri DLL quirk documented in `lib.rs::export_bindings` applies to
+    `cargo test` binaries. Running the test needs either a CI workflow
+    on Linux or restructuring `monarch_lib` to put lock-free helpers into
+    a sub-crate that doesn't link Tauri — both are parking-lot items,
+    see the "No working Rust test harness" bullet below.
+  - **`bindings.ts` diff:** one changed line (`respondExtensionUi` now
+    takes a single `req: ExtensionUiResponseRequest` arg instead of three
+    positional args) and one added struct (`ExtensionUiResponseRequest`).
+    Every other command signature is byte-identical to the pre-refactor
+    output.
+  - **Starting point for MON-34:** `AgentManager`'s lock acquisitions are
+    all in one place now — every lifecycle method takes the `agents` and
+    `session_map` `std::sync::Mutex` locks inline. The pattern is
+    uniform, which is the clean handoff MON-34's acceptance bullet
+    depends on. `get_app_handle`, `send_to_sidecar`, `send_with_recovery`,
+    `remove_live_entry` are still the helper primitives; `ensure_sidecar`
+    now lives inside every lifecycle method's entry point (the adapters
+    no longer need to remember to call it).
+
 - **Wave 1 residue MON-31 encountered.** (Historical — MON-31 shipped
   2026-04-11, PR #24. Keeping the list for context on what MON-32 and
   beyond inherit.)

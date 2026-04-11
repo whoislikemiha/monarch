@@ -71,7 +71,7 @@ export const commands = {
 	 */
 	switchAgentSession: (agentId: string, sessionId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("switch_agent_session", { agentId, sessionId })),
 	// Forward extension UI response from frontend to sidecar
-	respondExtensionUi: (agentId: string, requestId: string, value: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never }) => typedError<null, ErrorDto>(__TAURI_INVOKE("respond_extension_ui", { agentId, requestId, value })),
+	respondExtensionUi: (req: ExtensionUiResponseRequest) => typedError<null, ErrorDto>(__TAURI_INVOKE("respond_extension_ui", { req })),
 	getModels: (provider: string) => typedError<ModelInfo[], ErrorDto>(__TAURI_INVOKE("get_models", { provider })),
 	getProviderAuthStatus: (provider: string) => typedError<ProviderAuthStatus, ErrorDto>(__TAURI_INVOKE("get_provider_auth_status", { provider })),
 	getAgentPrompt: (agentId: string) => typedError<string | null, ErrorDto>(__TAURI_INVOKE("get_agent_prompt", { agentId })),
@@ -158,6 +158,20 @@ export type ErrorDto = {
 	kind: string,
 	message: string,
 	details: string | null,
+};
+
+/**
+ *  Request payload for the `respond_extension_ui` Tauri command. MON-33 folds
+ *  the three scattered `agent_id` / `request_id` / `value` args into a single
+ *  typed struct so both the IPC and WS transports decode the same shape.
+ *  `value` stays `serde_json::Value` because the extension UI contract is
+ *  intentionally open-ended — different widget kinds return different payloads
+ *  and the sidecar is the ultimate authority on shape validation.
+ */
+export type ExtensionUiResponseRequest = {
+	agentId: string,
+	requestId: string,
+	value: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never },
 };
 
 export type LiveAgentState = {
