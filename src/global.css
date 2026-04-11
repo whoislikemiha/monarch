@@ -1,22 +1,109 @@
 :root {
+  /* Surfaces */
   --bg-app: #120d1f;
   --bg-app-glow: #211235;
   --bg-sidebar: #0c0816;
   --bg-panel: #171126;
   --bg-panel-2: #201734;
   --bg-panel-3: #2a1e45;
+  --bg-code: #110b1d;
+
+  /* Borders */
   --border-subtle: #35274f;
   --border-strong: #4a3670;
+
+  /* Text */
   --text-primary: #f2f4f8;
   --text-secondary: #dde1e6;
   --text-muted: #8f7aa8;
+  --text-on-accent: #140d22;
+
+  /* Accent */
+  --accent: #be95ff;
+  --accent-hover: #d5bbff;
+  --accent-light: #e2d4ff;
+  --accent-bg-subtle: rgba(190, 149, 255, 0.06);
+  --accent-bg-hover: rgba(190, 149, 255, 0.12);
+  --accent-border-subtle: rgba(190, 149, 255, 0.2);
+  --accent-border-hover: rgba(190, 149, 255, 0.4);
+
+  /* Blue */
   --accent-blue: #33b1ff;
   --accent-blue-hover: #78a9ff;
-  --accent-purple: #be95ff;
+  --accent-blue-bg-subtle: rgba(51, 177, 255, 0.06);
+  --accent-blue-border-subtle: rgba(51, 177, 255, 0.15);
+
+  /* Cyan */
   --accent-cyan: #3ddbd9;
+
+  /* Status: success */
   --success: #42be65;
+  --success-glow: rgba(66, 190, 101, 0.5);
+  --success-bg-subtle: rgba(66, 190, 101, 0.08);
+
+  /* Status: warning */
   --warning: #ffe97b;
+  --warning-glow: rgba(255, 233, 123, 0.32);
+  --warning-bg-subtle: rgba(255, 233, 123, 0.06);
+  --warning-bg-faint: rgba(255, 233, 123, 0.03);
+  --warning-border-subtle: rgba(255, 233, 123, 0.2);
+  --warning-border-faint: rgba(255, 233, 123, 0.1);
+
+  /* Status: error */
   --error: #ee5396;
+  --error-light: #ffb4b4;
+  --error-glow: rgba(238, 83, 150, 0.32);
+  --error-bg-subtle: rgba(238, 83, 150, 0.06);
+  --error-bg-faint: rgba(238, 83, 150, 0.12);
+  --error-border-subtle: rgba(238, 83, 150, 0.15);
+  --error-border-faint: rgba(238, 83, 150, 0.35);
+
+  /* Diff */
+  --diff-add-bg: rgba(66, 190, 101, 0.12);
+  --diff-add-text: #42be65;
+  --diff-del-bg: rgba(238, 83, 150, 0.12);
+  --diff-del-text: #ee5396;
+
+  /* Overlays */
+  --overlay-backdrop: rgba(0, 0, 0, 0.6);
+  --shadow-dark: rgba(0, 0, 0, 0.5);
+  --shadow-inset-white: rgba(255, 255, 255, 0.04);
+  --scrollbar-thumb: rgba(53, 39, 79, 0.3);
+
+  /* Interactive */
+  --input-inset-shadow: rgba(255, 255, 255, 0.03);
+
+  /* Context meter */
+  --context-track-bg: rgba(9, 6, 16, 0.72);
+  --context-track-inset: rgba(255, 255, 255, 0.04);
+  --context-track-overlay: rgba(255, 255, 255, 0.05);
+
+  /* Misc overlays */
+  --hover-overlay: rgba(255, 255, 255, 0.03);
+  --active-overlay: rgba(255, 255, 255, 0.05);
+  --subtle-divider: rgba(255, 255, 255, 0.03);
+
+  /* Auth status */
+  --auth-ok-border: rgba(61, 214, 140, 0.4);
+  --auth-ok-bg: rgba(18, 53, 39, 0.45);
+  --auth-warn-border: rgba(255, 176, 32, 0.35);
+  --auth-warn-bg: rgba(64, 42, 12, 0.4);
+
+  /* Model error */
+  --model-error-border: rgba(255, 120, 120, 0.4);
+  --model-error-bg: rgba(64, 20, 20, 0.45);
+  --model-error-text: #ffb4b4;
+  --model-error-retry-border: rgba(255, 180, 180, 0.5);
+
+  /* Resize handle */
+  --resize-handle-active: rgba(190, 149, 255, 0.35);
+
+  /* Template chip delete */
+  --chip-delete-hover-bg: rgba(255, 120, 120, 0.15);
+  --chip-delete-hover-text: #ffb4b4;
+
+  /* Unsaved badge */
+  --unsaved-badge-bg: rgba(255, 176, 32, 0.15);
 }
 
 html,
@@ -29,7 +116,7 @@ body,
 body {
   margin: 0;
   padding: 0;
-  background: #120d1f;
+  background: var(--bg-app);
   color: var(--text-primary);
   font-family:
     "Inter",
@@ -61,7 +148,7 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: rgba(53, 39, 79, 0.3);
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
   transition: background 0.2s ease;
 }
