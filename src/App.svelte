@@ -23,6 +23,9 @@
   import { loadKeybindings, matchBinding } from "$lib/keybindings.svelte";
   import { agentStore } from "$lib/stores/agentStore.svelte";
 
+  // Set up reactive effects (must be called during component init, not in onMount)
+  agentStore.setupEffects();
+
   // --- Local UI state (not shared with children) ---
   let showSpawnDialog = $state(false);
   let showSettings = $state(false);

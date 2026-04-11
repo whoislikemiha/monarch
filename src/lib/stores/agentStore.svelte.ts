@@ -123,7 +123,11 @@ class AgentStore {
       : undefined,
   );
 
-  constructor() {
+  /**
+   * Set up reactive effects. Must be called from within a component context
+   * (e.g. App.svelte's onMount) since $effect requires an owner.
+   */
+  setupEffects() {
     // Track tab history
     $effect(() => {
       if (this.activeTabId && this.openTabs.includes(this.activeTabId)) {
