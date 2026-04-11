@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Rive, EventType, StateMachineInputType, Layout, Fit, Alignment } from "@rive-app/webgl2";
-  import type { StateMachineInput } from "@rive-app/webgl2";
+  import { Rive, EventType, StateMachineInputType, Layout, Fit, Alignment } from "@rive-app/canvas";
+  import type { StateMachineInput } from "@rive-app/canvas";
   import { liveAgentStore, detachedLiveState } from "../toolbox/liveAgentStore.svelte";
   import {
     deriveAnimationState,
@@ -17,13 +17,11 @@
     size = 64,
     stateMachine = DEFAULT_STATE_MACHINE,
     riveFile = DEFAULT_RIV,
-    useOffscreenRenderer = true,
   }: {
     agentId: string;
     size?: number;
     stateMachine?: string;
     riveFile?: string;
-    useOffscreenRenderer?: boolean;
   } = $props();
 
   let canvasEl: HTMLCanvasElement;
@@ -82,7 +80,6 @@
       stateMachines: "State Machine 1",
       layout: new Layout({ fit: Fit.Cover, alignment: Alignment.Center }),
       autoplay: true,
-      useOffscreenRenderer: false,
     });
 
     riveInstance.on(EventType.LoadError, (e: any) => {
