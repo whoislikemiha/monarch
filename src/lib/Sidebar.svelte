@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Agent, Project, SessionRecord, ShadowIdentity } from "./types";
-  import { liveAgentStore } from "./toolbox/liveAgentStore.svelte";
+  import AgentStatusDot from "./AgentStatusDot.svelte";
 
   interface ProjectGroup {
     project?: Project;
@@ -140,7 +140,7 @@
             role="button"
             tabindex="0"
           >
-            <span class="status-dot {liveAgentStore.byAgent.get(agent.id)?.isStreaming ? 'streaming' : agent.status}"></span>
+            <AgentStatusDot {agent} baseClass="status-dot" />
             <div class="agent-info">
               <span class="agent-name">{agent.name}</span>
               {#if agent.shadow}
@@ -362,36 +362,6 @@
   }
   .agent-item.standby:hover {
     opacity: 1;
-  }
-
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .status-dot.running {
-    background: var(--success);
-    box-shadow: 0 0 4px rgba(66, 190, 101, 0.55);
-  }
-  .status-dot.stopped {
-    background: var(--text-muted);
-  }
-  .status-dot.starting {
-    background: var(--warning);
-  }
-  .status-dot.streaming {
-    background: var(--accent-blue);
-    box-shadow: 0 0 4px rgba(51, 177, 255, 0.55);
-    animation: pulse 1s ease-in-out infinite;
-  }
-  .status-dot.error {
-    background: var(--error);
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 0.6; }
-    50% { opacity: 1; }
   }
 
   .agent-info {

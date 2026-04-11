@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Agent } from "./types";
-  import { liveAgentStore } from "./toolbox/liveAgentStore.svelte";
+  import AgentStatusDot from "./AgentStatusDot.svelte";
 
   let {
     agents,
@@ -45,7 +45,7 @@
         role="tab"
         tabindex="0"
       >
-        <span class="tab-dot {liveAgentStore.byAgent.get(agent.id)?.isStreaming ? 'streaming' : agent.status}"></span>
+        <AgentStatusDot {agent} baseClass="tab-dot" />
         <span class="tab-name">{agent.name}</span>
         <button
           class="tab-close"
@@ -78,7 +78,7 @@
               role="menuitem"
               onclick={() => handleDropdownSelect(agent.id)}
             >
-              <span class="tab-dot {liveAgentStore.byAgent.get(agent.id)?.isStreaming ? 'streaming' : agent.status}"></span>
+              <AgentStatusDot {agent} baseClass="tab-dot" />
               <span class="dropdown-name">{agent.name}</span>
               {#if agent.model}<span class="dropdown-model">{agent.model}</span>{/if}
             </button>
@@ -141,31 +141,6 @@
 
   .tab.standby {
     opacity: 0.6;
-  }
-
-  .tab-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .tab-dot.running {
-    background: var(--success, #42be65);
-    box-shadow: 0 0 3px rgba(66, 190, 101, 0.5);
-  }
-  .tab-dot.stopped {
-    background: var(--text-muted, #8f7aa8);
-  }
-  .tab-dot.starting {
-    background: var(--warning, #ffe97b);
-  }
-  .tab-dot.streaming {
-    background: var(--accent-blue, #33b1ff);
-    box-shadow: 0 0 3px rgba(51, 177, 255, 0.5);
-    animation: pulse 1s ease-in-out infinite;
-  }
-  .tab-dot.error {
-    background: var(--error, #ee5396);
   }
 
   .tab-name {
@@ -282,10 +257,5 @@
     font-size: 10px;
     color: var(--text-muted, #8f7aa8);
     flex-shrink: 0;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 1; }
   }
 </style>
