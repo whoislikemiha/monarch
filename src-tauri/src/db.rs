@@ -215,6 +215,25 @@ impl Database {
                     CREATE INDEX IF NOT EXISTS idx_memories_layer ON memories(layer);
                     CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id);
                     CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+
+                    CREATE TABLE IF NOT EXISTS agent_stats (
+                        agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+                        total_sessions INTEGER NOT NULL DEFAULT 0,
+                        total_messages INTEGER NOT NULL DEFAULT 0,
+                        total_turns INTEGER NOT NULL DEFAULT 0,
+                        total_input_tokens INTEGER NOT NULL DEFAULT 0,
+                        total_output_tokens INTEGER NOT NULL DEFAULT 0,
+                        total_cost REAL NOT NULL DEFAULT 0.0,
+                        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                    );
+
+                    CREATE TABLE IF NOT EXISTS agent_tool_usage (
+                        agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                        tool_name TEXT NOT NULL,
+                        call_count INTEGER NOT NULL DEFAULT 0,
+                        error_count INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY (agent_id, tool_name)
+                    );
                     ",
                 )?;
 
@@ -349,6 +368,48 @@ pub struct MemoryRow {
     pub created_at: String,
     pub last_accessed: Option<String>,
     pub access_count: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolUsageEntry {
+    pub tool_name: String,
+    pub call_count: i32,
+    pub error_count: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SpecializationScores {
+    pub coding: f64,
+    pub research: f64,
+    pub testing: f64,
+    pub debugging: f64,
+    pub devops: f64,
+    pub documentation: f64,
+    pub database: f64,
+    pub configuration: f64,
+    pub design: f64,
+    pub communication: f64,
+    pub refactoring: f64,
+    pub security: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentStats {
+    pub agent_id: String,
+    pub total_sessions: i32,
+    pub total_messages: i32,
+    pub total_turns: i32,
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+    pub total_cost: f64,
+    /// Normalized experience level 0-100, derived from total tokens (log scale).
+    pub experience: f64,
+    pub tool_usage: Vec<ToolUsageEntry>,
+    pub specialization: SpecializationScores,
+    pub updated_at: String,
 }
 
 // ---- Persistence API ----
@@ -967,6 +1028,225 @@ impl Database {
             .await?;
         Ok(())
     }
+    // ---- Agent Stats ----
+
+    /// Increment token/cost/message counters for an agent. Called from the
+    /// persistence pipeline alongside SaveAssistantMessage.
+    pub async fn increment_agent_stats(
+        &self,
+        agent_id: &str,
+        input_tokens: i64,
+        output_tokens: i64,
+        cost: f64,
+    ) -> Result<(), MonarchError> {
+        let agent_id = agent_id.to_string();
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT INTO agent_stats (agent_id, total_messages, total_input_tokens, total_output_tokens, total_cost, updated_at)
+                     VALUES (?1, 1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                     ON CONFLICT(agent_id) DO UPDATE SET
+                       total_messages = total_messages + 1,
+                       total_input_tokens = total_input_tokens + ?2,
+                       total_output_tokens = total_output_tokens + ?3,
+                       total_cost = total_cost + ?4,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')",
+                    params![agent_id, input_tokens, output_tokens, cost],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Increment the turn counter for an agent. Called on TurnEnd events.
+    pub async fn increment_agent_turns(&self, agent_id: &str) -> Result<(), MonarchError> {
+        let agent_id = agent_id.to_string();
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT INTO agent_stats (agent_id, total_turns, updated_at)
+                     VALUES (?1, 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                     ON CONFLICT(agent_id) DO UPDATE SET
+                       total_turns = total_turns + 1,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')",
+                    params![agent_id],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Increment the session counter for an agent. Called when a new session is created.
+    pub async fn increment_agent_sessions(&self, agent_id: &str) -> Result<(), MonarchError> {
+        let agent_id = agent_id.to_string();
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT INTO agent_stats (agent_id, total_sessions, updated_at)
+                     VALUES (?1, 1, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                     ON CONFLICT(agent_id) DO UPDATE SET
+                       total_sessions = total_sessions + 1,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')",
+                    params![agent_id],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Record a tool execution for an agent (upsert call_count / error_count).
+    pub async fn record_tool_usage(
+        &self,
+        agent_id: &str,
+        tool_name: &str,
+        is_error: bool,
+    ) -> Result<(), MonarchError> {
+        let agent_id = agent_id.to_string();
+        let tool_name = tool_name.to_string();
+        let error_delta: i32 = if is_error { 1 } else { 0 };
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT INTO agent_tool_usage (agent_id, tool_name, call_count, error_count)
+                     VALUES (?1, ?2, 1, ?3)
+                     ON CONFLICT(agent_id, tool_name) DO UPDATE SET
+                       call_count = call_count + 1,
+                       error_count = error_count + ?3",
+                    params![agent_id, tool_name, error_delta],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Get the full stats picture for an agent, including tool usage and
+    /// derived specialization scores.
+    pub async fn get_agent_stats_internal(
+        &self,
+        agent_id: &str,
+    ) -> Result<AgentStats, MonarchError> {
+        let agent_id = agent_id.to_string();
+        self.conn
+            .call(move |conn| {
+                // Get or create base stats
+                let (total_sessions, total_messages, total_turns, total_input_tokens, total_output_tokens, total_cost, updated_at) = conn
+                    .query_row(
+                        "SELECT total_sessions, total_messages, total_turns, total_input_tokens, total_output_tokens, total_cost, updated_at
+                         FROM agent_stats WHERE agent_id = ?1",
+                        params![agent_id],
+                        |row| Ok((
+                            row.get::<_, i32>(0)?,
+                            row.get::<_, i32>(1)?,
+                            row.get::<_, i32>(2)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, i64>(4)?,
+                            row.get::<_, f64>(5)?,
+                            row.get::<_, String>(6)?,
+                        )),
+                    )
+                    .unwrap_or((0, 0, 0, 0, 0, 0.0, String::new()));
+
+                // Get tool usage
+                let mut stmt = conn.prepare(
+                    "SELECT tool_name, call_count, error_count FROM agent_tool_usage WHERE agent_id = ?1 ORDER BY call_count DESC",
+                )?;
+                let tool_usage: Vec<ToolUsageEntry> = stmt
+                    .query_map(params![agent_id], |row| {
+                        Ok(ToolUsageEntry {
+                            tool_name: row.get(0)?,
+                            call_count: row.get(1)?,
+                            error_count: row.get(2)?,
+                        })
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+
+                // Derive specialization from tool usage
+                let specialization = compute_specialization(&tool_usage);
+
+                // Compute experience from total tokens (log scale)
+                let total_tokens = total_input_tokens + total_output_tokens;
+                let experience = if total_tokens <= 0 {
+                    0.0
+                } else {
+                    ((total_tokens as f64).log10() * 15.0).min(100.0)
+                };
+
+                Ok(AgentStats {
+                    agent_id,
+                    total_sessions,
+                    total_messages,
+                    total_turns,
+                    total_input_tokens,
+                    total_output_tokens,
+                    total_cost,
+                    experience,
+                    tool_usage,
+                    specialization,
+                    updated_at,
+                })
+            })
+            .await
+            .map_err(MonarchError::from)
+    }
+}
+
+/// Map tool names to specialization categories and compute normalized scores.
+fn compute_specialization(tool_usage: &[ToolUsageEntry]) -> SpecializationScores {
+    let mut scores = [0.0f64; 12]; // indexed by category
+    // Categories: 0=coding, 1=research, 2=testing, 3=debugging, 4=devops,
+    //   5=documentation, 6=database, 7=configuration, 8=design, 9=communication,
+    //   10=refactoring, 11=security
+
+    for entry in tool_usage {
+        let count = entry.call_count as f64;
+        let name = entry.tool_name.as_str();
+        match name {
+            // Coding tools
+            "Edit" | "Write" | "NotebookEdit" => scores[0] += count,
+            // Research tools
+            "Read" | "Grep" | "Glob" | "LS" | "ListDir" | "Search"
+            | "WebSearch" | "WebFetch" | "NotebookRead" => scores[1] += count,
+            // Devops tools
+            "Bash" => {
+                // Bash is ambiguous — split across coding/devops
+                scores[0] += count * 0.5;
+                scores[4] += count * 0.5;
+            }
+            // Agent/communication tools
+            "Agent" | "SendMessage" | "AskUser" | "AskUserQuestion" => scores[9] += count,
+            // Task/planning tools
+            "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet"
+            | "TodoWrite" | "TodoRead" | "EnterPlanMode" | "ExitPlanMode" => scores[0] += count * 0.5,
+            // Everything else — distribute lightly to coding
+            _ => scores[0] += count * 0.3,
+        }
+    }
+
+    let total: f64 = scores.iter().sum();
+    if total > 0.0 {
+        for s in &mut scores {
+            *s /= total;
+        }
+    }
+
+    SpecializationScores {
+        coding: scores[0],
+        research: scores[1],
+        testing: scores[2],
+        debugging: scores[3],
+        devops: scores[4],
+        documentation: scores[5],
+        database: scores[6],
+        configuration: scores[7],
+        design: scores[8],
+        communication: scores[9],
+        refactoring: scores[10],
+        security: scores[11],
+    }
 }
 
 // ---- Row mappers ----
@@ -1285,4 +1565,15 @@ pub async fn db_set_ui_state(
     value: String,
 ) -> Result<(), MonarchError> {
     db.set_ui_state_internal(&key, &value).await
+}
+
+// ---- Tauri Commands: Agent Stats ----
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_get_agent_stats(
+    db: tauri::State<'_, Arc<Database>>,
+    agent_id: String,
+) -> Result<AgentStats, MonarchError> {
+    db.get_agent_stats_internal(&agent_id).await
 }
