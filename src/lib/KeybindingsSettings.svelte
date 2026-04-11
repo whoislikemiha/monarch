@@ -10,11 +10,11 @@
   } from "$lib/keybindings.svelte";
 
   let capturingId: string | null = $state(null);
-  let captureOverlayRef: HTMLDivElement | undefined = $state(undefined);
+  let captureRef: HTMLDivElement | undefined = $state(undefined);
 
   $effect(() => {
-    if (capturingId && captureOverlayRef) {
-      captureOverlayRef.focus();
+    if (capturingId && captureRef) {
+      captureRef.focus();
     }
   });
 
@@ -53,21 +53,13 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<div class="keybindings-panel" onkeydown={capturingId ? handleCaptureKeydown : undefined}>
-  {#if capturingId}
-    <div class="capture-overlay" tabindex="0" onkeydown={handleCaptureKeydown}
-      bind:this={captureOverlayRef}>
-      <span>Press a new shortcut or Escape to cancel</span>
-    </div>
-  {/if}
+<div class="keybindings-panel">
   {#each groupedBindings() as { group, items } (group)}
     <div class="group">
       <span class="group-label">{group}</span>
       <div class="group-items">
         {#each items as binding (binding.id)}
-          <div class="binding-row" class:non-editable={!binding.editable}>
+          <div class="binding-row" class:non-editable={!binding.editable} class:capturing={capturingId === binding.id}>
             <div class="binding-info">
               <span class="binding-label">{binding.label}</span>
               {#if binding.hint}
@@ -76,7 +68,17 @@
             </div>
             <div class="binding-keys">
               {#if capturingId === binding.id}
-                <span class="capture-prompt">Press shortcut...</span>
+                <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                <div
+                  class="capture-box"
+                  tabindex="0"
+                  onkeydown={handleCaptureKeydown}
+                  onblur={() => (capturingId = null)}
+                  bind:this={captureRef}
+                >
+                  <span class="capture-text">Type shortcut...</span>
+                  <span class="capture-hint">Esc to cancel</span>
+                </div>
               {:else}
                 <div class="kbd-group">
                   {#each formatBindingParts(binding.currentKeys) as part}
@@ -114,25 +116,6 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
-    position: relative;
-  }
-
-  .capture-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 200;
-    outline: none;
-  }
-
-  .capture-overlay span {
-    font-size: 14px;
-    color: #fff;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    animation: pulse 1.2s ease-in-out infinite;
   }
 
   .group {
@@ -166,6 +149,14 @@
 
   .binding-row.non-editable {
     opacity: 0.7;
+  }
+
+  .binding-row.capturing {
+    background: var(--accent-bg-hover);
+    margin: 0 -8px;
+    padding: 8px;
+    border-radius: 6px;
+    border-bottom-color: transparent;
   }
 
   .binding-info {
@@ -217,11 +208,29 @@
     white-space: nowrap;
   }
 
-  .capture-prompt {
+  .capture-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: var(--bg-panel-2);
+    outline: none;
+    min-width: 160px;
+  }
+
+  .capture-text {
     font-size: 11px;
     color: var(--accent);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     animation: pulse 1.2s ease-in-out infinite;
+  }
+
+  .capture-hint {
+    font-size: 9px;
+    color: var(--text-muted);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
   @keyframes pulse {
