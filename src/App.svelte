@@ -8,6 +8,7 @@
   import TabBar from "./lib/TabBar.svelte";
   import ProjectEditor from "./lib/ProjectEditor.svelte";
   import ToolRail from "./lib/toolbox/ToolRail.svelte";
+  import SettingsDialog from "./lib/SettingsDialog.svelte";
   import ToolPanelStack from "./lib/toolbox/ToolPanelStack.svelte";
   import {
     liveAgentStore,
@@ -28,6 +29,7 @@
   let activeTabId: string | null = $state(null);
   let sidebarCollapsed = $state(false);
   let showSpawnDialog = $state(false);
+  let showSettings = $state(false);
   let counter = 0;
   let agentViewRef: AgentView | undefined = $state(undefined);
   let exitListeners: Map<string, import("$lib/api").UnlistenFn> = new Map();
@@ -485,6 +487,13 @@
       return;
     }
 
+    // Ctrl+, — toggle settings (always)
+    if (e.ctrlKey && e.key === ",") {
+      e.preventDefault();
+      showSettings = !showSettings;
+      return;
+    }
+
     // Ctrl+B — toggle sidebar (always)
     if (e.ctrlKey && e.key === "b") {
       e.preventDefault();
@@ -633,7 +642,7 @@
     onclose={closeTool}
     onresize={(w) => (toolboxWidth = w)}
   />
-  <ToolRail {openToolIds} ontoggle={toggleTool} />
+  <ToolRail {openToolIds} ontoggle={toggleTool} onsettings={() => (showSettings = true)} />
 </main>
 
 {#if showSpawnDialog}
@@ -657,6 +666,10 @@
       editingProject = updated;
     }}
   />
+{/if}
+
+{#if showSettings}
+  <SettingsDialog onclose={() => (showSettings = false)} />
 {/if}
 
 <style>
