@@ -22,6 +22,7 @@
   } from "./lib/toolbox/persistence";
   import type { AgentContext } from "./lib/toolbox/types";
   import type { Agent, AgentConfig, AgentViewState, Project, SessionRecord } from "./lib/types";
+  import { applyTheme, DEFAULT_THEME } from "./lib/themes";
 
   let agents: Agent[] = $state([]);
   let projects: Project[] = $state([]);
@@ -190,6 +191,7 @@
       const tabsJson = await invoke<string | null>("db_get_ui_state", { key: "openTabs" });
       const activeJson = await invoke<string | null>("db_get_ui_state", { key: "activeTabId" });
       const collapsedJson = await invoke<string | null>("db_get_ui_state", { key: "sidebarCollapsed" });
+      const themeJson = await invoke<string | null>("db_get_ui_state", { key: "theme" });
       if (tabsJson) {
         const savedTabs: string[] = JSON.parse(tabsJson);
         const agentIds = new Set(agents.map((a) => a.id));
@@ -201,6 +203,9 @@
         else if (openTabs.length > 0) activeTabId = openTabs[0];
       }
       if (collapsedJson) sidebarCollapsed = JSON.parse(collapsedJson);
+      if (themeJson) {
+        applyTheme(JSON.parse(themeJson));
+      }
     } catch {}
   }
 
@@ -717,7 +722,7 @@
     font-size: 48px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     line-height: 1;
-    color: var(--accent-purple);
+    color: var(--accent);
   }
 
   .empty-state p {
