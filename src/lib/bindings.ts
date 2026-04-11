@@ -45,6 +45,19 @@ export const commands = {
 	 *  any incoming snapshot whose version is <= its current entry version.
 	 */
 	stateVersion: number,
+	/**
+	 *  True while the agent is actively producing a turn. Drives the Abort
+	 *  button and the `ChatInput` disabled state on the frontend, plus the
+	 *  status dots in Sidebar/TabBar. Flipped on in `apply_event` at
+	 *  `MessageStart { assistant }` and `ToolExecutionStart`, off at
+	 *  `AgentEnd`. Tighter boundaries (`TurnEnd`, `MessageEnd`,
+	 *  `ToolExecutionEnd`) are intentionally avoided to prevent mid-turn
+	 *  flicker while tools run or the next LLM call spins up — a turn is
+	 *  not "done" until the agent stops talking and tools stop running.
+	 *  If Pi SDK ever starts firing `MessageEnd` mid-agent-turn (parallel
+	 *  tool calls) this policy needs to be revisited — see MON-40.
+	 */
+	isStreaming: boolean,
 } | null, ErrorDto>(__TAURI_INVOKE("get_agent_state", { agentId })),
 	/**
 	 *  Rebuild the assembled `LiveAgentState` for an agent from a SQLite session
@@ -196,6 +209,19 @@ export type LiveAgentState = {
 	 *  any incoming snapshot whose version is <= its current entry version.
 	 */
 	stateVersion: number,
+	/**
+	 *  True while the agent is actively producing a turn. Drives the Abort
+	 *  button and the `ChatInput` disabled state on the frontend, plus the
+	 *  status dots in Sidebar/TabBar. Flipped on in `apply_event` at
+	 *  `MessageStart { assistant }` and `ToolExecutionStart`, off at
+	 *  `AgentEnd`. Tighter boundaries (`TurnEnd`, `MessageEnd`,
+	 *  `ToolExecutionEnd`) are intentionally avoided to prevent mid-turn
+	 *  flicker while tools run or the next LLM call spins up — a turn is
+	 *  not "done" until the agent stops talking and tools stop running.
+	 *  If Pi SDK ever starts firing `MessageEnd` mid-agent-turn (parallel
+	 *  tool calls) this policy needs to be revisited — see MON-40.
+	 */
+	isStreaming: boolean,
 };
 
 export type MemoryRow = {
