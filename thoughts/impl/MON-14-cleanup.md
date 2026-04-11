@@ -788,7 +788,7 @@ about the shape left behind. -->
 Final tidying pass. Runs after every other wave is merged so it does not
 have to re-verify anything.
 
-- [ ] **MON-39** — Phase 1 cleanup: remove dead code and legacy channels  · Medium · `chore`
+- [ ] **MON-39** — Phase 1 cleanup: remove dead code and legacy channels  · Medium · `chore`, `backend` — _In review, PR open against phase-1 base_
   - Done when: dead `AgentLifecycleState` is either driven or deleted;
     legacy `agent-event-{id}` message/tool forward is removed now that
     `liveAgentStore` consumes the new channel; `uuid_v4_simple` is replaced
@@ -797,6 +797,80 @@ have to re-verify anything.
     a migration window, then converge).
 
 **Notes (Wave 3):**
+
+- **MON-39 shipped.** Eight of the nine ticket items landed as eight
+  small commits on the phase-1 base. Item 7 was already resolved by
+  MON-32's typed `SidecarEvent` — dropped from scope per the ticket's own
+  "include only if that ticket slips" note.
+  - **Item 1 (dead `AgentLifecycleState`)**: deleted the enum and the
+    `lifecycle` field. `is_streaming` and `thinking_level` on `AgentState`
+    were equally dead (written but never read) so they came out too, which
+    let the `#[allow(dead_code)]` come off the struct — the acceptance
+    criterion required "no allow left". `thinking_level` stays on the DB
+    row / sidecar protocol / spawn request, just not in the in-memory
+    `AgentState` cache.
+  - **Item 2 (`agent-event-{id}` forward)**: removed only the Event-arm
+    forward and the Unknown-event forward. `SessionReady`,
+    `ExtensionUiRequest`, and `Error` emits stay — `AgentView.svelte:136-137`
+    documents that narrowing as the final shape of the channel, and the
+    frontend still consumes all three at `AgentView.svelte:463`. Removing
+    them would break the UI.
+  - **Item 3 (`uuid_v4_simple`)**: added `uuid = "1"` as a direct dep with
+    the `v4` feature (was already transitively present), body of the helper
+    is now `Uuid::new_v4().to_string()`. Kept the `pub(crate)` helper name
+    so `project.rs` stayed untouched.
+  - **Item 4 (timestamp unification)**: picked ISO8601 RFC3339 end-to-end
+    (`%Y-%m-%dT%H:%M:%SZ`). `chrono_now()` uses `chrono::Utc::now()`,
+    `parse_timestamp` uses `DateTime::parse_from_rfc3339`, schema `DEFAULT`
+    clauses moved from `datetime('now')` to
+    `strftime('%Y-%m-%dT%H:%M:%SZ','now')`, and the two `events` INSERTs
+    (the only writers that were relying on the column DEFAULT) now bind
+    `chrono_now()` explicitly. A new `migrate_timestamps_to_rfc3339` runs
+    once at `Database::new` inside a transaction, converting both
+    Unix-seconds-as-TEXT (via the `'unixepoch'` modifier) and SQLite's
+    space-separated `YYYY-MM-DD HH:MM:SS` rows. Idempotent — RFC3339 rows
+    match neither WHERE clause on re-run. Covers
+    projects/agents/sessions/messages/memories/events/agent_templates
+    (12 columns total). Also replaced every `UPDATE ... SET updated_at =
+    datetime('now')` in `db.rs` with the `strftime` shape so the Rust
+    writers stop introducing divergent rows.
+  - **Item 5 (`resolve_sidecar_path`)**: dropped the two
+    `std::env::current_dir()` candidates. All probes now root at
+    `current_exe()`. `cargo tauri dev` still resolves because
+    `target/debug/monarch.exe + ../../../sidecar/dist/index.js` reaches
+    the project-root sidecar. Packaged Tauri builds that bundle via
+    `externalBin` are not wired up in `tauri.conf.json` at all — a
+    dedicated packaging ticket owns that; MON-39's scoped fix was just
+    removing the undefined-in-packaged-build probe.
+  - **Item 6 (`persistence.rs` error propagation)**: `monarch_dir` and
+    `prompts_dir` now return `Result<PathBuf, MonarchError>` and propagate
+    `create_dir_all` failures. `prompts_dir_string` and the
+    `get_prompts_dir` Tauri command become fallible — bindings.ts
+    regenerated. The WS dispatcher path (`ws.rs:266`) picks up the `?`
+    naturally.
+  - **Item 7**: dropped from scope (already resolved by MON-32).
+  - **Item 8 (hot-path topic allocation)**: added
+    `AgentStateEntry::new(agent_id)` and a `topic: String` field. The six
+    `format!("agent-state-{}", ...)` sites (reader debounce, reader EmitNow,
+    SessionDestroyed reset, `apply_and_maybe_emit` fallback, `rebuild_state
+    _from_session`, `mark_agent_desynced`) all read `entry.topic`. Per-event
+    allocation count for the topic string is now 0.
+  - **Item 9 (unknown-event desync bump)**: `sidecar_protocol.rs`
+    `InnerEvent::Unknown` arm now returns `ApplyOutcome::NoOp` and no longer
+    sets `desynced = true` inline. `mark_desynced` from the reader's
+    early-return path remains the single version-bump surface. The
+    saturation vector the ticket described only fired if an unknown event
+    bypassed the reader early-return (e.g. empty agent_id), but the fix is
+    still correct as defense in depth.
+  - **`cargo check` + `cargo clippy --all-targets` are clean locally.**
+    Windows test harness still hits the MON-33-era `STATUS_ENTRYPOINT_NOT
+    _FOUND` Tauri DLL quirk — CI / Linux runs the actual tests.
+  - **bindings.ts diff**: one line changed — `getPromptsDir` moved from
+    `() => string` to `() => typedError<string, ErrorDto>` as a direct
+    consequence of item 6.
+  - **Linear state note**: expect the merge to auto-flip MON-39 to Done
+    per the GitHub integration. Revert to In Review manually until phase-1
+    reaches master — same pattern as MON-33 / MON-34.
 
 <!-- Final sweep notes: what got deleted, what got kept despite the review
 flag, and why. -->
