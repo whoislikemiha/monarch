@@ -28,7 +28,10 @@ export function getActiveTheme(): Theme {
  * e.g. "bgApp" → "--bg-app", "accentBlueBgSubtle" → "--accent-blue-bg-subtle"
  */
 function toVarName(key: string): string {
-  return "--" + key.replace(/([A-Z])/g, "-$1").toLowerCase();
+  return "--" + key
+    .replace(/([A-Z])/g, "-$1")
+    .replace(/([a-zA-Z])(\d)/g, "$1-$2")
+    .toLowerCase();
 }
 
 /**
