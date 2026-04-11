@@ -445,6 +445,7 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
         }
         InnerEvent::AgentEnd => {
             state.activity_status = String::new();
+            state.is_streaming = false;
             state.commit_streaming_message();
             state.items.push(DisplayItem::Status {
                 text: "Agent finished".to_string(),
@@ -486,6 +487,7 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                 "assistant" => {
                     state.streaming_message = Some(streaming_from(message));
                     state.activity_status = "Receiving response...".to_string();
+                    state.is_streaming = true;
                     ApplyOutcome::EmitNow
                 }
                 _ => ApplyOutcome::NoOp,
@@ -524,6 +526,7 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
             args,
         } => {
             state.activity_status = format!("Running tool: {}", tool_name);
+            state.is_streaming = true;
             let exec = ToolExecution {
                 tool_call_id: tool_call_id.clone(),
                 tool_name: tool_name.clone(),
