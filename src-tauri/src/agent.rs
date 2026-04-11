@@ -958,12 +958,23 @@ impl AgentManager {
     }
 }
 
-/// Resolve the sidecar script path
+/// Resolve the sidecar script path.
+///
+/// The probes are rooted at `current_exe()` so resolution works the same
+/// in `cargo tauri dev` (where the exe lives at `target/debug/monarch.exe`
+/// and the project-root sidecar sits at `../../../sidecar/dist/index.js`)
+/// and any packaged layout that keeps the sidecar next to the binary.
+/// `std::env::current_dir` was used pre-MON-39 but is undefined for a
+/// packaged Tauri build. `MONARCH_SIDECAR_PATH` remains a manual override
+/// for unusual layouts and tests.
+///
+/// Packaged Tauri builds that bundle the sidecar via `externalBin` are not
+/// wired up yet — a dedicated packaging ticket owns that.
 fn resolve_sidecar_path() -> Result<String, MonarchError> {
     let candidates = [
         std::env::var("MONARCH_SIDECAR_PATH").ok().map(std::path::PathBuf::from),
-        std::env::current_dir().ok().map(|d| d.join("sidecar/dist/index.js")),
-        std::env::current_dir().ok().map(|d| d.join("../sidecar/dist/index.js")),
+        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("sidecar/dist/index.js"))),
+        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("../sidecar/dist/index.js"))),
         std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("../../sidecar/dist/index.js"))),
         std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("../../../sidecar/dist/index.js"))),
     ];
