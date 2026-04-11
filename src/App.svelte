@@ -21,31 +21,7 @@
   import type { AgentContext } from "./lib/toolbox/types";
   import type { Project } from "./lib/types";
   import { loadKeybindings, matchBinding } from "$lib/keybindings.svelte";
-
-  import {
-    agents,
-    projects,
-    openTabs,
-    activeTabId,
-    sidebarCollapsed,
-    activeAgent,
-    activeProject,
-    initialize,
-    createAgent,
-    killAgent,
-    restartAgent,
-    spawnStoppedAgent,
-    newConversation,
-    updateAgent,
-    selectAgent,
-    closeTab,
-    switchToRecentAgent,
-    switchToNextAgent,
-    toggleSidebar,
-    updateProjects,
-    loadProjects,
-    setActiveTab,
-  } from "$lib/stores/agentStore.svelte";
+  import { agentStore } from "$lib/stores/agentStore.svelte";
 
   // --- Local UI state (not shared with children) ---
   let showSpawnDialog = $state(false);
@@ -97,7 +73,7 @@
   }
 
   onMount(async () => {
-    await initialize();
+    await agentStore.initialize();
     await loadKeybindings();
 
     // Restore zoom level
@@ -112,18 +88,18 @@
 
   // --- AgentContext for toolbox ---
   let currentLive = $derived(
-    activeTabId ? liveAgentStore.byAgent.get(activeTabId) ?? null : null,
+    agentStore.activeTabId ? liveAgentStore.byAgent.get(agentStore.activeTabId) ?? null : null,
   );
   let activeCustomPrompt: string | null = $state(null);
   let agentContext: AgentContext = $derived(
-    activeAgent && currentLive
+    agentStore.activeAgent && currentLive
       ? {
-          agentId: activeAgent.id,
-          agent: activeAgent,
+          agentId: agentStore.activeAgent.id,
+          agent: agentStore.activeAgent,
           live: currentLive,
           setup: {
             customPrompt: activeCustomPrompt,
-            projectInstructions: activeProject?.instructions ?? null,
+            projectInstructions: agentStore.activeProject?.instructions ?? null,
           },
         }
       : null,
@@ -151,7 +127,7 @@
 
     if (matchBinding(e, "global.toggle-sidebar")) {
       e.preventDefault();
-      toggleSidebar();
+      agentStore.toggleSidebar();
       return;
     }
 
@@ -176,8 +152,8 @@
     for (let i = 1; i <= 9; i++) {
       if (matchBinding(e, `nav.tab-${i}`)) {
         e.preventDefault();
-        if (i - 1 < openTabs.length) {
-          setActiveTab(openTabs[i - 1]);
+        if (i - 1 < agentStore.openTabs.length) {
+          agentStore.activeTabId = agentStore.openTabs[i - 1];
         }
         return;
       }
@@ -186,14 +162,14 @@
     // Recent agent (Ctrl+Tab)
     if (matchBinding(e, "nav.recent-agent")) {
       e.preventDefault();
-      switchToRecentAgent();
+      agentStore.switchToRecentAgent();
       return;
     }
 
     // Next agent (Ctrl+PageDown)
     if (matchBinding(e, "nav.next-agent")) {
       e.preventDefault();
-      switchToNextAgent();
+      agentStore.switchToNextAgent();
       return;
     }
 
@@ -217,9 +193,9 @@
       const selection = window.getSelection();
       if (selection && selection.toString().length > 0) return;
       e.preventDefault();
-      if (activeAgent) {
+      if (agentStore.activeAgent) {
         invoke("send_command", {
-          id: activeAgent.id,
+          id: agentStore.activeAgent.id,
           commandJson: JSON.stringify({ type: "abort" }),
         });
       }
@@ -232,7 +208,7 @@
 
 <main class="app">
   <Sidebar
-    collapsed={sidebarCollapsed}
+    collapsed={agentStore.sidebarCollapsed}
     oncreate={() => (showSpawnDialog = true)}
     oneditproject={(project) => { editingProject = project; }}
     onsavetemplate={async (source) => {
@@ -258,11 +234,11 @@
   <div class="main-panel">
     <TabBar />
     <div class="main-content">
-      {#if activeAgent}
-        {#key activeAgent.viewKey}
+      {#if agentStore.activeAgent}
+        {#key agentStore.activeAgent.viewKey}
           <AgentView
-            agent={activeAgent}
-            projectName={activeProject?.name}
+            agent={agentStore.activeAgent}
+            projectName={agentStore.activeProject?.name}
             bind:customPrompt={activeCustomPrompt}
             bind:this={agentViewRef}
           />
@@ -290,7 +266,7 @@
   <SpawnDialog
     onspawn={(config) => {
       showSpawnDialog = false;
-      createAgent(config);
+      agentStore.createAgent(config);
     }}
     oncancel={() => (showSpawnDialog = false)}
   />
@@ -301,7 +277,7 @@
     project={editingProject}
     onclose={() => (editingProject = null)}
     onupdate={(updated) => {
-      updateProjects((ps) => ps.map(p => p.id === updated.id ? updated : p));
+      agentStore.updateProjects((ps) => ps.map(p => p.id === updated.id ? updated : p));
       editingProject = updated;
     }}
   />

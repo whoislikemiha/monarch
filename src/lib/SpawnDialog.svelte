@@ -5,7 +5,7 @@
   import { matchBinding } from "$lib/keybindings.svelte";
   import type { AgentConfig, AgentTemplate, ShadowGrade } from "./types";
   import { SHADOW_GRADES } from "./types";
-  import { projects } from "$lib/stores/agentStore.svelte";
+  import { agentStore } from "$lib/stores/agentStore.svelte";
 
   let {
     onspawn,
@@ -504,11 +504,11 @@
       {/if}
     </div>
 
-    {#if projects.length > 0}
+    {#if agentStore.projects.length > 0}
       <div class="section">
         <span class="label">Project</span>
         <div class="project-chips">
-          {#each projects as p (p.id)}
+          {#each agentStore.projects as p (p.id)}
             <button
               class="project-chip"
               class:active={detectedProject?.rootPath === p.rootPath}

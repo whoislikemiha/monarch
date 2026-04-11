@@ -1,17 +1,11 @@
 <script lang="ts">
-  import type { Project, ShadowIdentity } from "./types";
+  import type { Agent, Project, ShadowIdentity } from "./types";
   import AgentStatusDot from "./AgentStatusDot.svelte";
-  import {
-    agents,
-    projects,
-    activeTabId,
-    selectAgent,
-    killAgent,
-  } from "$lib/stores/agentStore.svelte";
+  import { agentStore } from "$lib/stores/agentStore.svelte";
 
   interface ProjectGroup {
     project?: Project;
-    agents: typeof agents;
+    agents: Agent[];
   }
 
   /** Snapshot of the clicked row passed to onsavetemplate. */
@@ -40,7 +34,7 @@
   // we can render one that matches the rest of the app.
   let contextMenu: { x: number; y: number; source: TemplateSource } | null = $state(null);
 
-  function openAgentMenu(e: MouseEvent, agent: typeof agents[number]) {
+  function openAgentMenu(e: MouseEvent, agent: Agent) {
     e.preventDefault();
     contextMenu = {
       x: e.clientX,
@@ -69,7 +63,7 @@
   // Group agents by project
   let projectGroups = $derived.by(() => {
     const projectMap = new Map<string, Project>();
-    for (const p of projects) projectMap.set(p.id, p);
+    for (const p of agentStore.projects) projectMap.set(p.id, p);
 
     const groups = new Map<string, ProjectGroup>();
     const ungrouped: ProjectGroup = { project: undefined, agents: [] };
@@ -81,7 +75,7 @@
       return groups.get(projectId)!;
     }
 
-    for (const agent of agents) {
+    for (const agent of agentStore.agents) {
       if (agent.projectId && projectMap.has(agent.projectId)) {
         ensureGroup(agent.projectId).agents.push(agent);
       } else {
@@ -129,10 +123,10 @@
         {#each group.agents as agent (agent.id)}
           <div
             class="agent-item"
-            class:active={agent.id === activeTabId}
+            class:active={agent.id === agentStore.activeTabId}
             class:standby={agent.status === "stopped"}
-            onclick={() => selectAgent(agent.id)}
-            onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') selectAgent(agent.id); }}
+            onclick={() => agentStore.selectAgent(agent.id)}
+            onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') agentStore.selectAgent(agent.id); }}
             oncontextmenu={(e: MouseEvent) => openAgentMenu(e, agent)}
             role="button"
             tabindex="0"
@@ -148,7 +142,7 @@
             </div>
             <button
               class="btn-kill"
-              onclick={(e: MouseEvent) => { e.stopPropagation(); killAgent(agent.id); }}
+              onclick={(e: MouseEvent) => { e.stopPropagation(); agentStore.killAgent(agent.id); }}
               title="Kill"
             >
               &times;
@@ -158,7 +152,7 @@
       {/each}
     </div>
 
-    {#if agents.length === 0}
+    {#if agentStore.agents.length === 0}
       <div class="empty-state">
         No shadows extracted.<br />Click + to extract one.
       </div>
