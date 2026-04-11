@@ -184,26 +184,32 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             // of per-field `str_field` / `opt_str` extraction.
             let req: crate::agent::SpawnAgentRequest = serde_json::from_value(args)?;
             let app = state.agent_mgr.get_app_handle()?;
-            state.agent_mgr.spawn(&app, &state.db, req)?;
+            state.agent_mgr.spawn(&app, &state.db, req).await?;
             Ok(Value::Null)
         }
         "send_command" => {
             let id = str_field(&args, "id")?;
             let command_json = str_field(&args, "commandJson")?;
             let app = state.agent_mgr.get_app_handle()?;
-            state.agent_mgr.send_command(&app, &state.db, id, command_json)?;
+            state
+                .agent_mgr
+                .send_command(&app, &state.db, id, command_json)
+                .await?;
             Ok(Value::Null)
         }
         "kill_agent" => {
             let id = str_field(&args, "id")?;
-            state.agent_mgr.kill(&id)?;
+            state.agent_mgr.kill(&id).await?;
             Ok(Value::Null)
         }
         "load_session_context" => {
             let agent_id = str_field(&args, "agentId")?;
             let source_session_id = str_field(&args, "sourceSessionId")?;
             let app = state.agent_mgr.get_app_handle()?;
-            state.agent_mgr.load_session_context(&app, &state.db, agent_id, source_session_id)?;
+            state
+                .agent_mgr
+                .load_session_context(&app, &state.db, agent_id, source_session_id)
+                .await?;
             Ok(Value::Null)
         }
         "new_agent_session" => {
@@ -211,25 +217,34 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             let new_session_id = str_field(&args, "newSessionId")?;
             let parent_session_id = opt_str(&args, "parentSessionId");
             let app = state.agent_mgr.get_app_handle()?;
-            state.agent_mgr.new_session(&app, &state.db, agent_id, new_session_id, parent_session_id)?;
+            state
+                .agent_mgr
+                .new_session(&app, &state.db, agent_id, new_session_id, parent_session_id)
+                .await?;
             Ok(Value::Null)
         }
         "switch_agent_session" => {
             let agent_id = str_field(&args, "agentId")?;
             let session_id = str_field(&args, "sessionId")?;
             let app = state.agent_mgr.get_app_handle()?;
-            state.agent_mgr.switch_session(&app, &state.db, agent_id, session_id)?;
+            state
+                .agent_mgr
+                .switch_session(&app, &state.db, agent_id, session_id)
+                .await?;
             Ok(Value::Null)
         }
         "respond_extension_ui" => {
             let req: crate::agent::ExtensionUiResponseRequest = serde_json::from_value(args)?;
             let app = state.agent_mgr.get_app_handle()?;
-            state.agent_mgr.respond_extension_ui(&app, &state.db, req)?;
+            state
+                .agent_mgr
+                .respond_extension_ui(&app, &state.db, req)
+                .await?;
             Ok(Value::Null)
         }
         "detect_project" => {
             let cwd = str_field(&args, "cwd")?;
-            let result = crate::project::detect_project(&state.db, &cwd)?;
+            let result = crate::project::detect_project(&state.db, &cwd).await?;
             Ok(result.unwrap_or(Value::Null))
         }
         "read_project_instructions" => {
@@ -253,33 +268,33 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
         // ---- Persistence (prompts) ----
         "get_agent_prompt" => {
             let agent_id = str_field(&args, "agentId")?;
-            let result = crate::persistence::read_agent_prompt_file(&agent_id)?;
+            let result = crate::persistence::read_agent_prompt_file(&agent_id).await?;
             Ok(result.map(Value::String).unwrap_or(Value::Null))
         }
         "save_agent_prompt" => {
             let agent_id = str_field(&args, "agentId")?;
             let prompt = str_field(&args, "prompt")?;
-            crate::persistence::write_agent_prompt_file(&agent_id, &prompt)?;
+            crate::persistence::write_agent_prompt_file(&agent_id, &prompt).await?;
             Ok(Value::Null)
         }
         "get_prompts_dir" => {
-            Ok(Value::String(crate::persistence::prompts_dir_string()?))
+            Ok(Value::String(crate::persistence::prompts_dir_string().await?))
         }
 
         // ---- DB: Agents ----
         "db_upsert_agent" => {
             let agent = serde_json::from_value(args.get("agent").cloned().unwrap_or(args.clone()))
                 .map_err(|e| MonarchError::invalid_input(format!("Invalid agent: {}", e)))?;
-            state.db.upsert_agent_internal(&agent)?;
+            state.db.upsert_agent_internal(&agent).await?;
             Ok(Value::Null)
         }
         "db_get_agents" => {
-            let agents = state.db.get_agents_internal()?;
+            let agents = state.db.get_agents_internal().await?;
             serde_json::to_value(agents).map_err(MonarchError::from)
         }
         "db_delete_agent" => {
             let agent_id = str_field(&args, "agentId")?;
-            state.db.delete_agent_internal(&agent_id)?;
+            state.db.delete_agent_internal(&agent_id).await?;
             Ok(Value::Null)
         }
 
@@ -287,12 +302,12 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
         "db_create_session" => {
             let session = serde_json::from_value(args.get("session").cloned().unwrap_or(args.clone()))
                 .map_err(|e| MonarchError::invalid_input(format!("Invalid session: {}", e)))?;
-            state.db.create_session_internal(&session)?;
+            state.db.create_session_internal(&session).await?;
             Ok(Value::Null)
         }
         "db_get_sessions" => {
             let agent_id = str_field(&args, "agentId")?;
-            let sessions = state.db.get_sessions_internal(&agent_id)?;
+            let sessions = state.db.get_sessions_internal(&agent_id).await?;
             serde_json::to_value(sessions).map_err(MonarchError::from)
         }
 
@@ -300,17 +315,17 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
         "db_save_message" => {
             let message = serde_json::from_value(args.get("message").cloned().unwrap_or(args.clone()))
                 .map_err(|e| MonarchError::invalid_input(format!("Invalid message: {}", e)))?;
-            let id = state.db.save_message_internal(&message)?;
+            let id = state.db.save_message_internal(&message).await?;
             Ok(Value::Number(id.into()))
         }
         "db_get_messages" => {
             let session_id = str_field(&args, "sessionId")?;
-            let messages = state.db.get_messages_internal(&session_id)?;
+            let messages = state.db.get_messages_internal(&session_id).await?;
             serde_json::to_value(messages).map_err(MonarchError::from)
         }
         "db_get_messages_with_ancestry" => {
             let session_id = str_field(&args, "sessionId")?;
-            let messages = state.db.get_messages_with_ancestry(&session_id)?;
+            let messages = state.db.get_messages_with_ancestry(&session_id).await?;
             serde_json::to_value(messages).map_err(MonarchError::from)
         }
 
@@ -318,13 +333,16 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
         "db_save_memory" => {
             let memory = serde_json::from_value(args.get("memory").cloned().unwrap_or(args.clone()))
                 .map_err(|e| MonarchError::invalid_input(format!("Invalid memory: {}", e)))?;
-            let id = state.db.save_memory_internal(&memory)?;
+            let id = state.db.save_memory_internal(&memory).await?;
             Ok(Value::Number(id.into()))
         }
         "db_get_memories" => {
             let agent_id = opt_str(&args, "agentId");
             let layer = opt_str(&args, "layer");
-            let memories = state.db.get_memories_internal(agent_id.as_deref(), layer.as_deref())?;
+            let memories = state
+                .db
+                .get_memories_internal(agent_id.as_deref(), layer.as_deref())
+                .await?;
             serde_json::to_value(memories).map_err(MonarchError::from)
         }
 
@@ -334,29 +352,32 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             let session_id = opt_str(&args, "sessionId");
             let event_type = str_field(&args, "eventType")?;
             let data = opt_str(&args, "data");
-            state.db.log_event_internal(
-                agent_id.as_deref(),
-                session_id.as_deref(),
-                &event_type,
-                data.as_deref(),
-            )?;
+            state
+                .db
+                .log_event_internal(
+                    agent_id.as_deref(),
+                    session_id.as_deref(),
+                    &event_type,
+                    data.as_deref(),
+                )
+                .await?;
             Ok(Value::Null)
         }
 
         // ---- DB: Templates ----
         "db_list_agent_templates" => {
-            let templates = state.db.list_agent_templates_internal()?;
+            let templates = state.db.list_agent_templates_internal().await?;
             serde_json::to_value(templates).map_err(MonarchError::from)
         }
         "db_save_agent_template" => {
             let template = serde_json::from_value(args.get("template").cloned().unwrap_or(args.clone()))
                 .map_err(|e| MonarchError::invalid_input(format!("Invalid template: {}", e)))?;
-            state.db.save_agent_template_internal(&template)?;
+            state.db.save_agent_template_internal(&template).await?;
             Ok(Value::Null)
         }
         "db_delete_agent_template" => {
             let template_id = str_field(&args, "templateId")?;
-            state.db.delete_agent_template_internal(&template_id)?;
+            state.db.delete_agent_template_internal(&template_id).await?;
             Ok(Value::Null)
         }
 
@@ -364,33 +385,36 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
         "db_upsert_project" => {
             let project = serde_json::from_value(args.get("project").cloned().unwrap_or(args.clone()))
                 .map_err(|e| MonarchError::invalid_input(format!("Invalid project: {}", e)))?;
-            state.db.upsert_project_internal(&project)?;
+            state.db.upsert_project_internal(&project).await?;
             Ok(Value::Null)
         }
         "db_get_projects" => {
-            let projects = state.db.get_projects_internal()?;
+            let projects = state.db.get_projects_internal().await?;
             serde_json::to_value(projects).map_err(MonarchError::from)
         }
         "db_get_project_by_path" => {
             let root_path = str_field(&args, "rootPath")?;
-            let project = state.db.get_project_by_path_internal(&root_path)?;
+            let project = state.db.get_project_by_path_internal(&root_path).await?;
             serde_json::to_value(project).map_err(MonarchError::from)
         }
         "db_rename_project" => {
             let project_id = str_field(&args, "projectId")?;
             let name = str_field(&args, "name")?;
-            state.db.rename_project_internal(&project_id, &name)?;
+            state.db.rename_project_internal(&project_id, &name).await?;
             Ok(Value::Null)
         }
         "db_update_project_instructions" => {
             let project_id = str_field(&args, "projectId")?;
             let instructions = opt_str(&args, "instructions");
-            state.db.update_project_instructions_internal(&project_id, instructions.as_deref())?;
+            state
+                .db
+                .update_project_instructions_internal(&project_id, instructions.as_deref())
+                .await?;
             Ok(Value::Null)
         }
         "db_delete_project" => {
             let project_id = str_field(&args, "projectId")?;
-            state.db.delete_project_internal(&project_id)?;
+            state.db.delete_project_internal(&project_id).await?;
             Ok(Value::Null)
         }
 

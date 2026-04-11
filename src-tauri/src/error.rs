@@ -151,6 +151,15 @@ impl From<rusqlite::Error> for MonarchError {
     }
 }
 
+impl From<tokio_rusqlite::Error> for MonarchError {
+    fn from(e: tokio_rusqlite::Error) -> Self {
+        match e {
+            tokio_rusqlite::Error::Error(inner) => Self::Db(inner),
+            other => Self::Persistence(other.to_string()),
+        }
+    }
+}
+
 impl From<std::io::Error> for MonarchError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)

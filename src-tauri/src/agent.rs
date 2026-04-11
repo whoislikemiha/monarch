@@ -7,9 +7,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
-use tokio::process::{Child as TokioChild, Command as TokioCommand};
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
+use tokio::process::{Child as TokioChild, ChildStdin, Command as TokioCommand};
+use tokio::sync::{broadcast, mpsc, Mutex as TokioMutex, RwLock};
 
 type TaskHandle = tauri::async_runtime::JoinHandle<()>;
 
@@ -17,7 +17,7 @@ use crate::agent_state::{
     display_items_from_messages, ApplyOutcome, DisplayItem, LiveAgentState,
 };
 use crate::db::{AgentRow, Database, MessageRow};
-use crate::error::{lock_poisoned, MonarchError};
+use crate::error::MonarchError;
 use crate::persistence::read_agent_prompt_file;
 use crate::sidecar_protocol::{
     apply_event, InnerEvent, LoadSessionMessage, ShadowConfig, SidecarCommand, SidecarEvent,
@@ -67,41 +67,52 @@ struct AgentManagerInner {
 
 // ---- Sidecar process management ----
 //
-// MON-14 Phase 1 moves the sidecar onto `tokio::process`. The stdout reader is
-// async (tokio task) so per-agent state assembly can `.await` locks cleanly.
-// The write path stays synchronous from the caller's POV: Tauri command
-// handlers are still sync functions and call `write_command(json)` which
-// enqueues on an unbounded mpsc channel drained by a dedicated writer task.
-// This avoids the "convert tokio::ChildStdin into std::ChildStdin" dance while
-// keeping MON-14's blast radius on the read side. The follow-up issue (MON-27)
-// migrates the command handlers themselves to async.
+// MON-27: the full write path is async. `SidecarProcess` owns the sidecar's
+// `tokio::process::ChildStdin` directly behind a `tokio::sync::Mutex`, and
+// callers `.await` on `write_command`. The MON-14 Phase 1 mpsc-bridged
+// writer task and the dedicated drain loop are gone — they existed only to
+// give sync Tauri command handlers a non-blocking handoff to an async
+// writer, a premise removed when every command handler became `async fn`.
+//
+// Shutdown still closes stdin to trigger the sidecar's graceful `rl.on("close")`
+// path: dropping the `ChildStdin` taken out of the `Option` is the async
+// equivalent of dropping the mpsc sender. The `child` field stays behind a
+// `std::sync::Mutex<TokioChild>` because `shutdown_sidecar` is invoked from
+// Tauri's sync `RunEvent::ExitRequested` hook and needs to observe liveness
+// without acquiring a tokio lock — `tokio::process::Child::try_wait` itself
+// is sync, so a `std::sync::Mutex` guard suffices.
 
 #[allow(dead_code)]
 struct SidecarProcess {
     /// Kept so we can observe liveness via `try_wait()` and kill on shutdown.
+    /// Sync mutex because the shutdown hook is sync; `try_wait` does not
+    /// require a runtime context.
     child: Mutex<TokioChild>,
-    /// Sync send into the dedicated writer task. Wrapped in `Mutex<Option<_>>`
-    /// so the shutdown path (`AgentManager::shutdown_sidecar`) can `take()`
-    /// the sender from the outside: dropping it closes the mpsc channel →
-    /// writer task exits → `ChildStdin` drops → sidecar's `rl.on("close")`
-    /// fires graceful `disposeAll()` + `process.exit(0)`. That stdin-close
-    /// path is the sidecar's graceful-shutdown protocol, so we don't need a
-    /// dedicated `SidecarCommand::Shutdown` wire message.
-    stdin_tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
+    /// Async-owned stdin. Wrapped in `Mutex<Option<_>>` so the shutdown path
+    /// can `take()` and drop the `ChildStdin`, closing the pipe and firing
+    /// the sidecar's graceful `rl.on("close")` path.
+    stdin: TokioMutex<Option<ChildStdin>>,
 }
 
 impl SidecarProcess {
-    fn write_command(&self, json: &str) -> Result<(), MonarchError> {
+    async fn write_command(&self, json: &str) -> Result<(), MonarchError> {
         let mut line = json.to_string();
         if !line.ends_with('\n') {
             line.push('\n');
         }
-        let guard = self.stdin_tx.lock().map_err(lock_poisoned("sidecar stdin"))?;
-        guard
-            .as_ref()
-            .ok_or_else(MonarchError::sidecar_process_down)?
-            .send(line)
-            .map_err(|e| MonarchError::sidecar_stdin_write(e.to_string()))
+        let mut guard = self.stdin.lock().await;
+        let stdin = guard
+            .as_mut()
+            .ok_or_else(MonarchError::sidecar_process_down)?;
+        stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|e| MonarchError::sidecar_stdin_write(e.to_string()))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| MonarchError::sidecar_stdin_write(e.to_string()))?;
+        Ok(())
     }
 }
 
@@ -168,23 +179,29 @@ pub struct AgentStateInner {
     pub debounce_handle: Option<TaskHandle>,
 }
 
-/// MON-34 lock hierarchy:
+/// MON-27 lock hierarchy:
 ///
 /// * `inner` (`parking_lot::Mutex<AgentManagerInner>`) — the only lock that
 ///   protects both `agents` and `session_map`, so the two can never deadlock
 ///   against each other. **Never hold this lock across an `.await`** — the
-///   manager's sync paths use it and `parking_lot` will happily panic-free
-///   block a runtime thread if you do.
+///   manager's async methods use it and `parking_lot` will block a runtime
+///   thread if you do. `!Send` guards make the compiler enforce this at
+///   any call site that straddles an `.await`.
 /// * `sidecar` (`parking_lot::Mutex<Option<Arc<SidecarProcess>>>`) —
-///   independent of `inner`; can be taken in either order.
+///   independent of `inner`; can be taken in either order. Guards must
+///   also not cross an `.await`.
 /// * `app_handle` (`Arc<parking_lot::Mutex<Option<AppHandle>>>`) —
 ///   independent of both above; taken briefly in `get_app_handle` and in
 ///   the persistence consumer's desync path.
 /// * `live_states` entries' inner `tokio::sync::RwLock` — async-only,
 ///   owned by the MON-14 event-assembly path. Never taken under any of the
 ///   locks above.
-/// * `SidecarProcess.{child, stdin_tx}` — `std::sync::Mutex`, part of the
-///   graceful-shutdown protocol (MON-34 leaves these untouched).
+/// * `SidecarProcess.stdin` — `tokio::sync::Mutex<Option<ChildStdin>>`;
+///   MON-27 collapses the former mpsc writer task into a direct async
+///   write from command handlers.
+/// * `SidecarProcess.child` — `std::sync::Mutex<TokioChild>`; sync because
+///   `shutdown_sidecar` runs from Tauri's sync `ExitRequested` hook and
+///   `try_wait` is itself sync.
 pub struct AgentManager {
     sidecar: PlMutex<Option<Arc<SidecarProcess>>>,
     /// MON-34: `agents` + `session_map` consolidated under one lock.
@@ -261,26 +278,31 @@ impl AgentManager {
     ///
     /// Sequence:
     /// 1. Take the sidecar `Arc` out of the manager slot.
-    /// 2. Drop the stdin sender — closes the mpsc → writer task exits →
-    ///    `ChildStdin` drops → sidecar's `rl.on("close")` fires graceful
-    ///    `disposeAll()` + `process.exit(0)`.
+    /// 2. Close the `ChildStdin` (bridged via `block_on` because the
+    ///    async mutex requires it) — `ChildStdin` drops → sidecar's
+    ///    `rl.on("close")` fires graceful `disposeAll()` + `process.exit(0)`.
     /// 3. Poll `try_wait()` until the child reports exit or the deadline
     ///    elapses.
     /// 4. If still alive at the deadline, `start_kill()` as the hard-kill
     ///    fallback. `SidecarProcess::drop` running later is then a no-op.
     ///
     /// Sync by design so it can be called directly from Tauri's sync
-    /// `RunEvent` closure without `block_on` from inside the runtime thread.
-    /// The worst-case close latency is bounded by `timeout` (typically 1.5s),
-    /// which is acceptable during shutdown.
+    /// `RunEvent` closure. The `block_on` in step (2) is safe because the
+    /// `ExitRequested` hook runs on a Tauri worker thread, not the tokio
+    /// runtime worker itself. Worst-case close latency is bounded by
+    /// `timeout` (typically 1.5s), acceptable during shutdown.
     pub fn shutdown_sidecar(&self, timeout: Duration) {
         let sidecar = self.sidecar.lock().take();
         let Some(sc) = sidecar else { return };
 
         // (2) Close stdin to trigger the sidecar's graceful-shutdown path.
-        if let Ok(mut guard) = sc.stdin_tx.lock() {
+        // `take()` inside the async mutex drops `ChildStdin`, closing the
+        // pipe — the async equivalent of dropping the pre-MON-27 mpsc sender.
+        let sc_for_close = sc.clone();
+        tauri::async_runtime::block_on(async move {
+            let mut guard = sc_for_close.stdin.lock().await;
             *guard = None;
-        }
+        });
 
         // (3) Bounded wait for the child to exit on its own.
         let deadline = std::time::Instant::now() + timeout;
@@ -358,28 +380,9 @@ impl AgentManager {
             .take()
             .ok_or_else(|| MonarchError::persistence("Failed to capture sidecar stdin"))?;
 
-        // Writer task: drains the mpsc and writes each line to the tokio
-        // ChildStdin. Sync callers enqueue via `stdin_tx.send(..)`.
-        let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<String>();
-        tauri::async_runtime::spawn(async move {
-            use tokio::io::AsyncWriteExt;
-            let mut stdin = stdin;
-            while let Some(line) = stdin_rx.recv().await {
-                if let Err(e) = stdin.write_all(line.as_bytes()).await {
-                    eprintln!("[monarch] Sidecar stdin write failed: {}", e);
-                    break;
-                }
-                if let Err(e) = stdin.flush().await {
-                    eprintln!("[monarch] Sidecar stdin flush failed: {}", e);
-                    break;
-                }
-            }
-            eprintln!("[monarch] Sidecar writer task exited");
-        });
-
         let sc = Arc::new(SidecarProcess {
             child: Mutex::new(child),
-            stdin_tx: Mutex::new(Some(stdin_tx)),
+            stdin: TokioMutex::new(Some(stdin)),
         });
 
         // Stdout reader task: async loop, one line → one handle_sidecar_event.
@@ -459,12 +462,19 @@ impl AgentManager {
         }
     }
 
-    fn send_to_sidecar(&self, json: &str) -> Result<(), MonarchError> {
-        let sidecar_lock = self.sidecar.lock();
-        let sc = sidecar_lock
-            .as_ref()
-            .ok_or_else(MonarchError::sidecar_process_down)?;
-        sc.write_command(json)
+    async fn send_to_sidecar(&self, json: &str) -> Result<(), MonarchError> {
+        // Clone the Arc out while briefly holding the sync mutex so the
+        // guard is dropped before the `.await` below. Holding a
+        // `parking_lot::MutexGuard` across `.await` would park a runtime
+        // worker (see lock-hierarchy doc comment on `AgentManager`).
+        let sc = {
+            self.sidecar
+                .lock()
+                .as_ref()
+                .ok_or_else(MonarchError::sidecar_process_down)?
+                .clone()
+        };
+        sc.write_command(json).await
     }
 
     /// Recover from a dead sidecar: respawn it and recreate all tracked agent sessions
@@ -493,12 +503,12 @@ impl AgentManager {
         for (agent_id, state) in &agents_snapshot {
             // Replay the original create_session command (includes cwd, shadow, etc.)
             if let Ok(json) = serde_json::to_string(&state.create_cmd) {
-                let _ = self.send_to_sidecar(&json);
+                let _ = self.send_to_sidecar(&json).await;
             }
 
             // Replay session context from SQLite
             let messages_opt = if let Some(session_id) = session_snapshot.get(agent_id) {
-                db.get_messages_with_ancestry(session_id).ok()
+                db.get_messages_with_ancestry(session_id).await.ok()
             } else {
                 None
             };
@@ -522,7 +532,7 @@ impl AgentManager {
                             .collect(),
                     };
                     if let Ok(json) = serde_json::to_string(&load_cmd) {
-                        let _ = self.send_to_sidecar(&json);
+                        let _ = self.send_to_sidecar(&json).await;
                     }
                 }
             }
@@ -566,32 +576,26 @@ impl AgentManager {
 
     /// Send a command to the sidecar, recovering from crash if needed.
     ///
-    /// MON-34: `recover_sidecar` is now `async fn` so the per-agent
-    /// `live_states` write acquire can `.await` instead of silently
-    /// bailing. This shim stays sync at the command boundary — Tauri's
-    /// `#[tauri::command]` handlers run on worker threads (not the
-    /// runtime thread), so `tauri::async_runtime::block_on` is safe here
-    /// and contains the async-propagation blast radius to `agent.rs`.
-    /// MON-27 will flip the command handlers themselves to `async fn` and
-    /// turn this back into a direct `.await`.
-    fn send_with_recovery(
+    /// MON-27: fully async. Command handlers are `async fn` so the
+    /// former `block_on(recover_sidecar)` bridge is a direct `.await`.
+    async fn send_with_recovery(
         &self,
         app: &AppHandle,
         db: &Arc<Database>,
         json: &str,
     ) -> Result<(), MonarchError> {
         // Fast path
-        match self.send_to_sidecar(json) {
+        match self.send_to_sidecar(json).await {
             Ok(()) => return Ok(()),
             Err(_) => {
                 eprintln!("[monarch] Send failed, attempting sidecar recovery...");
             }
         }
 
-        tauri::async_runtime::block_on(self.recover_sidecar(app, db))?;
+        self.recover_sidecar(app, db).await?;
 
         // Retry the original command
-        self.send_to_sidecar(json)
+        self.send_to_sidecar(json).await
     }
 
     /// Rebuild the assembled `LiveAgentState` for an agent from a persisted
@@ -612,7 +616,7 @@ impl AgentManager {
     ) -> Result<LiveAgentState, MonarchError> {
         let items: Vec<DisplayItem> = match session_id {
             Some(sid) => {
-                let messages = db.get_messages_with_ancestry(sid).unwrap_or_default();
+                let messages = db.get_messages_with_ancestry(sid).await.unwrap_or_default();
                 if messages.is_empty() {
                     vec![DisplayItem::Status {
                         text: format!("{} (no stored messages)", status_text),
@@ -657,7 +661,7 @@ impl AgentManager {
     // and delegate here. `ensure_sidecar` is called inside the method, not the
     // adapter, so neither transport can forget it.
 
-    pub fn spawn(
+    pub async fn spawn(
         &self,
         app: &AppHandle,
         db: &Arc<Database>,
@@ -677,8 +681,9 @@ impl AgentManager {
         } = req;
 
         let now = chrono_now();
-        let effective_cwd = cwd.as_deref().unwrap_or(".");
-        let (project_id, project_instructions) = crate::project::resolve_project(db, effective_cwd)?;
+        let effective_cwd = cwd.as_deref().unwrap_or(".").to_string();
+        let (project_id, project_instructions) =
+            crate::project::resolve_project(db, &effective_cwd).await?;
 
         let shadow_name = shadow_spec.as_ref().and_then(|s| s.shadow_name.clone());
         let shadow_title = shadow_spec.as_ref().and_then(|s| s.shadow_title.clone());
@@ -688,7 +693,11 @@ impl AgentManager {
         // the one persisted on the agent row so we don't silently lose it.
         let effective_context_window = match context_window {
             Some(cw) => Some(cw),
-            None => db.get_agent_context_window_internal(&id).ok().flatten(),
+            None => db
+                .get_agent_context_window_internal(&id)
+                .await
+                .ok()
+                .flatten(),
         };
 
         db.upsert_agent_internal(&AgentRow {
@@ -709,9 +718,10 @@ impl AgentManager {
             context_window: effective_context_window,
             created_at: now.clone(),
             updated_at: now.clone(),
-        })?;
+        })
+        .await?;
 
-        if !db.session_exists_internal(&session_id)? {
+        if !db.session_exists_internal(&session_id).await? {
             db.create_session_internal(&crate::db::SessionRow {
                 id: session_id.clone(),
                 agent_id: id.clone(),
@@ -724,7 +734,8 @@ impl AgentManager {
                 total_tokens: 0,
                 total_cost: 0.0,
                 parent_session_id: None,
-            })?;
+            })
+            .await?;
         }
 
         {
@@ -739,19 +750,23 @@ impl AgentManager {
             id: id.clone(),
         });
 
+        let custom_prompt = read_agent_prompt_file(&id)
+            .await?
+            .filter(|p| !p.trim().is_empty());
+
         let cmd = SidecarCommand::CreateSession {
             agent_id: id.clone(),
-            cwd: effective_cwd.to_string(),
+            cwd: effective_cwd,
             provider: provider.clone().unwrap_or_else(|| "anthropic".to_string()),
             model: model.clone().unwrap_or_else(|| "claude-sonnet-4-5".to_string()),
             thinking_level: thinking_level.clone().unwrap_or_else(|| "medium".to_string()),
             shadow,
-            custom_prompt: read_agent_prompt_file(&id)?.filter(|p| !p.trim().is_empty()),
+            custom_prompt,
             project_instructions,
             context_window: effective_context_window,
         };
 
-        self.send_to_sidecar(&serde_json::to_string(&cmd)?)?;
+        self.send_to_sidecar(&serde_json::to_string(&cmd)?).await?;
 
         {
             let mut inner = self.inner.lock();
@@ -769,7 +784,7 @@ impl AgentManager {
         Ok(())
     }
 
-    pub fn send_command(
+    pub async fn send_command(
         &self,
         app: &AppHandle,
         db: &Arc<Database>,
@@ -785,11 +800,12 @@ impl AgentManager {
         }
         let cmd: SidecarCommand = serde_json::from_value(value)?;
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
+            .await
     }
 
-    pub fn kill(&self, id: &str) -> Result<(), MonarchError> {
+    pub async fn kill(&self, id: &str) -> Result<(), MonarchError> {
         let cmd = SidecarCommand::DestroySession { agent_id: id.to_string() };
-        let _ = self.send_to_sidecar(&serde_json::to_string(&cmd)?);
+        let _ = self.send_to_sidecar(&serde_json::to_string(&cmd)?).await;
 
         {
             let mut inner = self.inner.lock();
@@ -800,14 +816,14 @@ impl AgentManager {
         Ok(())
     }
 
-    pub fn load_session_context(
+    pub async fn load_session_context(
         &self,
         app: &AppHandle,
         db: &Arc<Database>,
         agent_id: String,
         source_session_id: String,
     ) -> Result<(), MonarchError> {
-        let messages = db.get_messages_with_ancestry(&source_session_id)?;
+        let messages = db.get_messages_with_ancestry(&source_session_id).await?;
         if messages.is_empty() {
             return Ok(());
         }
@@ -826,9 +842,10 @@ impl AgentManager {
         };
 
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
+            .await
     }
 
-    pub fn new_session(
+    pub async fn new_session(
         &self,
         app: &AppHandle,
         db: &Arc<Database>,
@@ -836,8 +853,8 @@ impl AgentManager {
         new_session_id: String,
         parent_session_id: Option<String>,
     ) -> Result<(), MonarchError> {
-        // MON-34: one acquire covers both reads. Cloned out so the
-        // subsequent DB calls run without the lock held.
+        // One acquire covers both reads. Cloned out so the subsequent DB
+        // calls (which are `.await` points) run without the lock held.
         let (old_session_id, agent_state) = {
             let inner = self.inner.lock();
             (
@@ -846,7 +863,9 @@ impl AgentManager {
             )
         };
         if let Some(old_sid) = &old_session_id {
-            let _ = db.update_session_internal(old_sid, None, None, None, Some(&chrono_now()));
+            let _ = db
+                .update_session_internal(old_sid, None, None, None, Some(&chrono_now()))
+                .await;
         }
 
         let (model, provider) = agent_state
@@ -870,10 +889,11 @@ impl AgentManager {
             context_window: None,
             created_at: chrono_now(),
             updated_at: chrono_now(),
-        })?;
+        })
+        .await?;
 
         let valid_parent_session_id = match parent_session_id {
-            Some(parent_id) if db.session_exists_internal(&parent_id)? => Some(parent_id),
+            Some(parent_id) if db.session_exists_internal(&parent_id).await? => Some(parent_id),
             _ => None,
         };
 
@@ -889,7 +909,8 @@ impl AgentManager {
             total_tokens: 0,
             total_cost: 0.0,
             parent_session_id: valid_parent_session_id,
-        })?;
+        })
+        .await?;
 
         {
             let mut inner = self.inner.lock();
@@ -898,29 +919,32 @@ impl AgentManager {
 
         let cmd = SidecarCommand::NewSession { agent_id };
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
+            .await
     }
 
-    pub fn switch_session(
+    pub async fn switch_session(
         &self,
         app: &AppHandle,
         db: &Arc<Database>,
         agent_id: String,
         session_id: String,
     ) -> Result<(), MonarchError> {
-        if !db.session_exists_internal(&session_id)? {
+        if !db.session_exists_internal(&session_id).await? {
             return Err(MonarchError::not_found(format!("session {}", session_id)));
         }
 
-        // MON-34: one acquire for the read, a second (short) one for the
-        // write-side updates. Splitting read from write lets the DB
-        // update_session_internal call run without the lock held.
+        // One acquire for the read, a second (short) one for the write-side
+        // updates. Splitting read from write lets `update_session_internal`
+        // run without the sync `inner` lock held across its `.await`.
         let old_session_id = {
             let inner = self.inner.lock();
             inner.session_map.get(&agent_id).cloned()
         };
         if let Some(old_sid) = &old_session_id {
             if old_sid != &session_id {
-                let _ = db.update_session_internal(old_sid, None, None, None, Some(&chrono_now()));
+                let _ = db
+                    .update_session_internal(old_sid, None, None, None, Some(&chrono_now()))
+                    .await;
             }
         }
 
@@ -936,9 +960,10 @@ impl AgentManager {
 
         let cmd = SidecarCommand::NewSession { agent_id };
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
+            .await
     }
 
-    pub fn respond_extension_ui(
+    pub async fn respond_extension_ui(
         &self,
         app: &AppHandle,
         db: &Arc<Database>,
@@ -955,6 +980,7 @@ impl AgentManager {
             value,
         };
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
+            .await
     }
 }
 
@@ -1327,15 +1353,12 @@ async fn mark_agent_desynced(
 // order. Errors were also silently swallowed by `let _ = ...`.
 //
 // The fix: one bounded mpsc channel, one consumer task, one command at a
-// time. The consumer still uses `spawn_blocking` around rusqlite (MON-27
-// removes that once db.rs moves to tokio-rusqlite), but awaits each call
-// before pulling the next command — so ordering is restored and errors
-// surface. On failure, the agent is marked desynced so the dev indicator
-// flips the same way it does for parser failures.
+// time. MON-27 replaced the `spawn_blocking` hop with a direct `.await` on
+// `Database`'s async methods (now backed by `tokio-rusqlite`) — ordering is
+// still restored because the loop awaits each command before pulling the
+// next, and errors still surface via `mark_agent_desynced`.
 
 /// A persistence effect to apply in FIFO order by the single consumer.
-/// Producer-built on the sidecar reader task; consumer-applied inside a
-/// `spawn_blocking` closure because rusqlite is synchronous.
 #[derive(Debug)]
 enum PersistCommand {
     /// Log one event row. Always emitted for every sidecar `event` arrival,
@@ -1370,7 +1393,7 @@ impl PersistCommand {
         }
     }
 
-    fn apply(self, db: &Database) -> Result<(), MonarchError> {
+    async fn apply(self, db: &Database) -> Result<(), MonarchError> {
         match self {
             Self::LogEvent {
                 agent_id,
@@ -1378,21 +1401,25 @@ impl PersistCommand {
                 event_type,
                 data,
                 ..
-            } => db.log_event_internal(
-                Some(&agent_id),
-                session_id.as_deref(),
-                &event_type,
-                data.as_deref(),
-            ),
+            } => {
+                db.log_event_internal(
+                    Some(&agent_id),
+                    session_id.as_deref(),
+                    &event_type,
+                    data.as_deref(),
+                )
+                .await
+            }
             Self::SaveAssistantMessage { message, .. } => {
                 let session_id = message.session_id.clone();
                 let tokens = message.tokens;
                 let cost = message.cost;
-                db.save_message_internal(&message)?;
+                db.save_message_internal(&message).await?;
                 db.increment_session_message_count(&session_id, tokens, cost)
+                    .await
             }
             Self::SaveToolResult { message, .. } => {
-                db.save_message_internal(&message).map(|_| ())
+                db.save_message_internal(&message).await.map(|_| ())
             }
         }
     }
@@ -1553,13 +1580,9 @@ async fn run_persist_consumer(
 ) {
     while let Some(cmd) = rx.recv().await {
         let agent_id = cmd.agent_id().to_string();
-        let db_for_cmd = db.clone();
-        let result = tauri::async_runtime::spawn_blocking(move || cmd.apply(&db_for_cmd)).await;
-
-        let err: String = match result {
-            Ok(Ok(())) => continue,
-            Ok(Err(e)) => e.to_string(),
-            Err(join_err) => format!("persist join error: {}", join_err),
+        let err: String = match cmd.apply(&db).await {
+            Ok(()) => continue,
+            Err(e) => e.to_string(),
         };
         eprintln!("[monarch] persist failed: {}", err);
 
@@ -1590,11 +1613,11 @@ pub(crate) fn uuid_v4_simple() -> String {
 
 #[tauri::command]
 #[specta::specta]
-pub fn detect_project(
+pub async fn detect_project(
     db: tauri::State<'_, Arc<Database>>,
     cwd: String,
 ) -> Result<Option<serde_json::Value>, MonarchError> {
-    crate::project::detect_project(&db, &cwd)
+    crate::project::detect_project(&db, &cwd).await
 }
 
 #[tauri::command]
@@ -1634,7 +1657,7 @@ mod tests {
 
     #[tokio::test]
     async fn kill_agent_round_trip_funnels_through_shared_method() {
-        let db = Arc::new(Database::new_in_memory().expect("in-memory db"));
+        let db = Arc::new(Database::new_in_memory().await.expect("in-memory db"));
         let mgr = Arc::new(AgentManager::new(db.clone()));
         let model_cache = Arc::new(ModelCache::new());
         let (broadcast_tx, _rx) = broadcast::channel(16);
@@ -1657,7 +1680,7 @@ mod tests {
         // IPC side: the Tauri command body is `state.kill(&id)`. Call the
         // shared method directly. send_to_sidecar will fail silently because
         // no sidecar is running; the local state cleanup runs regardless.
-        mgr.kill("ipc-kill").expect("ipc kill");
+        mgr.kill("ipc-kill").await.expect("ipc kill");
 
         // WS side: full dispatch path — decode args, delegate to mgr.kill.
         let ws_state = WsState {
@@ -1741,35 +1764,35 @@ pub struct ExtensionUiResponseRequest {
 
 #[tauri::command]
 #[specta::specta]
-pub fn spawn_agent(
+pub async fn spawn_agent(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
     req: SpawnAgentRequest,
 ) -> Result<(), MonarchError> {
-    state.spawn(&app, &db, req)
+    state.spawn(&app, &db, req).await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn send_command(
+pub async fn send_command(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
     id: String,
     command_json: String,
 ) -> Result<(), MonarchError> {
-    state.send_command(&app, &db, id, command_json)
+    state.send_command(&app, &db, id, command_json).await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn kill_agent(
+pub async fn kill_agent(
     state: tauri::State<'_, Arc<AgentManager>>,
     id: String,
     _graceful: Option<bool>,
 ) -> Result<(), MonarchError> {
-    state.kill(&id)
+    state.kill(&id).await
 }
 
 /// Return the current assembled live state for an agent. This is the "pull"
@@ -1824,21 +1847,23 @@ pub async fn rebuild_agent_state_from_session(
 /// This gives the LLM conversational continuity when restoring.
 #[tauri::command]
 #[specta::specta]
-pub fn load_session_context(
+pub async fn load_session_context(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
     agent_id: String,
     source_session_id: String,
 ) -> Result<(), MonarchError> {
-    state.load_session_context(&app, &db, agent_id, source_session_id)
+    state
+        .load_session_context(&app, &db, agent_id, source_session_id)
+        .await
 }
 
 /// Create a new session for an existing agent.
 /// Creates a DB row, updates the agent→session mapping, and tells the sidecar to reset.
 #[tauri::command]
 #[specta::specta]
-pub fn new_agent_session(
+pub async fn new_agent_session(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
@@ -1846,7 +1871,9 @@ pub fn new_agent_session(
     new_session_id: String,
     parent_session_id: Option<String>,
 ) -> Result<(), MonarchError> {
-    state.new_session(&app, &db, agent_id, new_session_id, parent_session_id)
+    state
+        .new_session(&app, &db, agent_id, new_session_id, parent_session_id)
+        .await
 }
 
 /// Switch an agent to an existing persisted session instead of creating a new one.
@@ -1854,25 +1881,25 @@ pub fn new_agent_session(
 /// subsequent messages are appended to the selected session.
 #[tauri::command]
 #[specta::specta]
-pub fn switch_agent_session(
+pub async fn switch_agent_session(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
     agent_id: String,
     session_id: String,
 ) -> Result<(), MonarchError> {
-    state.switch_session(&app, &db, agent_id, session_id)
+    state.switch_session(&app, &db, agent_id, session_id).await
 }
 
 /// Forward extension UI response from frontend to sidecar
 #[tauri::command]
 #[specta::specta]
-pub fn respond_extension_ui(
+pub async fn respond_extension_ui(
     app: AppHandle,
     state: tauri::State<'_, Arc<AgentManager>>,
     db: tauri::State<'_, Arc<Database>>,
     req: ExtensionUiResponseRequest,
 ) -> Result<(), MonarchError> {
-    state.respond_extension_ui(&app, &db, req)
+    state.respond_extension_ui(&app, &db, req).await
 }
 
