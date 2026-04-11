@@ -34,8 +34,13 @@ function toVarName(key: string): string {
     .toLowerCase();
 }
 
+/** localStorage key used by the blocking script in index.html */
+const THEME_CACHE_KEY = "monarch-theme-cache";
+
 /**
  * Apply a theme by setting CSS custom properties on :root.
+ * Also caches the resolved vars to localStorage so the blocking
+ * script in index.html can apply them before first paint (no FOUC).
  * Returns the resolved theme id (falls back to default if unknown).
  */
 export function applyTheme(id: ThemeId): ThemeId {
@@ -44,13 +49,23 @@ export function applyTheme(id: ThemeId): ThemeId {
   current = theme;
 
   const style = document.documentElement.style;
+  const vars: Record<string, string> = {};
   for (const [key, value] of Object.entries(theme)) {
     if (key === "name" || key === "label") continue;
-    style.setProperty(toVarName(key), value);
+    const varName = toVarName(key);
+    style.setProperty(varName, value);
+    vars[varName] = value;
   }
 
   // Also set body background for the rare pre-paint moment
   document.body.style.background = theme.bgApp;
+
+  // Cache for the blocking script in index.html
+  try {
+    localStorage.setItem(THEME_CACHE_KEY, JSON.stringify(vars));
+  } catch {
+    // Storage full or unavailable — non-critical
+  }
 
   return resolvedId;
 }
