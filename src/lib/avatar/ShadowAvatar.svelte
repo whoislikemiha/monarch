@@ -9,7 +9,7 @@
     type AnimationState,
   } from "./stateMapper";
 
-  const DEFAULT_RIV = "/avatars/shadow-base.riv";
+  const DEFAULT_RIV = "/avatars/shadow_animations.riv";
   const DEFAULT_STATE_MACHINE = "ShadowBehavior";
 
   let {
