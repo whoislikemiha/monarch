@@ -28,6 +28,8 @@ parking_lot = "0.12"
 specta = { version = "2.0.0-rc.24", features = ["serde_json", "derive"] }
 specta-typescript = "0.0.11"
 tauri-specta = { version = "2.0.0-rc.24", features = ["derive", "typescript"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

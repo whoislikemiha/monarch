@@ -438,6 +438,14 @@ fn has_visible_assistant_content(blocks: &[serde_json::Value]) -> bool {
     })
 }
 
+/// Parse a canonical RFC3339 UTC timestamp into Unix seconds. MON-39
+/// item 4 unified all timestamp columns on the `%Y-%m-%dT%H:%M:%SZ`
+/// format — both Rust writers (`chrono_now`) and SQLite DEFAULTs
+/// (`strftime('%Y-%m-%dT%H:%M:%SZ','now')`) emit this shape. Returns
+/// `None` on a format we can't parse so the caller can fall through to
+/// `timestamp: None` instead of panicking.
 fn parse_timestamp(value: &str) -> Option<i64> {
-    value.parse::<i64>().ok()
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.timestamp())
 }

@@ -40,21 +40,10 @@ pub struct WsBroadcast {
 
 // ---- Agent state tracking ----
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AgentLifecycleState {
-    Idle,
-    Busy,
-    Stopped,
-}
-
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct AgentState {
-    pub lifecycle: AgentLifecycleState,
     pub provider: Option<String>,
     pub model: Option<String>,
-    pub thinking_level: Option<String>,
-    pub is_streaming: bool,
     pub session_id: String,
     /// The original create_session command, replayed on sidecar crash
     /// recovery. Typed `SidecarCommand::CreateSession` since MON-32 — the
@@ -148,10 +137,23 @@ impl Drop for SidecarProcess {
 /// command) can invalidate an in-flight debounce without trying to acquire a
 /// tokio lock from a sync context. Any debounce task captures the generation
 /// at arm time and bails after the lock handoff if it no longer matches.
-#[derive(Default)]
 pub struct AgentStateEntry {
     pub inner: RwLock<AgentStateInner>,
     pub cancel_generation: AtomicU64,
+    /// Cached `agent-state-{id}` topic string. Built once at entry creation
+    /// so the ~six reader-side emit sites don't `format!` per event. MON-39
+    /// item 8.
+    pub topic: String,
+}
+
+impl AgentStateEntry {
+    pub fn new(agent_id: &str) -> Self {
+        Self {
+            inner: RwLock::new(AgentStateInner::default()),
+            cancel_generation: AtomicU64::new(0),
+            topic: format!("agent-state-{}", agent_id),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -433,7 +435,7 @@ impl AgentManager {
     fn live_entry(&self, agent_id: &str) -> Arc<AgentStateEntry> {
         self.live_states
             .entry(agent_id.to_string())
-            .or_insert_with(|| Arc::new(AgentStateEntry::default()))
+            .or_insert_with(|| Arc::new(AgentStateEntry::new(agent_id)))
             .clone()
     }
 
@@ -556,8 +558,7 @@ impl AgentManager {
             let snapshot = guard.state.clone();
             drop(guard);
 
-            let event_name = format!("agent-state-{}", agent_id);
-            emit_state_event(app, &self.ws_broadcast, &event_name, &snapshot);
+            emit_state_event(app, &self.ws_broadcast, &entry.topic, &snapshot);
         }
 
         Ok(())
@@ -643,8 +644,7 @@ impl AgentManager {
         let snapshot = guard.state.clone();
         drop(guard);
 
-        let event_name = format!("agent-state-{}", agent_id);
-        emit_state_event(app, &self.ws_broadcast, &event_name, &snapshot);
+        emit_state_event(app, &self.ws_broadcast, &entry.topic, &snapshot);
 
         Ok(snapshot)
     }
@@ -758,11 +758,8 @@ impl AgentManager {
             inner.agents.insert(
                 id,
                 AgentState {
-                    lifecycle: AgentLifecycleState::Idle,
                     provider,
                     model,
-                    thinking_level,
-                    is_streaming: false,
                     session_id,
                     create_cmd: cmd,
                 },
@@ -961,12 +958,23 @@ impl AgentManager {
     }
 }
 
-/// Resolve the sidecar script path
+/// Resolve the sidecar script path.
+///
+/// The probes are rooted at `current_exe()` so resolution works the same
+/// in `cargo tauri dev` (where the exe lives at `target/debug/monarch.exe`
+/// and the project-root sidecar sits at `../../../sidecar/dist/index.js`)
+/// and any packaged layout that keeps the sidecar next to the binary.
+/// `std::env::current_dir` was used pre-MON-39 but is undefined for a
+/// packaged Tauri build. `MONARCH_SIDECAR_PATH` remains a manual override
+/// for unusual layouts and tests.
+///
+/// Packaged Tauri builds that bundle the sidecar via `externalBin` are not
+/// wired up yet — a dedicated packaging ticket owns that.
 fn resolve_sidecar_path() -> Result<String, MonarchError> {
     let candidates = [
         std::env::var("MONARCH_SIDECAR_PATH").ok().map(std::path::PathBuf::from),
-        std::env::current_dir().ok().map(|d| d.join("sidecar/dist/index.js")),
-        std::env::current_dir().ok().map(|d| d.join("../sidecar/dist/index.js")),
+        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("sidecar/dist/index.js"))),
+        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("../sidecar/dist/index.js"))),
         std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("../../sidecar/dist/index.js"))),
         std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("../../../sidecar/dist/index.js"))),
     ];
@@ -1026,14 +1034,14 @@ fn emit_state_event(
 
 /// Handle a single JSONL event from the sidecar.
 ///
-/// MON-14 Phase 1: this is now async, owns the per-agent `LiveAgentState`
-/// mutation, and emits assembled snapshots on `agent-state-{id}` in addition
-/// to the legacy raw `agent-event-{id}` forwarding. The dual emission is
-/// intentional: Phase 2 switches the frontend to the new channel, at which
-/// point the legacy forwarding of message/tool events can be removed.
+/// MON-14 Phase 1: this is async, owns the per-agent `LiveAgentState`
+/// mutation, and emits assembled snapshots on `agent-state-{id}`.
 ///
-/// `session_ready`, `extension_ui_request`, and error pings stay on
-/// `agent-event-{id}` only — they are not folded into `LiveAgentState`.
+/// `agent-event-{id}` is narrowed to out-of-band signals only:
+/// `session_ready`, `extension_ui_request`, and sidecar errors. Message and
+/// tool events flow exclusively through the assembled `agent-state-{id}`
+/// channel — MON-39 removed the Phase-1 dual emission once the frontend
+/// `liveAgentStore` took over assembly.
 async fn handle_sidecar_event(
     app: &AppHandle,
     persist_tx: &mpsc::Sender<PersistCommand>,
@@ -1112,8 +1120,7 @@ async fn handle_sidecar_event(
                 guard.state.state_version = guard.state.state_version.saturating_add(1);
                 let snapshot = guard.state.clone();
                 drop(guard);
-                let state_event = format!("agent-state-{}", agent_id);
-                emit_state_event(app, ws_tx, &state_event, &snapshot);
+                emit_state_event(app, ws_tx, &entry.topic, &snapshot);
             }
         }
 
@@ -1134,10 +1141,6 @@ async fn handle_sidecar_event(
                 if !agent_id.is_empty() {
                     mark_agent_desynced(app, ws_tx, live_states, &agent_id).await;
                 }
-                // Still forward the raw event to the legacy channel so the
-                // existing frontend sees it — keeps Phase-1 behavior intact.
-                let event_name = format!("agent-event-{}", agent_id);
-                emit_event(app, ws_tx, &event_name, &raw.to_string());
                 return;
             }
 
@@ -1154,15 +1157,6 @@ async fn handle_sidecar_event(
                     eprintln!("[monarch] persist consumer closed, dropping event");
                     break;
                 }
-            }
-
-            // Legacy raw-channel forwarding. Preserved during Phase 1 so the
-            // existing frontend (which still assembles from these events)
-            // keeps working unchanged. Phase 2 removes the subscriber; the
-            // follow-up issue removes this emit.
-            if let Some(inner_raw) = raw_value.get("event") {
-                let event_name = format!("agent-event-{}", agent_id);
-                emit_event(app, ws_tx, &event_name, &inner_raw.to_string());
             }
 
             // Apply the event to per-agent LiveAgentState and decide whether
@@ -1248,7 +1242,7 @@ async fn apply_and_maybe_emit(
     // Lazy entry creation on first event for this agent.
     let entry = live_states
         .entry(agent_id.to_string())
-        .or_insert_with(|| Arc::new(AgentStateEntry::default()))
+        .or_insert_with(|| Arc::new(AgentStateEntry::new(agent_id)))
         .clone();
 
     // EmitNow branch: clone inside the guard, then drop(guard) before emit so
@@ -1274,7 +1268,6 @@ async fn apply_and_maybe_emit(
                 // bumped it in the meantime the task bails without emitting.
                 let arm_gen = entry.cancel_generation.load(Ordering::Acquire);
                 let entry_clone = entry.clone();
-                let agent_id_owned = agent_id.to_string();
                 let app_clone = app.clone();
                 let ws_tx_clone = ws_tx.clone();
                 let handle = tauri::async_runtime::spawn(async move {
@@ -1282,8 +1275,12 @@ async fn apply_and_maybe_emit(
                     if let Some(snapshot) =
                         try_consume_debounce_snapshot(&entry_clone, arm_gen).await
                     {
-                        let event_name = format!("agent-state-{}", agent_id_owned);
-                        emit_state_event(&app_clone, &ws_tx_clone, &event_name, &snapshot);
+                        emit_state_event(
+                            &app_clone,
+                            &ws_tx_clone,
+                            &entry_clone.topic,
+                            &snapshot,
+                        );
                     }
                 });
                 guard.debounce_handle = Some(handle);
@@ -1294,8 +1291,7 @@ async fn apply_and_maybe_emit(
     drop(guard);
 
     if let Some(snapshot) = snapshot_to_emit {
-        let event_name = format!("agent-state-{}", agent_id);
-        emit_state_event(app, ws_tx, &event_name, &snapshot);
+        emit_state_event(app, ws_tx, &entry.topic, &snapshot);
     }
 }
 
@@ -1311,7 +1307,7 @@ async fn mark_agent_desynced(
 ) {
     let entry = live_states
         .entry(agent_id.to_string())
-        .or_insert_with(|| Arc::new(AgentStateEntry::default()))
+        .or_insert_with(|| Arc::new(AgentStateEntry::new(agent_id)))
         .clone();
     let mut guard = entry.inner.write().await;
     guard.state.mark_desynced();
@@ -1319,8 +1315,7 @@ async fn mark_agent_desynced(
     let snapshot = guard.state.clone();
     drop(guard);
 
-    let event_name = format!("agent-state-{}", agent_id);
-    emit_state_event(app, ws_tx, &event_name, &snapshot);
+    emit_state_event(app, ws_tx, &entry.topic, &snapshot);
 }
 
 // ---- MON-37: single-consumer persistence pipeline ----
@@ -1579,21 +1574,18 @@ async fn run_persist_consumer(
     eprintln!("[monarch] persist consumer exited");
 }
 
+/// RFC3339 UTC timestamp with second precision, matching the schema
+/// DEFAULT `strftime('%Y-%m-%dT%H:%M:%SZ','now')`. MON-39 item 4: before
+/// the migration, Rust wrote Unix-seconds strings while SQLite DEFAULTs
+/// wrote `datetime('now')` (space-separated, no timezone), and
+/// `parse_timestamp` only handled the former. Now both sides produce the
+/// same RFC3339 shape.
 pub(crate) fn chrono_now() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    format!("{}", secs)
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 pub(crate) fn uuid_v4_simple() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let t = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    format!("{:x}-{:x}", t, std::process::id())
+    uuid::Uuid::new_v4().to_string()
 }
 
 #[tauri::command]
@@ -1631,11 +1623,8 @@ mod tests {
 
     fn seeded_agent_state(agent_id: &str, session_id: &str) -> AgentState {
         AgentState {
-            lifecycle: AgentLifecycleState::Idle,
             provider: None,
             model: None,
-            thinking_level: None,
-            is_streaming: false,
             session_id: session_id.to_string(),
             create_cmd: SidecarCommand::NewSession {
                 agent_id: agent_id.to_string(),

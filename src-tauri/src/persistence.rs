@@ -2,22 +2,22 @@ use std::path::PathBuf;
 
 use crate::error::MonarchError;
 
-fn monarch_dir() -> PathBuf {
+fn monarch_dir() -> Result<PathBuf, MonarchError> {
     let dir = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .ok_or_else(|| MonarchError::persistence("config_dir unavailable"))?
         .join("monarch");
-    std::fs::create_dir_all(&dir).ok();
-    dir
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
-fn prompts_dir() -> PathBuf {
-    let dir = monarch_dir().join("prompts");
-    std::fs::create_dir_all(&dir).ok();
-    dir
+fn prompts_dir() -> Result<PathBuf, MonarchError> {
+    let dir = monarch_dir()?.join("prompts");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
 pub fn read_agent_prompt_file(agent_id: &str) -> Result<Option<String>, MonarchError> {
-    let path = prompts_dir().join(format!("{}.md", agent_id));
+    let path = prompts_dir()?.join(format!("{}.md", agent_id));
     if path.exists() {
         Ok(Some(std::fs::read_to_string(&path)?))
     } else {
@@ -26,13 +26,13 @@ pub fn read_agent_prompt_file(agent_id: &str) -> Result<Option<String>, MonarchE
 }
 
 pub fn write_agent_prompt_file(agent_id: &str, prompt: &str) -> Result<(), MonarchError> {
-    let path = prompts_dir().join(format!("{}.md", agent_id));
+    let path = prompts_dir()?.join(format!("{}.md", agent_id));
     std::fs::write(&path, prompt)?;
     Ok(())
 }
 
-pub fn prompts_dir_string() -> String {
-    prompts_dir().to_string_lossy().to_string()
+pub fn prompts_dir_string() -> Result<String, MonarchError> {
+    Ok(prompts_dir()?.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -49,6 +49,6 @@ pub fn save_agent_prompt(agent_id: String, prompt: String) -> Result<(), Monarch
 
 #[tauri::command]
 #[specta::specta]
-pub fn get_prompts_dir() -> String {
+pub fn get_prompts_dir() -> Result<String, MonarchError> {
     prompts_dir_string()
 }

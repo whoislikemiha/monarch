@@ -619,10 +619,13 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
         InnerEvent::AutoRetryEnd => ApplyOutcome::NoOp,
         InnerEvent::QueueUpdate => ApplyOutcome::NoOp,
         InnerEvent::ToolExecutionUpdate => ApplyOutcome::NoOp,
-        InnerEvent::Unknown { .. } => {
-            state.desynced = true;
-            ApplyOutcome::EmitNow
-        }
+        // MON-39 item 9: unknown events return NoOp so `state_version`
+        // does not bump per event. The reader-side path in
+        // `handle_sidecar_event` is the canonical entry that flips
+        // `desynced` via `mark_desynced`, bumping the version once per
+        // desync transition. This arm is defense-in-depth for unknown
+        // events that bypass the early-return (e.g. empty agent_id).
+        InnerEvent::Unknown { .. } => ApplyOutcome::NoOp,
     };
 
     if !matches!(outcome, ApplyOutcome::NoOp) {

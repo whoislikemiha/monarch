@@ -263,7 +263,7 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             Ok(Value::Null)
         }
         "get_prompts_dir" => {
-            Ok(Value::String(crate::persistence::prompts_dir_string()))
+            Ok(Value::String(crate::persistence::prompts_dir_string()?))
         }
 
         // ---- DB: Agents ----
