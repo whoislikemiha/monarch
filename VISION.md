@@ -133,9 +133,87 @@ Monarch exposes a web interface so you can interact with the fleet from your pho
 
 The desktop app is the brain. The mobile view is a remote control.
 
-## Appearance & Identity
+## Shadow Avatars & Visual Identity
 
-Agents have visual identity — avatars, animations, customizable appearance. The fleet should feel alive, not like a list of process IDs. Shadow grades, titles, and personalities are reflected visually. Appearance is configurable per agent.
+The fleet should feel alive, not like a list of process IDs. Every shadow gets an animated avatar that reflects what it's doing in real-time. You glance at Monarch and instantly know the state of your army without reading a single line of text.
+
+### Rive-Powered Avatars
+
+Avatars are built in [Rive](https://rive.app) — an interactive animation platform with a visual state machine editor. Designers define animation states and transitions; the code just flips inputs (triggers, booleans, numbers). Rive handles blending, interpolation, and playback. No animation logic lives in Svelte.
+
+The state machine maps directly to the agent lifecycle:
+
+| Agent State | Animation | Visual Language |
+|---|---|---|
+| Idle | Standing, breathing, subtle energy sway | Ready, awaiting orders |
+| Thinking / Planning | Arms crossed, head tilt, thought particles | Strategizing |
+| Reading / Researching | Holding a glowing scroll, eyes scanning | Studying |
+| Writing code | Hands typing, code particles streaming upward | In the zone |
+| Running tools | Wielding weapon/hammer, striking sparks | Building |
+| Waiting (API/build) | Tapping foot, hourglass above head | Blocked |
+| Error / Crashed | Stagger back, red flash, recovering stance | Needs attention |
+| Task complete | Fist pump, energy burst, brief glow | Victory |
+| Summoned | Dramatic entrance animation | New shadow rises |
+
+Transitions between states blend smoothly — no jarring cuts. Rive's nested state machines allow sub-states (e.g., "working" contains typing, reading, tool use as sub-animations).
+
+### Avatar Placement
+
+Avatars appear at three levels of visibility:
+
+1. **Agent sidebar** — Small (32-48px) live avatar next to each agent name. Replaces/augments the status indicator. The whole army at a glance.
+2. **Agent detail view** — Large (128px+) avatar in the header. Full animation detail. You're face-to-face with your shadow.
+3. **War Room** — Dedicated command view showing all active agents as animated avatars in a scene. Think RTS command screen — shadows are out there working. You see 5 reading, 2 coding, 1 waiting. Instant situational awareness.
+
+### Interactive Avatars
+
+Avatars respond to user interaction via Rive listeners:
+
+- Hover → shadow acknowledges (looks at cursor, subtle reaction)
+- Click → shadow salutes or reacts based on personality
+- Drag a task onto it → catch animation, shadow starts working
+- Right-click → context menu (assign task, view stats, inspect context)
+
+### Shadow Stats & Progression
+
+Every shadow accumulates stats over its lifetime, tracked in the DB and surfaced visually:
+
+- **Task breakdown** — frontend: 30, backend: 10, testing: 15, docs: 5
+- **Token usage** — total input/output tokens, cost, average per task
+- **Session stats** — total sessions, average duration, longest streak
+- **Tool usage** — most-used tools, tool call counts, success rates
+- **Performance** — tasks completed, error rate, average time-to-completion
+- **Specialization score** — derived from task history, shows what the shadow is becoming (auth expert, frontend specialist, test writer)
+
+Stats feed back into the avatar system:
+
+- A shadow with 80% frontend tasks could gain paint-splash particle effects
+- A heavy test writer gets a shield motif
+- High error rate shows battle scars
+- More experience = more imposing presence
+
+### Shadow Art Direction
+
+The visual language follows the Solo Leveling shadow army aesthetic:
+
+- **Base form** — dark silhouette with glowing accents (purple/blue energy)
+- **Named shadows** (Igris, etc.) — unique character designs, more detail
+- **Grade-based appearance** — S-rank shadows look more imposing, complex particle effects, stronger glow. E-rank are simpler, subtler
+- **Personality expression** — subtle idle differences. A methodical shadow stands still; a fast one fidgets
+- **Evolution** — shadows visually evolve as they accumulate experience. Not just cosmetic — it's a signal of capability
+
+### War Room
+
+The War Room is a dedicated view — a visual command center for the entire fleet:
+
+- All active shadows displayed as avatars, each running its own state machine
+- Spatial layout by team/hierarchy or user arrangement
+- Click any shadow to jump to its detail view
+- Activity pulse — the room gets more energetic as more shadows are active
+- Completion/error events are visually obvious without notifications
+- Idle on a second monitor — you feel your army working
+
+The War Room turns Monarch from a tool into a command experience.
 
 ## Voice Input
 
