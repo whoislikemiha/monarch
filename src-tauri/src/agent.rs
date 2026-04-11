@@ -137,10 +137,23 @@ impl Drop for SidecarProcess {
 /// command) can invalidate an in-flight debounce without trying to acquire a
 /// tokio lock from a sync context. Any debounce task captures the generation
 /// at arm time and bails after the lock handoff if it no longer matches.
-#[derive(Default)]
 pub struct AgentStateEntry {
     pub inner: RwLock<AgentStateInner>,
     pub cancel_generation: AtomicU64,
+    /// Cached `agent-state-{id}` topic string. Built once at entry creation
+    /// so the ~six reader-side emit sites don't `format!` per event. MON-39
+    /// item 8.
+    pub topic: String,
+}
+
+impl AgentStateEntry {
+    pub fn new(agent_id: &str) -> Self {
+        Self {
+            inner: RwLock::new(AgentStateInner::default()),
+            cancel_generation: AtomicU64::new(0),
+            topic: format!("agent-state-{}", agent_id),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -422,7 +435,7 @@ impl AgentManager {
     fn live_entry(&self, agent_id: &str) -> Arc<AgentStateEntry> {
         self.live_states
             .entry(agent_id.to_string())
-            .or_insert_with(|| Arc::new(AgentStateEntry::default()))
+            .or_insert_with(|| Arc::new(AgentStateEntry::new(agent_id)))
             .clone()
     }
 
@@ -545,8 +558,7 @@ impl AgentManager {
             let snapshot = guard.state.clone();
             drop(guard);
 
-            let event_name = format!("agent-state-{}", agent_id);
-            emit_state_event(app, &self.ws_broadcast, &event_name, &snapshot);
+            emit_state_event(app, &self.ws_broadcast, &entry.topic, &snapshot);
         }
 
         Ok(())
@@ -632,8 +644,7 @@ impl AgentManager {
         let snapshot = guard.state.clone();
         drop(guard);
 
-        let event_name = format!("agent-state-{}", agent_id);
-        emit_state_event(app, &self.ws_broadcast, &event_name, &snapshot);
+        emit_state_event(app, &self.ws_broadcast, &entry.topic, &snapshot);
 
         Ok(snapshot)
     }
@@ -1098,8 +1109,7 @@ async fn handle_sidecar_event(
                 guard.state.state_version = guard.state.state_version.saturating_add(1);
                 let snapshot = guard.state.clone();
                 drop(guard);
-                let state_event = format!("agent-state-{}", agent_id);
-                emit_state_event(app, ws_tx, &state_event, &snapshot);
+                emit_state_event(app, ws_tx, &entry.topic, &snapshot);
             }
         }
 
@@ -1221,7 +1231,7 @@ async fn apply_and_maybe_emit(
     // Lazy entry creation on first event for this agent.
     let entry = live_states
         .entry(agent_id.to_string())
-        .or_insert_with(|| Arc::new(AgentStateEntry::default()))
+        .or_insert_with(|| Arc::new(AgentStateEntry::new(agent_id)))
         .clone();
 
     // EmitNow branch: clone inside the guard, then drop(guard) before emit so
@@ -1247,7 +1257,6 @@ async fn apply_and_maybe_emit(
                 // bumped it in the meantime the task bails without emitting.
                 let arm_gen = entry.cancel_generation.load(Ordering::Acquire);
                 let entry_clone = entry.clone();
-                let agent_id_owned = agent_id.to_string();
                 let app_clone = app.clone();
                 let ws_tx_clone = ws_tx.clone();
                 let handle = tauri::async_runtime::spawn(async move {
@@ -1255,8 +1264,12 @@ async fn apply_and_maybe_emit(
                     if let Some(snapshot) =
                         try_consume_debounce_snapshot(&entry_clone, arm_gen).await
                     {
-                        let event_name = format!("agent-state-{}", agent_id_owned);
-                        emit_state_event(&app_clone, &ws_tx_clone, &event_name, &snapshot);
+                        emit_state_event(
+                            &app_clone,
+                            &ws_tx_clone,
+                            &entry_clone.topic,
+                            &snapshot,
+                        );
                     }
                 });
                 guard.debounce_handle = Some(handle);
@@ -1267,8 +1280,7 @@ async fn apply_and_maybe_emit(
     drop(guard);
 
     if let Some(snapshot) = snapshot_to_emit {
-        let event_name = format!("agent-state-{}", agent_id);
-        emit_state_event(app, ws_tx, &event_name, &snapshot);
+        emit_state_event(app, ws_tx, &entry.topic, &snapshot);
     }
 }
 
@@ -1284,7 +1296,7 @@ async fn mark_agent_desynced(
 ) {
     let entry = live_states
         .entry(agent_id.to_string())
-        .or_insert_with(|| Arc::new(AgentStateEntry::default()))
+        .or_insert_with(|| Arc::new(AgentStateEntry::new(agent_id)))
         .clone();
     let mut guard = entry.inner.write().await;
     guard.state.mark_desynced();
@@ -1292,8 +1304,7 @@ async fn mark_agent_desynced(
     let snapshot = guard.state.clone();
     drop(guard);
 
-    let event_name = format!("agent-state-{}", agent_id);
-    emit_state_event(app, ws_tx, &event_name, &snapshot);
+    emit_state_event(app, ws_tx, &entry.topic, &snapshot);
 }
 
 // ---- MON-37: single-consumer persistence pipeline ----
