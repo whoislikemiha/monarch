@@ -223,7 +223,7 @@ because they keep tightening the type system around the same call sites.
     risk is eliminated; net ~500 lines of dup removed.
   - _Depends on MON-35_: collapsing the layer is simpler when every command
     already has a clean typed signature.
-- [ ] **MON-34** — Unify concurrency primitives across `AgentManager`  · Medium · `refactor`
+- [x] **MON-34** — Unify concurrency primitives across `AgentManager`  · Medium · `refactor`
   - Done when: the `std::sync::Mutex` / `tokio::sync::RwLock` split is
     resolved one way or the other — either `parking_lot::Mutex` everywhere
     sync remains sync, or the whole thing is fully async. No more
@@ -570,96 +570,72 @@ about the shape left behind. -->
   **In Review** manually so the Wave 2 dashboard reflects the stacked
   state. Full train merges to master together later.
 
-- **Next task: MON-34 — Unify concurrency primitives across AgentManager.**
-  Fourth and final refactor in Wave 2 (MON-39 is the sweep). Full ticket:
-  https://linear.app/monarch-commander/issue/MON-34
+- **MON-34 — PR opened against phase-1 (2026-04-11).** `AgentManager`'s
+  sync-path concurrency is now uniformly `parking_lot::Mutex`. The two
+  agent maps (`agents` + `session_map`) consolidated into a new
+  `AgentManagerInner` struct guarded by one lock, so the lock-ordering
+  question MON-33 preserved is now structurally impossible. `sidecar`
+  and `app_handle` each flipped to their own independent
+  `parking_lot::Mutex` fields. Every `.map_err(lock_poisoned(...))`
+  call inside `agent.rs` drops away — except the two on
+  `SidecarProcess.{child, stdin_tx}`, which the ticket explicitly
+  scopes out (graceful-shutdown protocol, still `std::sync::Mutex`).
+  `MonarchError::Lock` and the `lock_poisoned` helper stay in
+  `error.rs` because `db.rs` (~40 sites) and `models.rs` (4 sites)
+  still use them. `recover_sidecar` becomes `async fn` and the
+  per-agent `live_states` write acquire becomes `.write().await`, so
+  the pre-MON-34 `try_write()` bail-out that silently dropped recovery
+  snapshots under contention is gone — the issue's final acceptance
+  bullet. Full impl notes: `thoughts/impl/MON-34.md`.
+  - **Chosen approach: Option B (consolidate).** Option A
+    (parking_lot + convention + doc comment pinning order) was the
+    plan's original recommendation, but the diff size was the same
+    either way and Option B actually kills the ordering class of bug
+    rather than documenting it. The MON-14-cleanup Wave 2 handoff
+    already flagged Option B as the better shape.
+  - **Deviations from plan:**
+    - `send_with_recovery` stays sync at the command boundary and
+      bridges to the now-async `recover_sidecar` via
+      `tauri::async_runtime::block_on`. Tauri's sync `#[tauri::command]`
+      handlers run on worker threads, not the runtime thread, so
+      `block_on` is safe there. This contains the async-propagation
+      blast radius to `agent.rs` — no `#[tauri::command]` signatures
+      changed. MON-27 will flip the command handlers themselves to
+      `async fn` and turn this back into a direct `.await`.
+    - `switch_session` splits the acquire into a short read + a short
+      write around the DB call, not one long acquire, so
+      `db.update_session_internal` doesn't run with the inner lock
+      held. `kill` collapses to one acquire for both removals.
+      `new_session` keeps two acquires (read + write) around the DB
+      writes it performs between them.
+  - **Drift bugs closed:**
+    - `recover_sidecar`'s `try_write()` bail silently dropped recovery
+      snapshots under contention. Replaced with `.write().await`, now
+      that the caller is async.
+  - **Testing notes:** the MON-33 round-trip test
+    `agent::tests::kill_agent_round_trip_funnels_through_shared_method`
+    had its seed path rewritten to go through the new inner lock
+    (one acquire for both maps). Assertion shape preserved — still
+    asserts kill-clears-both. Rewritten as `!contains_key(..)` to
+    satisfy `clippy::unnecessary_get_then_check`, which would
+    otherwise warn on the previous `.get(..).is_none()` shape.
+    `cargo check` + `cargo clippy --all-targets` are clean locally;
+    `cargo test` still hits the Windows `STATUS_ENTRYPOINT_NOT_FOUND`
+    Tauri DLL quirk — same block MON-33 documented, CI-only.
+  - **`bindings.ts` diff:** none. No `#[tauri::command]` surface
+    changed; the refactor is lock topology only.
+  - **Starting point for MON-39 / MON-27:** `lock_poisoned` is no
+    longer called from `agent.rs`. The helper and `MonarchError::Lock`
+    stay in `error.rs` because `db.rs` and `models.rs` are still heavy
+    users. MON-27 (full async migration) can delete both once the
+    command handlers flip to `async fn` and `db.rs` moves to
+    tokio-rusqlite. `SidecarProcess.{child, stdin_tx}` remain the two
+    `std::sync::Mutex` sites in `agent.rs` — part of the
+    graceful-shutdown protocol, not in MON-34's scope, MON-27's call.
 
-  _Wave 2 base_: branch from
-  `markocvijanovic1998/mon-14-phase-1-rust-state-ownership`
-  (post-MON-33, commit `aea6315`), open PR against the same. Commit
-  `thoughts/plan/MON-34.md` and `thoughts/impl/MON-34.md` on the PR
-  branch. Update this tracker file's Wave 2 entry for MON-34 in the
-  same PR that ships the code. Expect the merge to auto-flip Linear to
-  Done; revert to In Review manually.
-
-  **Starting state MON-33 leaves:**
-  - All `std::sync::Mutex` lock acquisitions on `agents` and
-    `session_map` now live inside `impl AgentManager` lifecycle methods
-    (`spawn`, `send_command`, `kill`, `load_session_context`,
-    `new_session`, `switch_session`, `respond_extension_ui`) at
-    `src-tauri/src/agent.rs:634–899`. There are no longer mirrored WS
-    copies to keep in sync — change the lock topology in one place and
-    both transports pick it up. This is the clean surface MON-34's
-    acceptance bullet asked for.
-  - Every lock site uniformly goes through
-    `lock_poisoned("<label>")` from MON-31's `error` module. Grep
-    `lock_poisoned` in `agent.rs` to find the ~12 call sites after the
-    MON-33 collapse (was ~30 pre-refactor, mirrored).
-  - `app_handle: Arc<Mutex<Option<AppHandle>>>` (`agent.rs:192`) is still
-    `std::sync::Mutex` from MON-37. MON-34's call.
-  - `live_states` entries are still `Arc<RwLock<AgentStateInner>>` from
-    `tokio::sync::RwLock`, guarded on the async reader side. That is
-    the split MON-34 is being asked to unify.
-
-  **Lock-ordering invariant MON-33 preserved (did not fix):** no path
-  holds `agents` and `session_map` locks simultaneously today, but the
-  acquisition order still varies: `spawn` takes `session_map` →
-  `agents` in sequence; `kill` takes `agents` → `session_map`;
-  `new_session` goes `session_map` → `agents` → `session_map`. All
-  released between steps, so no deadlock — but the implicit ordering
-  is exactly what MON-34's acceptance bullet wants enforced or made
-  structurally impossible (fold the fields into a single struct
-  guarded by one lock, or parking_lot + convention + a doc comment
-  pinning the order). MON-33 deliberately did not touch this — its
-  scope was dedup, not lock topology. Flagged here so the next agent
-  does not treat the inconsistency as an MON-33 regression.
-
-  **Option A (recommended short term):** migrate the four
-  `std::sync::Mutex` sites (`sidecar`, `agents`, `session_map`,
-  `app_handle`) to `parking_lot::Mutex`. No poisoning, no
-  `lock_poisoned` helper needed, `.lock()` returns the guard directly.
-  Pairs well with a doc comment on `AgentManager` pinning the lock
-  order (`sidecar` → `session_map` → `agents` → `app_handle`, or
-  whichever order the next agent picks). `recover_sidecar`'s
-  `try_write()` bail-out at `agent.rs:525` is the one remaining
-  silent-drop site — MON-34's acceptance bullet calls it out
-  explicitly, so fix that in the same PR.
-
-  **Option B (long term, larger blast radius):** fold `agents` and
-  `session_map` into a single struct guarded by one
-  `parking_lot::Mutex` (or `tokio::sync::Mutex` if MON-27 runs first).
-  Kills the lock-ordering question entirely. Bigger diff, and requires
-  re-thinking how `send_command` / `new_session` / `switch_session`
-  acquire both maps without holding either across an `.await` (they
-  don't today — all the `.await` is in `recover_sidecar` /
-  `rebuild_state_from_session`, neither of which touches those maps
-  while they need to).
-
-  **Ticket also wants** (don't miss):
-  - Every `.lock().map_err(...)` site reviewed and poisoning handled
-    deliberately. After MON-33, the sites are all `lock_poisoned(...)`
-    calls — `git grep "lock_poisoned" src-tauri/src/agent.rs` gives you
-    the full list in one shot. Option A (parking_lot) makes this
-    uniformly Nothing-To-Do; Option B collapses them to a single site.
-  - `recover_sidecar`'s `try_write()` bail (agent.rs:525) no longer
-    silently dropping recovery snapshots.
-
-  **Dependency already satisfied:** MON-31 shipped `MonarchError::Lock`
-  and `lock_poisoned(label)`. MON-34 doesn't need to add poisoning
-  infra — it needs to choose whether to keep it, delete it
-  (parking_lot), or redirect it (consolidated lock).
-
-  **Testing note:** the MON-33 round-trip test
-  (`agent::tests::kill_agent_round_trip_funnels_through_shared_method`)
-  seeds `mgr.agents` and `mgr.session_map` directly via the `std::Mutex`
-  locks. MON-34's lock topology change will likely need to update this
-  test's seed path. Keep the assertion shape (kill-clears-both) — that
-  is the regression bar for the MON-33 invariant.
-
-  **Out of scope for MON-34:** MON-27 (full async migration of command
-  handlers). The ticket mentions it as a "long term pairs with" option
-  but Wave 2 is the refactor track; keeping sync bodies with one
-  unified sync lock is the sized-right answer for this ticket.
+  _Linear state note:_ expect the merge to auto-flip MON-34 to
+  **Done** per the GitHub integration. Revert to **In Review**
+  manually until phase-1 reaches master, same pattern as MON-33.
 
 - **Wave 1 residue MON-31 encountered.** (Historical — MON-31 shipped
   2026-04-11, PR #24. Keeping the list for context on what MON-32 and

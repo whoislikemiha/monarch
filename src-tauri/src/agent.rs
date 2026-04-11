@@ -1,4 +1,5 @@
 use dashmap::DashMap;
+use parking_lot::Mutex as PlMutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -61,8 +62,19 @@ pub struct AgentState {
     pub create_cmd: SidecarCommand,
 }
 
-/// Shared agent→session mapping, accessible from both Tauri commands and the reader thread.
-type AgentSessionMap = Arc<Mutex<HashMap<String, String>>>;
+/// MON-34: consolidated sync-path state for `AgentManager`. The two agent
+/// maps (`agents` and `session_map`) used to live behind separate
+/// `std::sync::Mutex` fields, which made lock ordering between them an
+/// implicit invariant that call sites could (and did) violate. Folding them
+/// into one struct behind a single `parking_lot::Mutex` makes the ordering
+/// question structurally impossible.
+#[derive(Default)]
+struct AgentManagerInner {
+    agents: HashMap<String, AgentState>,
+    /// agentId → sessionId mapping, shared with the reader task via an
+    /// `Arc<PlMutex<AgentManagerInner>>` clone.
+    session_map: HashMap<String, String>,
+}
 
 // ---- Sidecar process management ----
 //
@@ -154,11 +166,29 @@ pub struct AgentStateInner {
     pub debounce_handle: Option<TaskHandle>,
 }
 
+/// MON-34 lock hierarchy:
+///
+/// * `inner` (`parking_lot::Mutex<AgentManagerInner>`) — the only lock that
+///   protects both `agents` and `session_map`, so the two can never deadlock
+///   against each other. **Never hold this lock across an `.await`** — the
+///   manager's sync paths use it and `parking_lot` will happily panic-free
+///   block a runtime thread if you do.
+/// * `sidecar` (`parking_lot::Mutex<Option<Arc<SidecarProcess>>>`) —
+///   independent of `inner`; can be taken in either order.
+/// * `app_handle` (`Arc<parking_lot::Mutex<Option<AppHandle>>>`) —
+///   independent of both above; taken briefly in `get_app_handle` and in
+///   the persistence consumer's desync path.
+/// * `live_states` entries' inner `tokio::sync::RwLock` — async-only,
+///   owned by the MON-14 event-assembly path. Never taken under any of the
+///   locks above.
+/// * `SidecarProcess.{child, stdin_tx}` — `std::sync::Mutex`, part of the
+///   graceful-shutdown protocol (MON-34 leaves these untouched).
 pub struct AgentManager {
-    sidecar: Mutex<Option<Arc<SidecarProcess>>>,
-    agents: Mutex<HashMap<String, AgentState>>,
-    /// agentId → sessionId mapping, shared with the reader task
-    session_map: AgentSessionMap,
+    sidecar: PlMutex<Option<Arc<SidecarProcess>>>,
+    /// MON-34: `agents` + `session_map` consolidated under one lock.
+    /// The reader task holds a clone of this `Arc` and resolves session
+    /// ids through it.
+    inner: Arc<PlMutex<AgentManagerInner>>,
     /// Per-agent assembled state, owned by this Rust process and emitted on
     /// `agent-state-{id}`. Outer DashMap is sync-friendly; inner RwLock is
     /// tokio-native because the reader task is async. Entries are lazily
@@ -169,7 +199,7 @@ pub struct AgentManager {
     /// Stored AppHandle for WS-initiated commands that need sidecar access.
     /// Arc-wrapped so the persistence consumer task (MON-37) can share access
     /// without needing a back-reference to the manager.
-    app_handle: Arc<Mutex<Option<AppHandle>>>,
+    app_handle: Arc<PlMutex<Option<AppHandle>>>,
     /// MON-37: producer handle for the single-consumer persistence pipeline.
     /// The reader task clones this and `send().await`s one command per
     /// effect (event log + optional message write). A single consumer drains
@@ -188,7 +218,7 @@ impl AgentManager {
         let (persist_tx, persist_rx) = mpsc::channel::<PersistCommand>(256);
         let live_states: Arc<DashMap<String, Arc<AgentStateEntry>>> =
             Arc::new(DashMap::new());
-        let app_handle: Arc<Mutex<Option<AppHandle>>> = Arc::new(Mutex::new(None));
+        let app_handle: Arc<PlMutex<Option<AppHandle>>> = Arc::new(PlMutex::new(None));
 
         // MON-37: manager-lifetime persistence consumer. Spawned once in
         // `new()`, not per sidecar respawn — we do not want to lose enqueued
@@ -203,9 +233,8 @@ impl AgentManager {
         ));
 
         Self {
-            sidecar: Mutex::new(None),
-            agents: Mutex::new(HashMap::new()),
-            session_map: Arc::new(Mutex::new(HashMap::new())),
+            sidecar: PlMutex::new(None),
+            inner: Arc::new(PlMutex::new(AgentManagerInner::default())),
             live_states,
             ws_broadcast,
             app_handle,
@@ -215,15 +244,12 @@ impl AgentManager {
 
     /// Store the AppHandle after Tauri setup so WS commands can use it
     pub fn set_app_handle(&self, handle: AppHandle) {
-        if let Ok(mut h) = self.app_handle.lock() {
-            *h = Some(handle);
-        }
+        *self.app_handle.lock() = Some(handle);
     }
 
     pub fn get_app_handle(&self) -> Result<AppHandle, MonarchError> {
         self.app_handle
             .lock()
-            .map_err(lock_poisoned("app handle"))?
             .clone()
             .ok_or_else(|| MonarchError::invalid_input("AppHandle not initialized"))
     }
@@ -246,10 +272,7 @@ impl AgentManager {
     /// The worst-case close latency is bounded by `timeout` (typically 1.5s),
     /// which is acceptable during shutdown.
     pub fn shutdown_sidecar(&self, timeout: Duration) {
-        let sidecar = match self.sidecar.lock() {
-            Ok(mut slot) => slot.take(),
-            Err(_) => return,
-        };
+        let sidecar = self.sidecar.lock().take();
         let Some(sc) = sidecar else { return };
 
         // (2) Close stdin to trigger the sidecar's graceful-shutdown path.
@@ -289,7 +312,7 @@ impl AgentManager {
         &self,
         app: &AppHandle,
     ) -> Result<Arc<SidecarProcess>, MonarchError> {
-        let mut sidecar_lock = self.sidecar.lock().map_err(lock_poisoned("sidecar"))?;
+        let mut sidecar_lock = self.sidecar.lock();
 
         // Check if existing sidecar is still alive. `tokio::process::Child::try_wait`
         // is synchronous and does not require a runtime context, so this is safe
@@ -362,7 +385,7 @@ impl AgentManager {
         // MON-37: captures `persist_tx` instead of `db_clone` — the reader
         // enqueues PersistCommands rather than running blocking SQL inline.
         let app_clone = app.clone();
-        let session_map_clone = self.session_map.clone();
+        let inner_clone = self.inner.clone();
         let live_states_clone = self.live_states.clone();
         let ws_tx = self.ws_broadcast.clone();
         let persist_tx = self.persist_tx.clone();
@@ -374,7 +397,7 @@ impl AgentManager {
                         handle_sidecar_event(
                             &app_clone,
                             &persist_tx,
-                            &session_map_clone,
+                            &inner_clone,
                             &live_states_clone,
                             &ws_tx,
                             &line,
@@ -435,7 +458,7 @@ impl AgentManager {
     }
 
     fn send_to_sidecar(&self, json: &str) -> Result<(), MonarchError> {
-        let sidecar_lock = self.sidecar.lock().map_err(lock_poisoned("sidecar"))?;
+        let sidecar_lock = self.sidecar.lock();
         let sc = sidecar_lock
             .as_ref()
             .ok_or_else(MonarchError::sidecar_process_down)?;
@@ -450,21 +473,19 @@ impl AgentManager {
     /// Mid-stream assembly (partial streaming message, in-flight tool group)
     /// is intentionally dropped — we cannot reconstruct it from persisted rows
     /// and showing a frozen partial state would be worse than a clean reset.
-    fn recover_sidecar(
+    async fn recover_sidecar(
         &self,
         app: &AppHandle,
         db: &Arc<Database>,
     ) -> Result<(), MonarchError> {
         self.ensure_sidecar(app)?;
 
-        // Snapshot agents and their session mappings
-        let agents_snapshot = {
-            let agents = self.agents.lock().map_err(lock_poisoned("agents"))?;
-            agents.clone()
-        };
-        let session_snapshot = {
-            let map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
-            map.clone()
+        // MON-34: single snapshot of the consolidated inner state. One lock
+        // acquire, cloned out, guard dropped before anything else — no
+        // ordering question, no lock held across the awaits below.
+        let (agents_snapshot, session_snapshot) = {
+            let guard = self.inner.lock();
+            (guard.agents.clone(), guard.session_map.clone())
         };
 
         for (agent_id, state) in &agents_snapshot {
@@ -519,16 +540,12 @@ impl AgentManager {
                 });
 
             let entry = self.live_entry(agent_id);
-            // Block briefly on the write lock. Recovery is rare and
-            // single-threaded per agent, so contention is effectively zero.
-            let mut guard = match entry.inner.try_write() {
-                Ok(g) => g,
-                Err(_) => {
-                    // Someone else is mutating; skip the emit rather than
-                    // stall recovery. The next real event will re-emit.
-                    continue;
-                }
-            };
+            // MON-34: now that recover_sidecar is async we block on the
+            // write lock instead of the pre-MON-34 `try_write()` bail-out.
+            // Recovery is rare and single-threaded per agent, so contention
+            // is effectively zero; the old try_write path silently dropped
+            // snapshots under races, which is the bug this fixes.
+            let mut guard = entry.inner.write().await;
             if let Some(h) = guard.debounce_handle.take() {
                 h.abort();
             }
@@ -547,6 +564,15 @@ impl AgentManager {
     }
 
     /// Send a command to the sidecar, recovering from crash if needed.
+    ///
+    /// MON-34: `recover_sidecar` is now `async fn` so the per-agent
+    /// `live_states` write acquire can `.await` instead of silently
+    /// bailing. This shim stays sync at the command boundary — Tauri's
+    /// `#[tauri::command]` handlers run on worker threads (not the
+    /// runtime thread), so `tauri::async_runtime::block_on` is safe here
+    /// and contains the async-propagation blast radius to `agent.rs`.
+    /// MON-27 will flip the command handlers themselves to `async fn` and
+    /// turn this back into a direct `.await`.
     fn send_with_recovery(
         &self,
         app: &AppHandle,
@@ -561,7 +587,7 @@ impl AgentManager {
             }
         }
 
-        self.recover_sidecar(app, db)?;
+        tauri::async_runtime::block_on(self.recover_sidecar(app, db))?;
 
         // Retry the original command
         self.send_to_sidecar(json)
@@ -702,8 +728,8 @@ impl AgentManager {
         }
 
         {
-            let mut map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
-            map.insert(id.clone(), session_id.clone());
+            let mut inner = self.inner.lock();
+            inner.session_map.insert(id.clone(), session_id.clone());
         }
 
         let shadow = shadow_spec.as_ref().map(|_| ShadowConfig {
@@ -727,19 +753,21 @@ impl AgentManager {
 
         self.send_to_sidecar(&serde_json::to_string(&cmd)?)?;
 
-        let mut agents = self.agents.lock().map_err(lock_poisoned("agents"))?;
-        agents.insert(
-            id,
-            AgentState {
-                lifecycle: AgentLifecycleState::Idle,
-                provider,
-                model,
-                thinking_level,
-                is_streaming: false,
-                session_id,
-                create_cmd: cmd,
-            },
-        );
+        {
+            let mut inner = self.inner.lock();
+            inner.agents.insert(
+                id,
+                AgentState {
+                    lifecycle: AgentLifecycleState::Idle,
+                    provider,
+                    model,
+                    thinking_level,
+                    is_streaming: false,
+                    session_id,
+                    create_cmd: cmd,
+                },
+            );
+        }
 
         Ok(())
     }
@@ -767,12 +795,9 @@ impl AgentManager {
         let _ = self.send_to_sidecar(&serde_json::to_string(&cmd)?);
 
         {
-            let mut agents = self.agents.lock().map_err(lock_poisoned("agents"))?;
-            agents.remove(id);
-        }
-        {
-            let mut map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
-            map.remove(id);
+            let mut inner = self.inner.lock();
+            inner.agents.remove(id);
+            inner.session_map.remove(id);
         }
         self.remove_live_entry(id);
         Ok(())
@@ -814,18 +839,19 @@ impl AgentManager {
         new_session_id: String,
         parent_session_id: Option<String>,
     ) -> Result<(), MonarchError> {
-        let old_session_id = {
-            let map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
-            map.get(&agent_id).cloned()
+        // MON-34: one acquire covers both reads. Cloned out so the
+        // subsequent DB calls run without the lock held.
+        let (old_session_id, agent_state) = {
+            let inner = self.inner.lock();
+            (
+                inner.session_map.get(&agent_id).cloned(),
+                inner.agents.get(&agent_id).cloned(),
+            )
         };
         if let Some(old_sid) = &old_session_id {
             let _ = db.update_session_internal(old_sid, None, None, None, Some(&chrono_now()));
         }
 
-        let agent_state = {
-            let agents = self.agents.lock().map_err(lock_poisoned("agents"))?;
-            agents.get(&agent_id).cloned()
-        };
         let (model, provider) = agent_state
             .map(|s| (s.model.clone(), s.provider.clone()))
             .unwrap_or((None, None));
@@ -869,8 +895,8 @@ impl AgentManager {
         })?;
 
         {
-            let mut map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
-            map.insert(agent_id.clone(), new_session_id);
+            let mut inner = self.inner.lock();
+            inner.session_map.insert(agent_id.clone(), new_session_id);
         }
 
         let cmd = SidecarCommand::NewSession { agent_id };
@@ -888,9 +914,12 @@ impl AgentManager {
             return Err(MonarchError::not_found(format!("session {}", session_id)));
         }
 
+        // MON-34: one acquire for the read, a second (short) one for the
+        // write-side updates. Splitting read from write lets the DB
+        // update_session_internal call run without the lock held.
         let old_session_id = {
-            let map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
-            map.get(&agent_id).cloned()
+            let inner = self.inner.lock();
+            inner.session_map.get(&agent_id).cloned()
         };
         if let Some(old_sid) = &old_session_id {
             if old_sid != &session_id {
@@ -899,13 +928,11 @@ impl AgentManager {
         }
 
         {
-            let mut map = self.session_map.lock().map_err(lock_poisoned("session map"))?;
-            map.insert(agent_id.clone(), session_id.clone());
-        }
-
-        {
-            let mut agents = self.agents.lock().map_err(lock_poisoned("agents"))?;
-            if let Some(agent) = agents.get_mut(&agent_id) {
+            let mut inner = self.inner.lock();
+            inner
+                .session_map
+                .insert(agent_id.clone(), session_id.clone());
+            if let Some(agent) = inner.agents.get_mut(&agent_id) {
                 agent.session_id = session_id.clone();
             }
         }
@@ -952,9 +979,12 @@ fn resolve_sidecar_path() -> Result<String, MonarchError> {
         .ok_or_else(|| MonarchError::not_found("sidecar/dist/index.js"))
 }
 
-/// Look up the session_id for an agent from the shared map
-fn get_session_id(session_map: &AgentSessionMap, agent_id: &str) -> Option<String> {
-    session_map.lock().ok().and_then(|m| m.get(agent_id).cloned())
+/// Look up the session_id for an agent from the consolidated inner state.
+/// MON-34: reads the map through the single `parking_lot::Mutex` shared
+/// with `AgentManager`. Infallible — `parking_lot` doesn't poison — so the
+/// call site no longer has to branch on lock error.
+fn get_session_id(inner: &Arc<PlMutex<AgentManagerInner>>, agent_id: &str) -> Option<String> {
+    inner.lock().session_map.get(agent_id).cloned()
 }
 
 /// Emit an event to both Tauri webview and WebSocket clients
@@ -1007,7 +1037,7 @@ fn emit_state_event(
 async fn handle_sidecar_event(
     app: &AppHandle,
     persist_tx: &mpsc::Sender<PersistCommand>,
-    session_map: &AgentSessionMap,
+    inner: &Arc<PlMutex<AgentManagerInner>>,
     live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
     ws_tx: &broadcast::Sender<WsBroadcast>,
     line: &str,
@@ -1117,7 +1147,7 @@ async fn handle_sidecar_event(
             // even if the session map mutates between enqueue and apply.
             // `send().await` intentionally back-pressures the reader if the
             // consumer is lagging — that is the point of a bounded channel.
-            let session_id = get_session_id(session_map, &agent_id);
+            let session_id = get_session_id(inner, &agent_id);
             let inner_raw = raw_value.get("event");
             for cmd in build_persist_commands(&agent_id, session_id, &inner_event, inner_raw) {
                 if persist_tx.send(cmd).await.is_err() {
@@ -1524,7 +1554,7 @@ async fn run_persist_consumer(
     db: Arc<Database>,
     live_states: Arc<DashMap<String, Arc<AgentStateEntry>>>,
     ws_tx: broadcast::Sender<WsBroadcast>,
-    app_handle: Arc<Mutex<Option<AppHandle>>>,
+    app_handle: Arc<PlMutex<Option<AppHandle>>>,
 ) {
     while let Some(cmd) = rx.recv().await {
         let agent_id = cmd.agent_id().to_string();
@@ -1541,7 +1571,7 @@ async fn run_persist_consumer(
         if agent_id.is_empty() {
             continue;
         }
-        let app_opt = app_handle.lock().ok().and_then(|g| g.clone());
+        let app_opt = app_handle.lock().clone();
         if let Some(app) = app_opt {
             mark_agent_desynced(&app, &ws_tx, &live_states, &agent_id).await;
         }
@@ -1620,16 +1650,19 @@ mod tests {
         let model_cache = Arc::new(ModelCache::new());
         let (broadcast_tx, _rx) = broadcast::channel(16);
 
-        // Seed two agents: one killed via the IPC path, one via the WS path.
+        // Seed two agents: one killed via the IPC path, one via the WS
+        // path. MON-34: both maps live inside `AgentManagerInner` behind a
+        // single `parking_lot::Mutex`, so one acquire covers both seeds.
         {
-            let mut agents = mgr.agents.lock().unwrap();
-            agents.insert("ipc-kill".to_string(), seeded_agent_state("ipc-kill", "s1"));
-            agents.insert("ws-kill".to_string(), seeded_agent_state("ws-kill", "s2"));
-        }
-        {
-            let mut map = mgr.session_map.lock().unwrap();
-            map.insert("ipc-kill".to_string(), "s1".to_string());
-            map.insert("ws-kill".to_string(), "s2".to_string());
+            let mut inner = mgr.inner.lock();
+            inner
+                .agents
+                .insert("ipc-kill".to_string(), seeded_agent_state("ipc-kill", "s1"));
+            inner
+                .agents
+                .insert("ws-kill".to_string(), seeded_agent_state("ws-kill", "s2"));
+            inner.session_map.insert("ipc-kill".to_string(), "s1".to_string());
+            inner.session_map.insert("ws-kill".to_string(), "s2".to_string());
         }
 
         // IPC side: the Tauri command body is `state.kill(&id)`. Call the
@@ -1652,13 +1685,23 @@ mod tests {
         .await
         .expect("ws dispatch kill");
 
-        let agents = mgr.agents.lock().unwrap();
-        assert!(agents.get("ipc-kill").is_none(), "ipc path did not clear agent");
-        assert!(agents.get("ws-kill").is_none(), "ws path did not clear agent");
-        drop(agents);
-        let sessions = mgr.session_map.lock().unwrap();
-        assert!(sessions.get("ipc-kill").is_none(), "ipc path did not clear session");
-        assert!(sessions.get("ws-kill").is_none(), "ws path did not clear session");
+        let inner = mgr.inner.lock();
+        assert!(
+            !inner.agents.contains_key("ipc-kill"),
+            "ipc path did not clear agent"
+        );
+        assert!(
+            !inner.agents.contains_key("ws-kill"),
+            "ws path did not clear agent"
+        );
+        assert!(
+            !inner.session_map.contains_key("ipc-kill"),
+            "ipc path did not clear session"
+        );
+        assert!(
+            !inner.session_map.contains_key("ws-kill"),
+            "ws path did not clear session"
+        );
     }
 }
 

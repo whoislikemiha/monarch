@@ -24,6 +24,7 @@ rusqlite = { version = "0.33", features = ["bundled"] }
 tokio-tungstenite = "0.26"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 dashmap = "6"
+parking_lot = "0.12"
 specta = { version = "2.0.0-rc.24", features = ["serde_json", "derive"] }
 specta-typescript = "0.0.11"
 tauri-specta = { version = "2.0.0-rc.24", features = ["derive", "typescript"] }
