@@ -92,25 +92,11 @@
     riveInstance.on(EventType.Load, () => {
       riveInstance!.resizeDrawingSurfaceToCanvas();
       // Debug: log what the .riv file actually contains
-      const r = riveInstance!;
+      const r = riveInstance! as any;
       console.log("[ShadowAvatar] .riv loaded:", riveFile);
-      console.log("[ShadowAvatar] artboard:", r.artboardName);
+      console.log("[ShadowAvatar] source:", r.source);
       console.log("[ShadowAvatar] animationNames:", r.animationNames);
       console.log("[ShadowAvatar] stateMachineNames:", r.stateMachineNames);
-      // Try to get inputs for the configured state machine
-      try {
-        const inputs = r.stateMachineInputs(stateMachine);
-        console.log(`[ShadowAvatar] inputs for "${stateMachine}":`, inputs?.map(i => `${i.name} (${i.type})`));
-      } catch (e) {
-        console.warn(`[ShadowAvatar] failed to get inputs for "${stateMachine}":`, e);
-        // Try each known state machine name
-        for (const smName of r.stateMachineNames) {
-          try {
-            const inputs = r.stateMachineInputs(smName);
-            console.log(`[ShadowAvatar] inputs for "${smName}":`, inputs?.map(i => `${i.name} (${i.type})`));
-          } catch { /* skip */ }
-        }
-      }
       cacheInputs(riveInstance!, stateMachine);
     });
 
