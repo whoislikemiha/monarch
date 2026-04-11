@@ -2,53 +2,53 @@ use std::path::PathBuf;
 
 use crate::error::MonarchError;
 
-fn monarch_dir() -> Result<PathBuf, MonarchError> {
+async fn monarch_dir() -> Result<PathBuf, MonarchError> {
     let dir = dirs::config_dir()
         .ok_or_else(|| MonarchError::persistence("config_dir unavailable"))?
         .join("monarch");
-    std::fs::create_dir_all(&dir)?;
+    tokio::fs::create_dir_all(&dir).await?;
     Ok(dir)
 }
 
-fn prompts_dir() -> Result<PathBuf, MonarchError> {
-    let dir = monarch_dir()?.join("prompts");
-    std::fs::create_dir_all(&dir)?;
+async fn prompts_dir() -> Result<PathBuf, MonarchError> {
+    let dir = monarch_dir().await?.join("prompts");
+    tokio::fs::create_dir_all(&dir).await?;
     Ok(dir)
 }
 
-pub fn read_agent_prompt_file(agent_id: &str) -> Result<Option<String>, MonarchError> {
-    let path = prompts_dir()?.join(format!("{}.md", agent_id));
-    if path.exists() {
-        Ok(Some(std::fs::read_to_string(&path)?))
-    } else {
-        Ok(None)
+pub async fn read_agent_prompt_file(agent_id: &str) -> Result<Option<String>, MonarchError> {
+    let path = prompts_dir().await?.join(format!("{}.md", agent_id));
+    match tokio::fs::read_to_string(&path).await {
+        Ok(contents) => Ok(Some(contents)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
     }
 }
 
-pub fn write_agent_prompt_file(agent_id: &str, prompt: &str) -> Result<(), MonarchError> {
-    let path = prompts_dir()?.join(format!("{}.md", agent_id));
-    std::fs::write(&path, prompt)?;
+pub async fn write_agent_prompt_file(agent_id: &str, prompt: &str) -> Result<(), MonarchError> {
+    let path = prompts_dir().await?.join(format!("{}.md", agent_id));
+    tokio::fs::write(&path, prompt).await?;
     Ok(())
 }
 
-pub fn prompts_dir_string() -> Result<String, MonarchError> {
-    Ok(prompts_dir()?.to_string_lossy().to_string())
+pub async fn prompts_dir_string() -> Result<String, MonarchError> {
+    Ok(prompts_dir().await?.to_string_lossy().to_string())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn get_agent_prompt(agent_id: String) -> Result<Option<String>, MonarchError> {
-    read_agent_prompt_file(&agent_id)
+pub async fn get_agent_prompt(agent_id: String) -> Result<Option<String>, MonarchError> {
+    read_agent_prompt_file(&agent_id).await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn save_agent_prompt(agent_id: String, prompt: String) -> Result<(), MonarchError> {
-    write_agent_prompt_file(&agent_id, &prompt)
+pub async fn save_agent_prompt(agent_id: String, prompt: String) -> Result<(), MonarchError> {
+    write_agent_prompt_file(&agent_id, &prompt).await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn get_prompts_dir() -> Result<String, MonarchError> {
-    prompts_dir_string()
+pub async fn get_prompts_dir() -> Result<String, MonarchError> {
+    prompts_dir_string().await
 }

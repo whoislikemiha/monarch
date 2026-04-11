@@ -49,7 +49,7 @@ pub fn read_instructions_from_root(root: &Path) -> Option<String> {
 /// Detect project from cwd → find or create project row → return
 /// `(project_id, instructions)`. DB instructions take precedence; on first
 /// creation the DB row is populated from the on-disk instruction files.
-pub fn resolve_project(
+pub async fn resolve_project(
     db: &Database,
     cwd: &str,
 ) -> Result<(Option<String>, Option<String>), MonarchError> {
@@ -68,16 +68,18 @@ pub fn resolve_project(
         .unwrap_or_else(|| root_str.clone());
     let candidate_id = format!("project-{}", uuid_v4_simple());
     let now = chrono_now();
-    let project_id = db.ensure_project_internal(&ProjectRow {
-        id: candidate_id,
-        name,
-        root_path: root_str.clone(),
-        instructions: file_instructions.clone(),
-        created_at: now.clone(),
-        updated_at: now,
-    })?;
+    let project_id = db
+        .ensure_project_internal(&ProjectRow {
+            id: candidate_id,
+            name,
+            root_path: root_str.clone(),
+            instructions: file_instructions.clone(),
+            created_at: now.clone(),
+            updated_at: now,
+        })
+        .await?;
 
-    let db_project = db.get_project_by_path_internal(&root_str)?;
+    let db_project = db.get_project_by_path_internal(&root_str).await?;
     let instructions = db_project
         .and_then(|p| p.instructions)
         .filter(|s| !s.trim().is_empty())
@@ -91,7 +93,7 @@ pub fn resolve_project(
 /// (`rootPath`, `name`, `projectId`, `hasInstructions`); typing this is
 /// parked alongside the other `serde_json::Value`-emitting commands under
 /// MON-14 Wave 2.
-pub fn detect_project(
+pub async fn detect_project(
     db: &Database,
     cwd: &str,
 ) -> Result<Option<serde_json::Value>, MonarchError> {
@@ -105,7 +107,7 @@ pub fn detect_project(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| root_str.clone());
-    let existing = db.get_project_by_path_internal(&root_str)?;
+    let existing = db.get_project_by_path_internal(&root_str).await?;
     let file_instructions = read_instructions_from_root(&root);
     Ok(Some(serde_json::json!({
         "rootPath": root_str,

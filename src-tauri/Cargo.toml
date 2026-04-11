@@ -20,7 +20,7 @@ tauri-plugin-dialog = "2.2"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "time", "sync"] }
 dirs = "6"
-rusqlite = { version = "0.33", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
 tokio-tungstenite = "0.26"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 dashmap = "6"
@@ -30,6 +30,7 @@ specta-typescript = "0.0.11"
 tauri-specta = { version = "2.0.0-rc.24", features = ["derive", "typescript"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+tokio-rusqlite = { version = "0.7.0", features = ["bundled"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
