@@ -2,6 +2,7 @@
   import type { Agent, Project, ShadowIdentity } from "./types";
   import { ShadowAvatar } from "./avatar";
   import { agentStore } from "./stores/agentStore.svelte";
+  import { formatCost } from "./format";
 
   interface ProjectGroup {
     project?: Project;
@@ -199,6 +200,9 @@
                 <span class="agent-grade">{agent.shadow.shadowGrade}</span>
               {:else if agent.model}
                 <span class="agent-model">{agent.model}</span>
+              {/if}
+              {#if formatCost(agent.lifetimeCost)}
+                <span class="agent-cost">{formatCost(agent.lifetimeCost)}</span>
               {/if}
             </div>
             {#if isArchived}
@@ -540,6 +544,15 @@
   .agent-grade {
     font-size: 10px;
     color: var(--accent);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .agent-cost {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
