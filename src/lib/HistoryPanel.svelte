@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "$lib/api";
+  import { formatCost } from "./format";
   import type { SessionRecord } from "./types";
 
   let {
@@ -138,6 +139,9 @@
             {#if session.messageCount}
               <span class="session-msgs">{session.messageCount} msgs</span>
             {/if}
+            {#if formatCost(session.totalCost)}
+              <span class="session-cost">{formatCost(session.totalCost)}</span>
+            {/if}
             {#if session.sessionId === currentSessionId}
               <span class="current-tag">active</span>
             {/if}
@@ -148,7 +152,12 @@
       <div class="preview-pane">
         {#if previewSession}
           <div class="preview-header">
-            <span>{previewSession.model || "unknown model"}</span>
+            <span>
+              {previewSession.model || "unknown model"}
+              {#if formatCost(previewSession.totalCost)}
+                <span class="preview-cost">· {formatCost(previewSession.totalCost)}</span>
+              {/if}
+            </span>
             <button
               class="load-btn"
               onclick={() => previewSession && onload(previewSession)}
@@ -312,9 +321,15 @@
     white-space: nowrap;
   }
 
-  .session-msgs {
+  .session-msgs,
+  .session-cost {
     color: var(--text-muted);
     font-size: 10px;
+  }
+
+  .preview-cost {
+    color: var(--text-muted);
+    font-weight: 400;
   }
 
   .current-tag {
