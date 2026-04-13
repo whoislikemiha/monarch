@@ -88,6 +88,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         // UI state
         db::db_get_ui_state,
         db::db_set_ui_state,
+        // Agent stats
+        db::db_get_agent_stats,
         // Toolbox
         toolbox::toolbox_list_tools,
         toolbox::placeholder::toolbox_placeholder_ping,
@@ -214,6 +216,7 @@ pub fn run() {
             agent::read_project_instructions,
             db::db_get_ui_state,
             db::db_set_ui_state,
+            db::db_get_agent_stats,
             toolbox::toolbox_list_tools,
             toolbox::placeholder::toolbox_placeholder_ping,
             zoom::set_zoom,

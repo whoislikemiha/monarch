@@ -736,6 +736,8 @@ impl AgentManager {
                 parent_session_id: None,
             })
             .await?;
+            // MON-63: track session count
+            db.increment_agent_sessions(&id).await?;
         }
 
         {
@@ -911,6 +913,8 @@ impl AgentManager {
             parent_session_id: valid_parent_session_id,
         })
         .await?;
+        // MON-63: track session count
+        db.increment_agent_sessions(&agent_id).await?;
 
         {
             let mut inner = self.inner.lock();
@@ -1382,6 +1386,23 @@ enum PersistCommand {
         agent_id: String,
         message: MessageRow,
     },
+    /// MON-63: increment per-agent lifetime token/cost/message stats.
+    IncrementAgentStats {
+        agent_id: String,
+        input_tokens: i64,
+        output_tokens: i64,
+        cost: f64,
+    },
+    /// MON-63: increment per-agent turn counter.
+    IncrementAgentTurns {
+        agent_id: String,
+    },
+    /// MON-63: record a tool execution for per-agent tool usage tracking.
+    RecordToolUsage {
+        agent_id: String,
+        tool_name: String,
+        is_error: bool,
+    },
 }
 
 impl PersistCommand {
@@ -1389,7 +1410,10 @@ impl PersistCommand {
         match self {
             Self::LogEvent { agent_id, .. }
             | Self::SaveAssistantMessage { agent_id, .. }
-            | Self::SaveToolResult { agent_id, .. } => agent_id,
+            | Self::SaveToolResult { agent_id, .. }
+            | Self::IncrementAgentStats { agent_id, .. }
+            | Self::IncrementAgentTurns { agent_id, .. }
+            | Self::RecordToolUsage { agent_id, .. } => agent_id,
         }
     }
 
@@ -1420,6 +1444,26 @@ impl PersistCommand {
             }
             Self::SaveToolResult { message, .. } => {
                 db.save_message_internal(&message).await.map(|_| ())
+            }
+            Self::IncrementAgentStats {
+                agent_id,
+                input_tokens,
+                output_tokens,
+                cost,
+            } => {
+                db.increment_agent_stats(&agent_id, input_tokens, output_tokens, cost)
+                    .await
+            }
+            Self::IncrementAgentTurns { agent_id } => {
+                db.increment_agent_turns(&agent_id).await
+            }
+            Self::RecordToolUsage {
+                agent_id,
+                tool_name,
+                is_error,
+            } => {
+                db.record_tool_usage(&agent_id, &tool_name, is_error)
+                    .await
             }
         }
     }
@@ -1489,6 +1533,18 @@ fn build_persist_commands(
                     timestamp: chrono_now(),
                 },
             });
+
+            // MON-63: increment per-agent lifetime stats
+            let (input_tokens, output_tokens, msg_cost) = match &message.usage {
+                Some(u) => (u.input, u.output, u.cost.total),
+                None => (0, 0, 0.0),
+            };
+            cmds.push(PersistCommand::IncrementAgentStats {
+                agent_id: agent_id.to_string(),
+                input_tokens,
+                output_tokens,
+                cost: msg_cost,
+            });
         }
         InnerEvent::ToolExecutionEnd {
             tool_call_id,
@@ -1528,6 +1584,19 @@ fn build_persist_commands(
                     cost: 0.0,
                     timestamp: chrono_now(),
                 },
+            });
+
+            // MON-63: record tool usage for specialization tracking
+            cmds.push(PersistCommand::RecordToolUsage {
+                agent_id: agent_id.to_string(),
+                tool_name,
+                is_error: *is_error,
+            });
+        }
+        InnerEvent::TurnEnd => {
+            // MON-63: increment per-agent turn counter
+            cmds.push(PersistCommand::IncrementAgentTurns {
+                agent_id: agent_id.to_string(),
             });
         }
         _ => {}

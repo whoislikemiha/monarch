@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Agent, Project, SessionRecord, ShadowIdentity } from "./types";
   import AgentStatusDot from "./AgentStatusDot.svelte";
+  import { ShadowAvatar } from "./avatar";
 
   interface ProjectGroup {
     project?: Project;
@@ -140,7 +141,9 @@
             role="button"
             tabindex="0"
           >
-            <AgentStatusDot {agent} baseClass="status-dot" />
+            <div class="avatar-wrap">
+              <ShadowAvatar agentId={agent.id} size={200} />
+            </div>
             <div class="agent-info">
               <span class="agent-name">{agent.name}</span>
               {#if agent.shadow}
@@ -336,12 +339,19 @@
 
   .agent-item {
     width: 100%;
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    grid-template-areas:
+      "avatar avatar"
+      "info kill";
     align-items: center;
-    gap: 8px;
-    padding: 8px 10px;
+    column-gap: 8px;
+    row-gap: 6px;
+    padding: 10px;
+    margin-bottom: 8px;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
@@ -364,8 +374,24 @@
     opacity: 1;
   }
 
+  .avatar-wrap {
+    grid-area: avatar;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .avatar-wrap :global(canvas) {
+    width: 100% !important;
+    height: 100% !important;
+  }
+
   .agent-info {
-    flex: 1;
+    grid-area: info;
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -395,6 +421,7 @@
   }
 
   .btn-kill {
+    grid-area: kill;
     border: none;
     background: none;
     color: var(--text-muted);

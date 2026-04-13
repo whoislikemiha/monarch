@@ -122,6 +122,7 @@ export const commands = {
 	readProjectInstructions: (cwd: string) => typedError<string | null, ErrorDto>(__TAURI_INVOKE("read_project_instructions", { cwd })),
 	dbGetUiState: (key: string) => typedError<string | null, ErrorDto>(__TAURI_INVOKE("db_get_ui_state", { key })),
 	dbSetUiState: (key: string, value: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_set_ui_state", { key, value })),
+	dbGetAgentStats: (agentId: string) => typedError<AgentStats, ErrorDto>(__TAURI_INVOKE("db_get_agent_stats", { agentId })),
 	toolboxListTools: () => __TAURI_INVOKE<ToolDescriptor[]>("toolbox_list_tools"),
 	toolboxPlaceholderPing: () => typedError<string, ErrorDto>(__TAURI_INVOKE("toolbox_placeholder_ping")),
 	setZoom: (level: number) => typedError<number, ErrorDto>(__TAURI_INVOKE("set_zoom", { level })),
@@ -143,6 +144,21 @@ export type AgentRow = {
 	// User-supplied context window (tokens). Currently only used for lmstudio.
 	contextWindow: number | null,
 	createdAt: string,
+	updatedAt: string,
+};
+
+export type AgentStats = {
+	agentId: string,
+	totalSessions: number,
+	totalMessages: number,
+	totalTurns: number,
+	totalInputTokens: number,
+	totalOutputTokens: number,
+	totalCost: number,
+	// Normalized experience level 0-100, derived from total tokens (log scale).
+	experience: number,
+	toolUsage: ToolUsageEntry[],
+	specialization: SpecializationScores,
 	updatedAt: string,
 };
 
@@ -322,6 +338,21 @@ export type SpawnAgentRequest = {
 	contextWindow: number | null,
 };
 
+export type SpecializationScores = {
+	coding: number,
+	research: number,
+	testing: number,
+	debugging: number,
+	devops: number,
+	documentation: number,
+	database: number,
+	configuration: number,
+	design: number,
+	communication: number,
+	refactoring: number,
+	security: number,
+};
+
 export type StreamingMessage = {
 	content: ("Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Vec<Value> }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never })[],
 	model: string | null,
@@ -344,6 +375,12 @@ export type ToolExecution = {
 };
 
 export type ToolStatus = "running" | "done" | "error";
+
+export type ToolUsageEntry = {
+	toolName: string,
+	callCount: number,
+	errorCount: number,
+};
 
 export type Usage = {
 	input?: number,
