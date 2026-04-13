@@ -64,7 +64,8 @@
         Assistant
         <span class="streaming-indicator"></span>
       </div>
-      {#if thinkingContent}
+      {#if thinkingContent && !textContent}
+        <!-- Thinking-only phase: render text live so the user can follow along. -->
         <div class="streaming-thinking-live" aria-live="polite">
           <div class="streaming-thinking-label">
             <span class="thinking-dots" aria-hidden="true">
@@ -75,6 +76,15 @@
             <span>Thinking</span>
           </div>
           <div class="streaming-thinking-text">{thinkingContent}</div>
+        </div>
+      {:else if thinkingContent}
+        <!-- Text has started: collapse thinking to a static label so local
+             models that stuff their whole response into thinking don't push
+             the actual reply off-screen. The finalized bubble in
+             AssistantMessage exposes the content once the turn lands. -->
+        <div class="streaming-thinking-collapsed">
+          <span class="toggle-arrow" aria-hidden="true">▸</span>
+          <span>Thinking</span>
         </div>
       {/if}
       {#if textContent}
@@ -219,6 +229,28 @@
     border-left: 2px solid var(--border-strong);
     padding: 2px 0 2px 12px;
     margin-left: 4px;
+  }
+
+  .streaming-thinking-collapsed {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 11px;
+    padding: 3px 10px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    letter-spacing: 0.02em;
+    margin-bottom: 6px;
+    align-self: flex-start;
+  }
+
+  .streaming-thinking-collapsed .toggle-arrow {
+    font-size: 10px;
+    width: 10px;
+    text-align: center;
   }
 
   .thinking-dots {
