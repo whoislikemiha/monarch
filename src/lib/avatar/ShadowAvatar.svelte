@@ -74,6 +74,35 @@
     }
   }
 
+  /**
+   * Write the animation booleans + dispatch any pending triggers.
+   *
+   * Shared by the Load handler (runs synchronously the moment inputs are
+   * cached, before Rive paints its first frame) and the reactive `$effect`
+   * (runs on every subsequent state change). Keeping them in one function
+   * guarantees the `prevAnimState` bookkeeping for trigger detection is
+   * consistent across both entry points.
+   *
+   * Fixes an initial flash where Rive would autoplay its default state
+   * (Coding) for a frame or two between `Load` and the first `$effect`
+   * tick, visually snapping to Idle a moment after mount.
+   */
+  function applyAnimState(state: AnimationState): void {
+    setBool("isIdle", state.isIdle);
+    setBool("isThinking", state.isThinking);
+    setBool("isCoding", state.isCoding);
+    setBool("isReading", state.isReading);
+    setBool("isUsingTool", state.isUsingTool);
+    setBool("isWaiting", state.isWaiting);
+    setBool("isError", state.isError);
+
+    const triggers = detectTriggers(prevAnimState, state);
+    if (triggers.taskComplete) fireTrigger("taskComplete");
+    if (triggers.summon) fireTrigger("summon");
+
+    prevAnimState = { ...state };
+  }
+
   onMount(() => {
     const dpr = window.devicePixelRatio || 1;
     canvasEl.width = size * dpr;
@@ -94,6 +123,11 @@
       const smNames: string[] = r.stateMachineNames ?? [];
       const smName = smNames[0] ?? stateMachine;
       cacheInputs(riveInstance!, smName);
+      // Write inputs synchronously in the same tick the SM becomes playable.
+      // Must happen BEFORE `riveReady = true` so we beat the default-state
+      // render that Rive would otherwise paint for a frame or two while the
+      // reactive `$effect` waits its turn on the scheduler.
+      applyAnimState(animState);
       riveReady = true;
     });
 
@@ -109,25 +143,11 @@
     };
   });
 
-  // Drive Rive inputs from agent state changes
+  // Drive Rive inputs from agent state changes. First application is done
+  // inline in the Load handler; this effect handles every subsequent update.
   $effect(() => {
     if (!riveReady) return;
-
-    // Apply boolean states
-    setBool("isIdle", animState.isIdle);
-    setBool("isThinking", animState.isThinking);
-    setBool("isCoding", animState.isCoding);
-    setBool("isReading", animState.isReading);
-    setBool("isUsingTool", animState.isUsingTool);
-    setBool("isWaiting", animState.isWaiting);
-    setBool("isError", animState.isError);
-
-    // Detect and fire triggers
-    const triggers = detectTriggers(prevAnimState, animState);
-    if (triggers.taskComplete) fireTrigger("taskComplete");
-    if (triggers.summon) fireTrigger("summon");
-
-    prevAnimState = { ...animState };
+    applyAnimState(animState);
   });
 
   /**
