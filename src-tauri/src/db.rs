@@ -215,6 +215,8 @@ impl Database {
                     CREATE INDEX IF NOT EXISTS idx_memories_layer ON memories(layer);
                     CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id);
                     CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+                    CREATE INDEX IF NOT EXISTS idx_events_agent_session ON events(agent_id, session_id);
+                    CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
 
                     CREATE TABLE IF NOT EXISTS agent_stats (
                         agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
@@ -273,6 +275,15 @@ impl Database {
                 // MON-66: archive lifecycle for shadows. NULL = active.
                 let _ = conn.execute_batch(
                     "ALTER TABLE agents ADD COLUMN archived_at TEXT;",
+                );
+
+                // MON-49: the events table is forensic, not operational.
+                // Prune rows older than 30 days on startup so the table does
+                // not grow unbounded. Errors are swallowed — a failed prune
+                // must not block app boot.
+                let _ = conn.execute(
+                    "DELETE FROM events WHERE timestamp < datetime('now', '-30 days')",
+                    [],
                 );
 
                 Ok(())
