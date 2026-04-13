@@ -8,7 +8,7 @@ Quick reference for building `.riv` files that work with the Monarch avatar syst
 2. Create **one state machine** on that artboard
 3. Add the inputs listed below (any subset — missing ones are skipped)
 4. Export as `.riv`, drop in `static/avatars/shadow_animations.riv`
-5. Done — component auto-detects the state machine name
+5. Name the state machine `ShadowSM` (or pass `stateMachine="YourName"` as a prop)
 
 ## Architecture
 
@@ -126,7 +126,7 @@ That covers ~80% of the value. Everything else is polish.
 Props:
 - `agentId: string` — required, binds to liveAgentStore
 - `size?: number` — pixels, default 64
-- `stateMachine?: string` — defaults to first SM found in file
+- `stateMachine?: string` — defaults to `"ShadowSM"`
 - `riveFile?: string` — defaults to `/avatars/shadow_animations.riv`
 
 ### Current placements

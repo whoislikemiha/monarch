@@ -46,16 +46,24 @@ const READ_TOOLS = new Set([
  * Derive the current animation state from a LiveAgentState snapshot.
  *
  * Priority order (first match wins):
- *   1. Error (desynced or any tool execution in error state)
- *   2. Tool running — subdivided into reading vs general tool use
- *   3. Coding (streaming with content being produced)
- *   4. Thinking (streaming but no content yet — model is reasoning)
- *   5. Idle (nothing happening)
+ *   1. Error — only when desynced (live signal). Past tool errors are NOT
+ *      persistent; they live forever in toolExecutions, so checking them
+ *      pinned the avatar red. Tool error UX should be a transient flash via
+ *      a trigger input, not a sticky boolean (TODO when triggers wired up).
+ *   2. Reading — currently running tool is a read-style tool
+ *   3. UsingTool — currently running tool is anything else
+ *   4. Coding — streaming with content
+ *   5. Thinking — streaming, no content yet
+ *   6. Idle
  *
- * "Waiting" is intentionally not derived here — it would need a time-based
- * heuristic (tool running for >N seconds) which doesn't belong in a pure
- * mapper. The component can layer that on with a timer if needed.
+ * Note: while the mapper distinguishes thinking/coding/reading/usingTool, the
+ * .riv currently only animates Idle/Coding/Error. Missing inputs no-op in the
+ * component, so for now any "doing something" state implicitly visualizes via
+ * isCoding only when its dedicated boolean has no animation. To explicitly
+ * fold all activity into Coding, set BROAD_CODING = true below.
  */
+const BROAD_CODING = true;
+
 export function deriveAnimationState(live: LiveAgentState): AnimationState {
   const idle: AnimationState = {
     isIdle: true,
@@ -67,29 +75,31 @@ export function deriveAnimationState(live: LiveAgentState): AnimationState {
     isError: false,
   };
 
-  // 1. Error state
+  // 1. Error state — only desynced is a live signal
   if (live.desynced) {
     return { ...idle, isIdle: false, isError: true };
   }
 
-  // Check tool executions for running/error states
+  // Inspect tool executions for currently running ones
   let hasRunningTool = false;
   let runningToolIsRead = false;
-  let hasErrorTool = false;
 
   for (const [, exec] of live.toolExecutions) {
-    if (exec.status === "error") hasErrorTool = true;
     if (exec.status === "running") {
       hasRunningTool = true;
       if (READ_TOOLS.has(exec.toolName)) runningToolIsRead = true;
     }
   }
 
-  if (hasErrorTool) {
-    return { ...idle, isIdle: false, isError: true };
+  // Decide active state
+  const active = hasRunningTool || live.isStreaming;
+  if (!active) return idle;
+
+  if (BROAD_CODING) {
+    // Collapse all activity → isCoding (until other animations are authored)
+    return { ...idle, isIdle: false, isCoding: true };
   }
 
-  // 2. Tool running
   if (hasRunningTool) {
     if (runningToolIsRead) {
       return { ...idle, isIdle: false, isReading: true };
@@ -97,16 +107,10 @@ export function deriveAnimationState(live: LiveAgentState): AnimationState {
     return { ...idle, isIdle: false, isUsingTool: true };
   }
 
-  // 3-4. Streaming states
-  if (live.isStreaming) {
-    if (live.streamingMessage && live.streamingMessage.content.length > 0) {
-      return { ...idle, isIdle: false, isCoding: true };
-    }
-    return { ...idle, isIdle: false, isThinking: true };
+  if (live.streamingMessage && live.streamingMessage.content.length > 0) {
+    return { ...idle, isIdle: false, isCoding: true };
   }
-
-  // 5. Idle
-  return idle;
+  return { ...idle, isIdle: false, isThinking: true };
 }
 
 /**

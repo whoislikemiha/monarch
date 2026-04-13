@@ -10,7 +10,7 @@
   } from "./stateMapper";
 
   const DEFAULT_RIV = "/avatars/shadow_animations.riv";
-  const DEFAULT_STATE_MACHINE = "StateMachine";
+  const DEFAULT_STATE_MACHINE = "ShadowSM";
 
   let {
     agentId,
@@ -89,6 +89,10 @@
       const smNames: string[] = r.stateMachineNames ?? [];
       const smName = smNames[0] ?? stateMachine;
       cacheInputs(riveInstance!, smName);
+    });
+
+    riveInstance.on(EventType.LoadError, (e: any) => {
+      console.error("[ShadowAvatar] Rive load error", agentId, e);
     });
 
     return () => {
