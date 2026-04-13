@@ -56,6 +56,8 @@ export interface Agent {
   sessionId?: string;
   sessions: SessionRecord[];
   sourceSessionId?: string; // Session ancestry to replay when restoring/continuing
+  /** MON-66: ISO timestamp when the shadow was archived, or undefined if active. */
+  archivedAt?: string;
 }
 
 // A session record — one conversation
