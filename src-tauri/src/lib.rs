@@ -86,8 +86,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         db::db_update_project_instructions,
         db::db_delete_project,
         // Project detection
-        agent::commands::detect_project,
-        agent::commands::read_project_instructions,
+        project::commands::detect_project,
+        project::commands::read_project_instructions,
         // UI state
         db::db_get_ui_state,
         db::db_set_ui_state,
@@ -217,8 +217,8 @@ pub fn run() {
             db::db_rename_project,
             db::db_update_project_instructions,
             db::db_delete_project,
-            agent::commands::detect_project,
-            agent::commands::read_project_instructions,
+            project::commands::detect_project,
+            project::commands::read_project_instructions,
             db::db_get_ui_state,
             db::db_set_ui_state,
             db::db_get_agent_stats,
