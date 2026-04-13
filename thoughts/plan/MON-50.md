@@ -47,7 +47,7 @@ Pure frontend wiring, no backend or schema changes.
 
 - **Formatter precision.** ShadowStatsTool's existing `formatCost` is probably fine but we should confirm one behavior now so all three surfaces agree: what to show for `< $0.0001` turns (e.g. a LM Studio local run where cost is 0). Options: `$0.0000`, `<$0.001`, or hide the chip entirely if zero. My lean: hide when `cost === 0` so free-provider runs don't show a meaningless `$0.00` everywhere.
 - **Sidebar source: A vs B.** I recommend B (see above). Confirm before implementing so I don't do the wrong one.
-- **Agent-level cost refresh cadence.** `AgentStats.totalCost` is a snapshot at load time. Should the sidebar refresh after each `message_end` (live ticking), or only on next app reload? My lean: keep it simple — load once, maybe re-fetch when the active agent's session count changes. Live-ticking the sidebar for every token would be overkill for a lifetime counter.
+- **Agent-level cost refresh cadence.** _Resolved:_ refresh per turn end. After each `message_end` for an agent, re-invoke `db_get_agent_stats` for that agent and update `lifetimeCost` on the `Agent` row. Rust already updates `agent_stats.total_cost` atomically per message (`db.rs:1106`), so the DB is canonical — one IPC roundtrip per turn. No frontend accumulation / no divergence risk.
 - **Placement on AssistantMessage label row.** Token count and cost can be on the same line; if label gets cramped at narrow widths, consider moving cost to an on-hover tooltip. Flag for during implementation.
 
 ## Out of scope
