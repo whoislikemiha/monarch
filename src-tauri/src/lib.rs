@@ -7,6 +7,7 @@ mod persistence;
 mod project;
 mod sidecar_protocol;
 mod toolbox;
+mod util;
 mod ws;
 mod zoom;
 

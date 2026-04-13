@@ -633,7 +633,7 @@ impl Database {
                 conn.execute(
                     "INSERT INTO events (agent_id, session_id, event_type, data, timestamp) \
                      VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![agent_id, session_id, event_type, data, crate::agent::chrono_now()],
+                    params![agent_id, session_id, event_type, data, crate::util::chrono_now()],
                 )?;
                 Ok(())
             })
