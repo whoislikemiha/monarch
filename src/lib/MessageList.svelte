@@ -62,7 +62,14 @@
         <span class="streaming-indicator"></span>
       </div>
       {#if isThinking && !textContent}
-        <div class="streaming-content streaming-thinking">thinking...</div>
+        <div class="streaming-content streaming-thinking" aria-live="polite">
+          <span class="thinking-dots" aria-hidden="true">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </span>
+          <span class="sr-only">Thinking</span>
+        </div>
       {:else if textContent}
         <div class="streaming-content">{textContent}</div>
       {/if}
@@ -182,6 +189,55 @@
   .streaming-thinking {
     color: var(--text-muted);
     font-style: italic;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .thinking-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .thinking-dots .dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    opacity: 0.35;
+    animation: thinking-pulse 1.1s ease-in-out infinite;
+  }
+
+  .thinking-dots .dot:nth-child(2) {
+    animation-delay: 0.18s;
+  }
+
+  .thinking-dots .dot:nth-child(3) {
+    animation-delay: 0.36s;
+  }
+
+  @keyframes thinking-pulse {
+    0%, 80%, 100% {
+      opacity: 0.25;
+      transform: scale(0.85);
+    }
+    40% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .streaming-tool {
