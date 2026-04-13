@@ -38,6 +38,7 @@
         provider: s.provider || undefined,
         startedAt: s.startedAt,
         messageCount: s.messageCount,
+        totalCost: s.totalCost,
       }));
     } catch {
       localSessions = sessions;

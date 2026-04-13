@@ -67,6 +67,7 @@ export interface SessionRecord {
   provider?: string;
   startedAt: string;
   messageCount?: number;
+  totalCost?: number;
 }
 
 // Reusable spawn preset — captures the fields SpawnDialog exposes so

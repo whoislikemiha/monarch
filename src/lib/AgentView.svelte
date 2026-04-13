@@ -116,6 +116,7 @@
         provider: s.provider || undefined,
         startedAt: s.startedAt,
         messageCount: s.messageCount,
+        totalCost: s.totalCost,
       }));
       updateAgent((current) => {
         const activeSessionId = current.sessionId;

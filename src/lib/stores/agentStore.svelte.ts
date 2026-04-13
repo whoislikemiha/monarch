@@ -227,6 +227,7 @@ class AgentStore {
             provider: s.provider || undefined,
             startedAt: s.startedAt,
             messageCount: s.messageCount,
+            totalCost: s.totalCost,
           })),
           sourceSessionId: latestSession?.id,
           archivedAt: row.archivedAt || undefined,
