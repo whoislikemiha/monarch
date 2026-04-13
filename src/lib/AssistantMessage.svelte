@@ -1,18 +1,20 @@
 <script lang="ts">
   import { marked } from "marked";
+  import { slide } from "svelte/transition";
   import type { ContentBlock } from "./types";
 
   let { content }: { content: ContentBlock[] } = $props();
 
-  let collapsedThinking: Set<number> = $state(new Set());
+  // Collapsed by default — track which blocks the user has expanded.
+  let expandedThinking: Set<number> = $state(new Set());
 
   function toggleThinking(index: number) {
-    if (collapsedThinking.has(index)) {
-      collapsedThinking.delete(index);
+    if (expandedThinking.has(index)) {
+      expandedThinking.delete(index);
     } else {
-      collapsedThinking.add(index);
+      expandedThinking.add(index);
     }
-    collapsedThinking = new Set(collapsedThinking);
+    expandedThinking = new Set(expandedThinking);
   }
 
   function renderMarkdown(text: string): string {
@@ -122,18 +124,27 @@
         {@html renderMarkdown(block.text)}
       </div>
     {:else if block.type === "thinking"}
+      {@const expanded = expandedThinking.has(i)}
       <div class="thinking-block">
-        <button class="thinking-toggle" onclick={() => toggleThinking(i)}>
-          <span class="toggle-arrow"
-            >{collapsedThinking.has(i) ? "▸" : "▾"}</span
-          >
-          Thinking
+        <button
+          class="thinking-toggle"
+          type="button"
+          aria-expanded={expanded}
+          onclick={() => toggleThinking(i)}
+        >
+          <span class="toggle-arrow" aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+          <span class="toggle-label">Thinking</span>
           {#if block.redacted}
             <span class="redacted-tag">redacted</span>
           {/if}
         </button>
-        {#if !collapsedThinking.has(i)}
-          <div class="thinking-content">{block.thinking}</div>
+        {#if expanded}
+          <div
+            class="thinking-content"
+            transition:slide={{ duration: 180 }}
+          >
+            {block.thinking}
+          </div>
         {/if}
       </div>
     {:else if block.type === "toolCall"}
@@ -281,30 +292,41 @@
   }
 
   .thinking-block {
-    border-left: 2px solid var(--border-strong);
-    padding-left: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
   }
 
   .thinking-toggle {
-    background: none;
-    border: none;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
     color: var(--text-muted);
     cursor: pointer;
     font-size: 11px;
-    padding: 2px 0;
-    display: flex;
+    padding: 3px 10px;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
   }
 
   .thinking-toggle:hover {
     color: var(--text-secondary);
+    background: var(--bg-panel-3);
+    border-color: var(--border-strong);
   }
 
   .toggle-arrow {
     font-size: 10px;
     width: 10px;
+    text-align: center;
+  }
+
+  .toggle-label {
+    letter-spacing: 0.02em;
   }
 
   .redacted-tag {
@@ -317,7 +339,9 @@
     font-size: 12px;
     line-height: 1.5;
     white-space: pre-wrap;
-    margin-top: 4px;
     font-style: italic;
+    border-left: 2px solid var(--border-strong);
+    padding: 2px 0 2px 12px;
+    margin-left: 4px;
   }
 </style>
