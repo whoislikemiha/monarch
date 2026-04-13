@@ -227,7 +227,7 @@ impl LiveAgentState {
 /// Extract plain-text content from a Pi message.content field which may be
 /// either a string or an array of content blocks. Mirrors the inline logic in
 /// AgentView.svelte's `message_start` case for user messages.
-fn extract_user_text(content: &serde_json::Value) -> String {
+pub(crate) fn extract_user_text(content: &serde_json::Value) -> String {
     if let Some(s) = content.as_str() {
         return s.to_string();
     }

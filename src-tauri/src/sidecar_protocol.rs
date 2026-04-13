@@ -476,7 +476,7 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                     let content = message
                         .content
                         .as_ref()
-                        .map(extract_user_text)
+                        .map(crate::agent_state::extract_user_text)
                         .unwrap_or_default();
                     state.items.push(DisplayItem::User {
                         content,
@@ -654,32 +654,6 @@ fn streaming_from(message: &Message) -> StreamingMessage {
         usage: message.usage.clone(),
         timestamp: message.timestamp,
     }
-}
-
-/// Extract plain text from a Pi SDK message.content field, which may be
-/// either a string or an array of content blocks. Mirrors the inline logic
-/// in the pre-MON-32 `agent_state.rs::extract_user_text` — kept here so the
-/// typed `apply_event` path doesn't need to reach back into the agent_state
-/// module for a helper, and the recovery-path copy in `agent_state.rs`
-/// stays independent.
-fn extract_user_text(content: &Value) -> String {
-    if let Some(s) = content.as_str() {
-        return s.to_string();
-    }
-    if let Some(blocks) = content.as_array() {
-        return blocks
-            .iter()
-            .filter_map(|b| {
-                if b.get("type").and_then(|t| t.as_str()) == Some("text") {
-                    b.get("text").and_then(|t| t.as_str()).map(String::from)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("");
-    }
-    String::new()
 }
 
 #[cfg(test)]

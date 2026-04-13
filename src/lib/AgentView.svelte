@@ -76,12 +76,34 @@
     return list.filter((item) => item.kind === "user" || item.kind === "assistant").length;
   }
 
-  function scrollToBottom() {
+  // Stick-to-bottom threshold: treat "within 20px of the bottom" as still
+  // at the bottom so tiny scroll drifts from layout changes don't flip the
+  // flag. Tracked by the `onscroll` handler on the scroll container.
+  const STICK_BOTTOM_PX = 20;
+  let isAtBottom = $state(true);
+
+  function updateIsAtBottom() {
     const container = scrollContainer;
     if (!container) return;
+    const distance =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    isAtBottom = distance <= STICK_BOTTOM_PX;
+  }
+
+  /**
+   * Auto-scroll to the bottom of the chat. When `force` is false (the default
+   * used by streaming paths), respects the user's scroll position — if they
+   * scrolled up to read history, the view stays put. When `force` is true
+   * (initial session load, restore paths), jumps to the bottom regardless.
+   */
+  function scrollToBottom(force = false) {
+    const container = scrollContainer;
+    if (!container) return;
+    if (!force && !isAtBottom) return;
 
     requestAnimationFrame(() => {
       container.scrollTop = container.scrollHeight;
+      isAtBottom = true;
     });
   }
 
@@ -165,7 +187,7 @@
             console.error("Failed to load session context:", e);
           });
         }
-        scrollToBottom();
+        scrollToBottom(true);
         break;
 
       case "sidecar_error":
@@ -548,7 +570,7 @@
       {onprojectedit}
     />
 
-    <div class="messages-scroll" bind:this={scrollContainer}>
+    <div class="messages-scroll" bind:this={scrollContainer} onscroll={updateIsAtBottom}>
       <MessageList {items} {streamingMessage} />
 
       {#if agent.status === "stopped" && !isStandby}
