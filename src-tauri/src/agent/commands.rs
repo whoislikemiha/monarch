@@ -16,21 +16,6 @@ use crate::error::MonarchError;
 
 use super::AgentManager;
 
-#[tauri::command]
-#[specta::specta]
-pub async fn detect_project(
-    db: tauri::State<'_, Arc<Database>>,
-    cwd: String,
-) -> Result<Option<serde_json::Value>, MonarchError> {
-    crate::project::detect_project(&db, &cwd).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn read_project_instructions(cwd: String) -> Result<Option<String>, MonarchError> {
-    Ok(crate::project::read_project_instructions(&cwd))
-}
-
 /// Shadow identity block carried inside `SpawnAgentRequest`. Mirrors the
 /// frontend's nested `config.shadow` object (name/title/grade), which the
 /// backend then maps into the sidecar-facing `ShadowConfig` by injecting the

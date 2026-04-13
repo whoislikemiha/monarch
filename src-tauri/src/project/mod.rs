@@ -3,6 +3,12 @@
 //! these lived inline in `agent.rs` and were duplicated across the Tauri
 //! command and its `ws_*` twin; both transports now funnel through the
 //! free functions here.
+//!
+//! The Tauri `#[command]` wrappers (previously in `agent/commands.rs` for
+//! historical reasons) now live in `commands` so the `agent` module stays
+//! focused on agent-loop concerns — see MON-69.
+
+pub mod commands;
 
 use std::path::{Path, PathBuf};
 
