@@ -51,19 +51,43 @@
   {/each}
 
   {#if streamingMessage}
+    {@const thinkingContent = streamingMessage.content
+      .filter((b): b is { type: "thinking"; thinking: string; redacted?: boolean } => b.type === "thinking")
+      .map((b) => b.thinking)
+      .join("\n")}
     {@const textContent = streamingMessage.content
       .filter((b): b is { type: "text"; text: string } => b.type === "text")
       .map((b) => b.text)
       .join("")}
-    {@const isThinking = streamingMessage.content.some((b) => b.type === "thinking")}
     <div class="message assistant-message streaming">
       <div class="message-label">
         Assistant
         <span class="streaming-indicator"></span>
       </div>
-      {#if isThinking && !textContent}
-        <div class="streaming-content streaming-thinking">thinking...</div>
-      {:else if textContent}
+      {#if thinkingContent && !textContent}
+        <!-- Thinking-only phase: render text live so the user can follow along. -->
+        <div class="streaming-thinking-live" aria-live="polite">
+          <div class="streaming-thinking-label">
+            <span class="thinking-dots" aria-hidden="true">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+            </span>
+            <span>Thinking</span>
+          </div>
+          <div class="streaming-thinking-text">{thinkingContent}</div>
+        </div>
+      {:else if thinkingContent}
+        <!-- Text has started: collapse thinking to a static label so local
+             models that stuff their whole response into thinking don't push
+             the actual reply off-screen. The finalized bubble in
+             AssistantMessage exposes the content once the turn lands. -->
+        <div class="streaming-thinking-collapsed">
+          <span class="toggle-arrow" aria-hidden="true">▸</span>
+          <span>Thinking</span>
+        </div>
+      {/if}
+      {#if textContent}
         <div class="streaming-content">{textContent}</div>
       {/if}
     </div>
@@ -179,9 +203,100 @@
     word-break: break-word;
   }
 
-  .streaming-thinking {
+  .streaming-thinking-live {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 6px;
+  }
+
+  .streaming-thinking-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     color: var(--text-muted);
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    letter-spacing: 0.02em;
+  }
+
+  .streaming-thinking-text {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
     font-style: italic;
+    border-left: 2px solid var(--border-strong);
+    padding: 2px 0 2px 12px;
+    margin-left: 4px;
+  }
+
+  .streaming-thinking-collapsed {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 11px;
+    padding: 3px 10px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    letter-spacing: 0.02em;
+    margin-bottom: 6px;
+    align-self: flex-start;
+  }
+
+  .streaming-thinking-collapsed .toggle-arrow {
+    font-size: 10px;
+    width: 10px;
+    text-align: center;
+  }
+
+  .thinking-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .thinking-dots .dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    opacity: 0.35;
+    animation: thinking-pulse 1.1s ease-in-out infinite;
+  }
+
+  .thinking-dots .dot:nth-child(2) {
+    animation-delay: 0.18s;
+  }
+
+  .thinking-dots .dot:nth-child(3) {
+    animation-delay: 0.36s;
+  }
+
+  @keyframes thinking-pulse {
+    0%, 80%, 100% {
+      opacity: 0.25;
+      transform: scale(0.85);
+    }
+    40% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .streaming-tool {
