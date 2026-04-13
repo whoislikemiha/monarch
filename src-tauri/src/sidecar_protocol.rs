@@ -500,9 +500,16 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                     state.last_usage = Some(usage);
                 }
                 state.streaming_message = Some(sm);
-                return ApplyOutcome::Debounce;
+                // MON-70: fall through so `state_version` gets bumped at the
+                // end of the match. Previously this early-returned, meaning
+                // every debounced snapshot during a streaming turn carried
+                // the same stateVersion and the frontend's `<=` stale-drop
+                // check discarded all but the first one — visually manifesting
+                // as "nothing streams, everything dumps at the end."
+                ApplyOutcome::Debounce
+            } else {
+                ApplyOutcome::NoOp
             }
-            ApplyOutcome::NoOp
         }
         InnerEvent::MessageEnd { message } => {
             if message.role == "assistant" {
@@ -771,9 +778,12 @@ mod tests {
     }
 
     #[test]
-    fn state_version_unchanged_on_debounce_early_return() {
-        // MessageUpdate(assistant) does `return ApplyOutcome::Debounce` before
-        // reaching the version-bump block at the end of apply_event.
+    fn state_version_bumps_on_debounce() {
+        // MON-70: MessageUpdate(assistant) returns Debounce *and* bumps
+        // state_version so each debounced snapshot carries a monotonically
+        // increasing version. The frontend's stale-drop check (`incoming
+        // <= existing`) otherwise discards every snapshot after the first
+        // during a streaming turn.
         let mut s = fresh_state();
         // Set up streaming state so the update is meaningful.
         apply_event(
@@ -790,8 +800,7 @@ mod tests {
             },
         );
         assert_eq!(outcome, ApplyOutcome::Debounce);
-        // The early return skips the version bump.
-        assert_eq!(s.state_version, v_before);
+        assert_eq!(s.state_version, v_before + 1);
     }
 
     // ---- AgentStart / AgentEnd --------------------------------------------
