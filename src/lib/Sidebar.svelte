@@ -1,6 +1,7 @@
 <script lang="ts">
-  import type { Agent, Project, SessionRecord, ShadowIdentity } from "./types";
+  import type { Agent, Project, ShadowIdentity } from "./types";
   import { ShadowAvatar } from "./avatar";
+  import { agentStore } from "./stores/agentStore.svelte";
 
   interface ProjectGroup {
     project?: Project;
@@ -17,37 +18,25 @@
     shadow?: ShadowIdentity;
   }
 
+  // Props kept:
+  //   - `oncreate` triggers the spawn dialog owned by App.
+  //   - `ondismiss` / `ondelete` go through App's confirm dialogs before
+  //     any lifecycle call.
+  //   - `oneditproject` opens the project editor modal in App.
+  //   - `onsavetemplate` is a local handler with DB invoke logic in App.
+  // Everything else is read from / dispatched into `agentStore` directly.
   let {
-    agents,
-    projects = [],
-    collapsed = false,
-    activeId,
-    showAll = false,
-    onselect,
     oncreate,
     ondismiss,
     ondelete,
-    onsummon,
-    ontoggleshowall,
     oneditproject,
     onsavetemplate,
   }: {
-    agents: Agent[];
-    projects?: Project[];
-    collapsed?: boolean;
-    activeId: string | null;
-    /** MON-66: when true, archived shadows are included in the list (greyed out). */
-    showAll?: boolean;
-    onselect: (id: string) => void;
     oncreate: () => void;
     /** X button on a row — opens the dismiss confirm in App. */
     ondismiss: (id: string) => void;
     /** Context-menu "Delete permanently" — opens the delete confirm in App. */
     ondelete: (id: string) => void;
-    /** Context-menu "Summon back" on an archived shadow — unarchives it. */
-    onsummon: (id: string) => void;
-    /** Active/All toggle emits the new value. */
-    ontoggleshowall: (next: boolean) => void;
     oneditproject?: (project: Project) => void;
     onsavetemplate?: (source: TemplateSource) => void;
   } = $props();
@@ -92,7 +81,7 @@
 
   function handleSummon() {
     if (!contextMenu) return;
-    onsummon(contextMenu.agentId);
+    agentStore.summonAgent(contextMenu.agentId);
     closeContextMenu();
   }
 
@@ -105,7 +94,7 @@
   // Group agents by project
   let projectGroups = $derived.by(() => {
     const projectMap = new Map<string, Project>();
-    for (const p of projects) projectMap.set(p.id, p);
+    for (const p of agentStore.projects) projectMap.set(p.id, p);
 
     const groups = new Map<string, ProjectGroup>();
     const ungrouped: ProjectGroup = { project: undefined, agents: [] };
@@ -117,7 +106,7 @@
       return groups.get(projectId)!;
     }
 
-    for (const agent of agents) {
+    for (const agent of agentStore.agents) {
       if (agent.projectId && projectMap.has(agent.projectId)) {
         ensureGroup(agent.projectId).agents.push(agent);
       } else {
@@ -133,8 +122,8 @@
   });
 </script>
 
-<aside class="sidebar" class:collapsed>
-  {#if collapsed}
+<aside class="sidebar" class:collapsed={agentStore.sidebarCollapsed}>
+  {#if agentStore.sidebarCollapsed}
     <!-- Collapsed rail view -->
     <div class="rail">
       <div class="rail-icon" title="Monarch">M</div>
@@ -152,19 +141,19 @@
         >
           <button
             class="view-toggle-btn"
-            class:selected={!showAll}
-            onclick={() => ontoggleshowall(false)}
+            class:selected={!agentStore.sidebarShowAll}
+            onclick={() => agentStore.setSidebarShowAll(false)}
             title="Show only active shadows"
-            aria-pressed={!showAll}
+            aria-pressed={!agentStore.sidebarShowAll}
           >
             Active
           </button>
           <button
             class="view-toggle-btn"
-            class:selected={showAll}
-            onclick={() => ontoggleshowall(true)}
+            class:selected={agentStore.sidebarShowAll}
+            onclick={() => agentStore.setSidebarShowAll(true)}
             title="Include archived shadows"
-            aria-pressed={showAll}
+            aria-pressed={agentStore.sidebarShowAll}
           >
             All
           </button>
@@ -192,11 +181,11 @@
           {@const isArchived = !!agent.archivedAt}
           <div
             class="agent-item"
-            class:active={agent.id === activeId}
+            class:active={agent.id === agentStore.activeTabId}
             class:standby={agent.status === "stopped"}
             class:archived={isArchived}
-            onclick={() => onselect(agent.id)}
-            onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') onselect(agent.id); }}
+            onclick={() => agentStore.selectAgent(agent.id)}
+            onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') agentStore.selectAgent(agent.id); }}
             oncontextmenu={(e: MouseEvent) => openAgentMenu(e, agent)}
             role="button"
             tabindex="0"
@@ -215,7 +204,7 @@
             {#if isArchived}
               <button
                 class="btn-icon btn-summon"
-                onclick={(e: MouseEvent) => { e.stopPropagation(); onsummon(agent.id); }}
+                onclick={(e: MouseEvent) => { e.stopPropagation(); agentStore.summonAgent(agent.id); }}
                 title="Summon back"
                 aria-label="Summon {agent.name} back"
               >
@@ -236,7 +225,7 @@
       {/each}
     </div>
 
-    {#if agents.length === 0}
+    {#if agentStore.agents.length === 0}
       <div class="empty-state">
         No shadows extracted.<br />Click + to extract one.
       </div>
