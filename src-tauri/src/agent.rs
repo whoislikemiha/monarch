@@ -718,6 +718,7 @@ impl AgentManager {
             context_window: effective_context_window,
             created_at: now.clone(),
             updated_at: now.clone(),
+            archived_at: None,
         })
         .await?;
 
@@ -891,6 +892,7 @@ impl AgentManager {
             context_window: None,
             created_at: chrono_now(),
             updated_at: chrono_now(),
+            archived_at: None,
         })
         .await?;
 

@@ -91,7 +91,9 @@ export const commands = {
 	saveAgentPrompt: (agentId: string, prompt: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("save_agent_prompt", { agentId, prompt })),
 	getPromptsDir: () => typedError<string, ErrorDto>(__TAURI_INVOKE("get_prompts_dir")),
 	dbUpsertAgent: (agent: AgentRow) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_upsert_agent", { agent })),
-	dbGetAgents: () => typedError<AgentRow[], ErrorDto>(__TAURI_INVOKE("db_get_agents")),
+	dbGetAgents: (includeArchived: boolean | null) => typedError<AgentRow[], ErrorDto>(__TAURI_INVOKE("db_get_agents", { includeArchived })),
+	dbArchiveAgent: (agentId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_archive_agent", { agentId })),
+	dbUnarchiveAgent: (agentId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_unarchive_agent", { agentId })),
 	dbDeleteAgent: (agentId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_delete_agent", { agentId })),
 	dbCreateSession: (session: SessionRow) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_create_session", { session })),
 	dbGetSessions: (agentId: string) => typedError<SessionRow[], ErrorDto>(__TAURI_INVOKE("db_get_sessions", { agentId })),
@@ -145,6 +147,12 @@ export type AgentRow = {
 	contextWindow: number | null,
 	createdAt: string,
 	updatedAt: string,
+	/**
+	 *  MON-66: ISO timestamp when the agent was archived, or None if active.
+	 *  Archive preserves the DB row (history, sessions, stats) but removes
+	 *  the shadow from the default active roster. See `archive_agent_internal`.
+	 */
+	archivedAt: string | null,
 };
 
 export type AgentStats = {
