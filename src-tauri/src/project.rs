@@ -6,9 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::agent::{chrono_now, uuid_v4_simple};
 use crate::db::{Database, ProjectRow};
 use crate::error::MonarchError;
+use crate::util::{chrono_now, uuid_v4_simple};
 
 /// Walk up from `start` looking for a `.git` directory. Returns the directory
 /// containing `.git`.

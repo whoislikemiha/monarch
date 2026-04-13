@@ -1,0 +1,47 @@
+//! Agent module facade.
+//!
+//! - `manager`        — `AgentManager`, live-state types, high-level lifecycle methods.
+//! - `sidecar`        — `SidecarProcess` + the `impl AgentManager` block that owns
+//!                      sidecar spawn / stdin-stdout / crash recovery.
+//! - `event_handler`  — inbound sidecar event dispatch and snapshot emission.
+//! - `persist`        — single-consumer persistence pipeline (MON-37).
+//! - `commands`       — Tauri command wrappers + request DTOs.
+//!
+//! Cross-cutting types (`WsBroadcast`, `TaskHandle`) and the
+//! `DEBOUNCE_MILLIS` constant live here so every submodule can reach them
+//! without a circular import chain.
+
+use serde::Serialize;
+
+pub mod commands;
+mod event_handler;
+mod manager;
+mod persist;
+mod sidecar;
+
+// DTOs re-exported at the module root so `crate::agent::SpawnAgentRequest`
+// etc. keep working for ws.rs. Tauri command fns themselves stay addressed
+// as `agent::commands::X` because `#[tauri::command]` emits a paired
+// `__cmd__<name>` helper that must share the fn's module.
+pub use commands::{ExtensionUiResponseRequest, SpawnAgentRequest};
+pub use manager::AgentManager;
+
+/// Debounce window for streaming `message_update` events. Token-rate chunks
+/// would otherwise clone + serialize the full snapshot per token; 16ms caps
+/// the emit rate at ~60fps which is visually equivalent and ~10x cheaper on
+/// token-heavy turns. Terminal events (message_end, tool_execution_end, etc.)
+/// bypass this and flush immediately so perceived "done" transitions stay
+/// latency-free.
+pub(crate) const DEBOUNCE_MILLIS: u64 = 16;
+
+/// Shared alias for the debounce-task `JoinHandle`. Lives at the module
+/// root because `AgentStateInner` holds one and `apply_and_maybe_emit`
+/// spawns one.
+pub(crate) type TaskHandle = tauri::async_runtime::JoinHandle<()>;
+
+/// A broadcast event sent to WebSocket clients.
+#[derive(Debug, Clone, Serialize)]
+pub struct WsBroadcast {
+    pub event: String,
+    pub payload: String,
+}
