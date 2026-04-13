@@ -32,12 +32,12 @@ At the conceptual level:
 
 No schema changes. No protocol changes. No changes to `getAllText` / copy behavior (explicitly out of scope per AC).
 
-## Open questions
+## Resolved decisions
 
-- **Details vs. button.** `<details>`/`<summary>` gives us free toggle + keyboard semantics but is harder to animate smoothly in all browsers. Is the extra polish worth custom JS state? (My default: stay with the current `button` + `aria-expanded` + Svelte `slide` for predictable transition behavior, unless you prefer the built-in.)
-- **Redacted-thinking affordance.** `block.redacted` currently shows a small `redacted` tag inside the toggle. Should a redacted block still be expandable (showing the placeholder text), or should it be a non-toggle pill? Current code expands to show the redacted marker body — I'd keep that behavior unless you say otherwise.
-- **Streaming indicator scope.** The "animated indicator" AC mentions "while the agent is actively thinking." Today we only show the streaming thinking label when thinking is present *and* no text has streamed yet. Should the indicator also appear adjacent to an already-rendered partial text block (i.e. agent thinks mid-response), or keep the current "thinking → text" single-state display? My read: keep current behavior — animate the existing state, don't add new surfaces.
-- **Preserve state across re-render?** If a user expands a thinking block and the streaming message then finalizes into an item, the component identity may change and the expanded state will reset. Acceptable? (I'd say yes — AC doesn't require cross-lifecycle persistence, and adding it means lifting state up into the store.)
+- **Toggle mechanism:** custom `button` + `aria-expanded` + Svelte `slide` transition. Not `<details>`/`<summary>`.
+- **Redacted thinking:** remains a toggleable bubble, collapsed by default like any other thinking block. No special non-toggle pill.
+- **Streaming indicator scope:** drop-in replacement for the existing pre-text "thinking..." label. Do not introduce a new mid-response streaming surface for thinking that arrives after text has started.
+- **Stream → finalized handoff:** acceptable for per-block expand state to reset when the streaming message finalizes into an `AssistantMessage` item. Do not lift state into the store.
 
 ## Out of scope reminders
 
