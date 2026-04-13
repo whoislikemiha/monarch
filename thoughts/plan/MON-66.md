@@ -82,22 +82,57 @@ No code path deletes DB rows. The existing `db_delete_agent` command is out of s
 - Update `CLAUDE.md` key files table if any new top-level file is added (none expected).
 - Update `ONBOARDING.md` data model section to mention `archived_at` as part of the `agents` schema.
 
-## Open questions
+## Decisions locked in
 
-1. **Column name & type**. Spec says `archived_at TEXT NULL` (ISO timestamp). The Explore agent suggested `is_archived BOOLEAN`. Timestamp wins (preserves when), but worth confirming before committing.
-2. **Single vs two commands for archive/unarchive**. Could be a single `db_set_agent_archived(id, archived: bool)` for symmetry, or two commands (`db_archive_agent`, `db_unarchive_agent`) for clarity. Minor — leaning two commands for call-site readability.
-3. **`db_get_agents` signature**. Add `include_archived: bool` param (backwards-incompatible at the call site but regenerated bindings make it automatic) vs. add a separate `db_get_all_agents` command. Leaning single command with the flag.
-4. **`db_delete_agent` reachability audit**. An existing `db_delete_agent` command sits at `db.rs:1084`. The acceptance criteria require "no code path permanently deletes agent rows". Before implementation, grep the frontend for any call to `db_delete_agent` / `deleteAgent` and either (a) confirm it's dead code and remove it, (b) confirm it's only gated behind some admin/debug path and leave it, or (c) note its existence in ONBOARDING.md. If it is live from some flow, we need a decision: keep it with a clear separation of intent, or gate it behind an explicit debug flag.
-5. **Confirmation dialog copy**. "Dismiss [shadow name]?" with "Conversation history and stats are preserved" — this is my proposal. User should verify the voice matches the Shadow Army lore (e.g. "Return [name] to the shadow realm?" is more thematic but may feel silly).
-6. **Toggle placement**. Two options for the Active / All control: (a) top of the sidebar next to the `+` button, (b) bottom of the sidebar as a footer control. Top is more discoverable; bottom feels lower-stakes / less cluttered. Leaning top.
-7. **Should `kill_agent` remain a separate concept from archive?** Today killing just stops the sidecar. After this ticket, there's no UI to kill-without-archive. Is that OK, or do we want to keep a distinct "stop this shadow's process but keep it in the active roster" as a separate action? Likely out of scope for MVP, but worth naming.
-8. **Archive auto-kill semantics**. If the operator dismisses an agent whose sidecar is already stopped (grade standby), should we still call `kill_agent`? Probably a no-op on Rust side — verify in `agent.rs:806-816` that kill on an already-killed agent is idempotent.
+1. **Column** — `archived_at TEXT NULL` (ISO timestamp). Preserves the *when*.
+2. **Commands** — two: `db_archive_agent(id)` and `db_unarchive_agent(id)`. Readable at call sites.
+3. **List query** — extend `db_get_agents` with `include_archived: bool` flag (default false). One command, backwards-compatible via regenerated bindings.
+4. **Permanent delete** — **in scope**. Right-click menu exposes "Delete permanently" (visually distinct, red) with its own confirmation dialog separate from Dismiss. `db_delete_agent` is the backing command; no other path in the UI invokes it.
+5. **Dismiss dialog copy** — plain and factual: "Dismiss [name]?" with supporting copy noting history and stats are preserved. No lore.
+6. **Delete dialog copy** — plain and factual but firmer: "Permanently delete [name]?" with a clear irreversible warning.
+7. **Toggle placement** — **top of sidebar**, next to the `+` button. Segmented control with Active / All.
+8. **Kill idempotency** — verify `agent.rs:806-816` no-ops when the agent is already stopped; fix defensively if not.
+
+## Implementation phases
+
+Planned as three commits for clean reviewability.
+
+### Phase 1 — Backend: schema + commands
+
+- Add `archived_at` column via `ALTER TABLE` in `Database::new()` migration block.
+- Add `archived_at: Option<String>` to `AgentRow` struct.
+- Add `archive_agent_internal`, `unarchive_agent_internal` DB methods.
+- Modify `get_agents_internal` to accept an `include_archived: bool` argument.
+- Add `db_archive_agent`, `db_unarchive_agent` Tauri commands; update `db_get_agents` signature.
+- Register all three in `lib.rs` `generate_handler!`.
+- Mirror in `ws.rs` `dispatch_command`.
+- Regenerate `bindings.ts`.
+- `cargo check` clean; no frontend changes yet.
+
+### Phase 2 — Frontend: dismiss + sidebar filter + toggle
+
+- Add `archivedAt?: string` to `Agent` frontend type.
+- `loadSavedAgents()` threads `include_archived: sidebarShowAll` to `db_get_agents`.
+- New `sidebarShowAll` state on `App.svelte`; persist via `db_set_ui_state` like `sidebarCollapsed`.
+- Replace current X-button behavior: confirm dialog → `kill_agent` → `db_archive_agent` → remove from `agents` array → close tab.
+- Add segmented Active / All control at the top of the sidebar (next to `+` button).
+- Add `class:archived` visual state in `Sidebar.svelte` — dimmed and visually distinct from current `.standby`.
+- Update button tooltip copy: "Dismiss".
+
+### Phase 3 — Frontend: unarchive + permanent delete via context menu
+
+- Extend right-click menu in `Sidebar.svelte`:
+  - Always available: "Save as template" (existing), "Delete permanently" (new, red).
+  - When agent is archived: replace the dismiss/kill button behavior with "Summon back" too.
+- Wire `onsummon` and `ondeletepermanent` callbacks from sidebar to App.svelte.
+- On summon: call `db_unarchive_agent` → clear `archivedAt` locally.
+- On delete: confirm dialog (separate, irreversibly-worded) → `kill_agent` (if running) → `db_delete_agent` → remove locally.
+- Verify `kill_agent` idempotency during testing; file a tiny follow-up commit on this branch if a defensive guard is needed.
 
 ## Out of scope
 
 - Bulk archive / multi-select
 - Auto-archive of long-idle agents
 - Archive search, filtering by date, or bulk views
-- Permanent-delete UI (`db_delete_agent` stays as-is unless Open Question #4 surfaces a problem)
-- Syncing archive state to Linear or other external systems
-- Changes to how running agents' sidecar processes are managed beyond the existing `kill_agent` flow
+- "Stop sidecar without archiving" as a distinct UI action
+- Syncing archive state to external systems (Linear, remote instances)
