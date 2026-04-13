@@ -5,6 +5,7 @@
   import Sidebar from "./lib/Sidebar.svelte";
   import AgentView from "./lib/AgentView.svelte";
   import SpawnDialog from "./lib/SpawnDialog.svelte";
+  import ConfirmDialog from "./lib/ConfirmDialog.svelte";
   import TabBar from "./lib/TabBar.svelte";
   import ProjectEditor from "./lib/ProjectEditor.svelte";
   import ToolRail from "./lib/toolbox/ToolRail.svelte";
@@ -30,8 +31,16 @@
   let openTabs: string[] = $state([]);
   let activeTabId: string | null = $state(null);
   let sidebarCollapsed = $state(false);
+  /** MON-66: Active / All toggle for the sidebar. Active hides archived shadows. */
+  let sidebarShowAll = $state(false);
   let showSpawnDialog = $state(false);
   let showSettings = $state(false);
+
+  // MON-66: pending confirmation dialogs. Only one is active at a time.
+  type PendingConfirm =
+    | { kind: "dismiss"; agent: Agent }
+    | { kind: "delete"; agent: Agent };
+  let pendingConfirm: PendingConfirm | null = $state(null);
   let counter = 0;
   let agentViewRef: AgentView | undefined = $state(undefined);
   let exitListeners: Map<string, import("$lib/api").UnlistenFn> = new Map();
@@ -117,6 +126,7 @@
     cwd?: string | null;
     customPrompt?: string | null;
     contextWindow?: number | null;
+    archivedAt?: string | null;
     createdAt: string;
     updatedAt: string;
   }
@@ -145,9 +155,12 @@
     }
   }
 
-  async function loadSavedAgents() {
+  async function loadSavedAgents(includeArchived: boolean = false) {
     try {
-      const dbAgents = await invoke<AgentDbRow[]>("db_get_agents");
+      const dbAgents = await invoke<AgentDbRow[]>("db_get_agents", {
+        includeArchived,
+      });
+      const loaded: Agent[] = [];
       for (const row of dbAgents) {
         const sessions = await invoke<SessionDbRow[]>("db_get_sessions", { agentId: row.id });
         const latestSession = sessions[0];
@@ -175,25 +188,55 @@
             messageCount: s.messageCount,
           })),
           sourceSessionId: latestSession?.id,
+          archivedAt: row.archivedAt || undefined,
         };
-        agents = [...agents, agent];
+        loaded.push(agent);
       }
-      // Don't set openTabs here — loadUiState() restores saved tabs.
-      // Only set a default activeTabId so the UI has something selected.
-      if (agents.length > 0 && !activeTabId) {
-        activeTabId = agents[0].id;
+      agents = loaded;
+      // Filter open tabs to the currently loaded set. On initial launch this
+      // is a no-op (loadTabState hasn't run yet, openTabs is []); on a toggle
+      // flip from All→Active it drops tabs whose agents are now hidden.
+      const agentIdSet = new Set(loaded.map((a) => a.id));
+      openTabs = openTabs.filter((id) => agentIdSet.has(id));
+      // If the active agent got filtered out (e.g. flipped to Active mode
+      // while focused on an archived shadow), fall back to the first visible.
+      if (activeTabId && !agentIdSet.has(activeTabId)) {
+        activeTabId = loaded.find((a) => !a.archivedAt)?.id ?? null;
+      }
+      // Default-select the first non-archived agent when nothing else is active,
+      // so a fresh start lands on a usable shadow instead of a dismissed one.
+      if (!activeTabId) {
+        activeTabId = loaded.find((a) => !a.archivedAt)?.id ?? null;
       }
     } catch {
       // No saved state
     }
   }
 
-  async function loadUiState() {
+  /**
+   * Restore cheap UI preferences that don't depend on the agent list. Must
+   * run before `loadSavedAgents` so the archive filter reflects the user's
+   * last toggle state.
+   */
+  async function loadUiPrefs() {
+    try {
+      const collapsedJson = await invoke<string | null>("db_get_ui_state", { key: "sidebarCollapsed" });
+      const themeJson = await invoke<string | null>("db_get_ui_state", { key: "theme" });
+      const showAllJson = await invoke<string | null>("db_get_ui_state", { key: "sidebarShowAll" });
+      if (collapsedJson) sidebarCollapsed = JSON.parse(collapsedJson);
+      if (showAllJson) sidebarShowAll = JSON.parse(showAllJson);
+      if (themeJson) applyTheme(JSON.parse(themeJson));
+    } catch {}
+  }
+
+  /**
+   * Restore tab-related UI state. Runs after agents are loaded so we can
+   * validate saved tab ids against the currently visible agent roster.
+   */
+  async function loadTabState() {
     try {
       const tabsJson = await invoke<string | null>("db_get_ui_state", { key: "openTabs" });
       const activeJson = await invoke<string | null>("db_get_ui_state", { key: "activeTabId" });
-      const collapsedJson = await invoke<string | null>("db_get_ui_state", { key: "sidebarCollapsed" });
-      const themeJson = await invoke<string | null>("db_get_ui_state", { key: "theme" });
       if (tabsJson) {
         const savedTabs: string[] = JSON.parse(tabsJson);
         const agentIds = new Set(agents.map((a) => a.id));
@@ -205,10 +248,6 @@
         if (openTabs.includes(savedActive)) activeTabId = savedActive;
         else if (openTabs.length > 0) activeTabId = openTabs[0];
         else activeTabId = null;
-      }
-      if (collapsedJson) sidebarCollapsed = JSON.parse(collapsedJson);
-      if (themeJson) {
-        applyTheme(JSON.parse(themeJson));
       }
     } catch {}
   }
@@ -265,14 +304,25 @@
     invoke("db_set_ui_state", { key: "openTabs", value: JSON.stringify(openTabs) }).catch(() => {});
     invoke("db_set_ui_state", { key: "activeTabId", value: JSON.stringify(activeTabId) }).catch(() => {});
     invoke("db_set_ui_state", { key: "sidebarCollapsed", value: JSON.stringify(sidebarCollapsed) }).catch(() => {});
+    invoke("db_set_ui_state", { key: "sidebarShowAll", value: JSON.stringify(sidebarShowAll) }).catch(() => {});
   }
 
-  $effect(() => { openTabs; activeTabId; sidebarCollapsed; saveUiState(); });
+  $effect(() => { openTabs; activeTabId; sidebarCollapsed; sidebarShowAll; saveUiState(); });
+
+  // MON-66: flipped imperatively by the sidebar toggle. Updates state + reloads
+  // so archived rows appear/disappear. Not driven by an $effect — loadSavedAgents
+  // writes to activeTabId/openTabs and would create a reactive feedback loop.
+  async function setSidebarShowAll(next: boolean) {
+    if (next === sidebarShowAll) return;
+    sidebarShowAll = next;
+    await loadSavedAgents(next);
+  }
 
   onMount(async () => {
     await loadProjects();
-    await loadSavedAgents();
-    await loadUiState();
+    await loadUiPrefs();                  // restore sidebarShowAll first
+    await loadSavedAgents(sidebarShowAll); // respect the restored filter
+    await loadTabState();                 // then validate tabs against agents
     await loadKeybindings();
     uiStateInitialized = true;
 
@@ -539,6 +589,60 @@
     removeLiveState(id);
   }
 
+  // MON-66: the sidebar X button flows through here. Opens the confirm dialog
+  // and waits for the user; the actual dismiss (kill + archive) runs in
+  // `confirmPending` once the user accepts.
+  function requestDismiss(id: string) {
+    const agent = agents.find((a) => a.id === id);
+    if (!agent) return;
+    pendingConfirm = { kind: "dismiss", agent };
+  }
+
+  // MON-66: right-click → "Delete permanently" flows through here. Separate
+  // dialog, irreversible wording, calls db_delete_agent on confirm.
+  function requestDelete(id: string) {
+    const agent = agents.find((a) => a.id === id);
+    if (!agent) return;
+    pendingConfirm = { kind: "delete", agent };
+  }
+
+  // MON-66: right-click → "Summon back" on an archived shadow. No confirm —
+  // unarchive is trivially reversible (user can dismiss again), unlike delete.
+  async function summonAgent(id: string) {
+    try {
+      await invoke("db_unarchive_agent", { agentId: id });
+      agents = agents.map((a) => (a.id === id ? { ...a, archivedAt: undefined } : a));
+    } catch (e) {
+      console.error("Failed to summon agent:", e);
+    }
+  }
+
+  async function confirmPending() {
+    const p = pendingConfirm;
+    if (!p) return;
+    pendingConfirm = null;
+    const id = p.agent.id;
+    if (p.kind === "dismiss") {
+      killAgent(id);
+      try {
+        await invoke("db_archive_agent", { agentId: id });
+      } catch (e) {
+        console.error("Failed to archive agent:", e);
+      }
+    } else if (p.kind === "delete") {
+      killAgent(id);
+      try {
+        await invoke("db_delete_agent", { agentId: id });
+      } catch (e) {
+        console.error("Failed to delete agent:", e);
+      }
+    }
+  }
+
+  function cancelPending() {
+    pendingConfirm = null;
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     const target = e.target as HTMLElement;
     const inInput = target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.tagName === "SELECT";
@@ -670,9 +774,13 @@
     {projects}
     collapsed={sidebarCollapsed}
     activeId={activeTabId}
+    showAll={sidebarShowAll}
     onselect={selectAgent}
     oncreate={() => (showSpawnDialog = true)}
-    onkill={killAgent}
+    ondismiss={requestDismiss}
+    ondelete={requestDelete}
+    onsummon={summonAgent}
+    ontoggleshowall={setSidebarShowAll}
     oneditproject={(project) => { editingProject = project; }}
     onsavetemplate={async (source) => {
       const now = new Date().toISOString();
@@ -766,6 +874,27 @@
     onzoom={applyZoom}
   />
 {/if}
+
+<ConfirmDialog
+  open={pendingConfirm?.kind === "dismiss"}
+  title="Dismiss {pendingConfirm?.agent.name}?"
+  message="The shadow will be removed from the active roster. Conversation history, sessions, and shadow identity are preserved — you can summon them back later from the All view."
+  confirmLabel="Dismiss"
+  cancelLabel="Cancel"
+  onconfirm={confirmPending}
+  oncancel={cancelPending}
+/>
+
+<ConfirmDialog
+  open={pendingConfirm?.kind === "delete"}
+  title="Permanently delete {pendingConfirm?.agent.name}?"
+  message="This is irreversible. All conversation history, sessions, and stats for this shadow will be deleted. This cannot be undone."
+  confirmLabel="Delete permanently"
+  cancelLabel="Cancel"
+  danger
+  onconfirm={confirmPending}
+  oncancel={cancelPending}
+/>
 
 <style>
   .app {

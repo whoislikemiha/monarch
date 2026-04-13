@@ -289,8 +289,22 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             Ok(Value::Null)
         }
         "db_get_agents" => {
-            let agents = state.db.get_agents_internal().await?;
+            let include_archived = args
+                .get("includeArchived")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let agents = state.db.get_agents_internal(include_archived).await?;
             serde_json::to_value(agents).map_err(MonarchError::from)
+        }
+        "db_archive_agent" => {
+            let agent_id = str_field(&args, "agentId")?;
+            state.db.archive_agent_internal(&agent_id).await?;
+            Ok(Value::Null)
+        }
+        "db_unarchive_agent" => {
+            let agent_id = str_field(&args, "agentId")?;
+            state.db.unarchive_agent_internal(&agent_id).await?;
+            Ok(Value::Null)
         }
         "db_delete_agent" => {
             let agent_id = str_field(&args, "agentId")?;

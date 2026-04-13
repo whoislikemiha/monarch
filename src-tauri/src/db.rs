@@ -270,6 +270,11 @@ impl Database {
                     );",
                 );
 
+                // MON-66: archive lifecycle for shadows. NULL = active.
+                let _ = conn.execute_batch(
+                    "ALTER TABLE agents ADD COLUMN archived_at TEXT;",
+                );
+
                 Ok(())
             })
             .await?;
@@ -308,6 +313,10 @@ pub struct AgentRow {
     pub context_window: Option<i32>,
     pub created_at: String,
     pub updated_at: String,
+    /// MON-66: ISO timestamp when the agent was archived, or None if active.
+    /// Archive preserves the DB row (history, sessions, stats) but removes
+    /// the shadow from the default active roster. See `archive_agent_internal`.
+    pub archived_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -728,17 +737,57 @@ impl Database {
             .await?)
     }
 
-    pub async fn get_agents_internal(&self) -> Result<Vec<AgentRow>, MonarchError> {
+    pub async fn get_agents_internal(
+        &self,
+        include_archived: bool,
+    ) -> Result<Vec<AgentRow>, MonarchError> {
+        // Active rows first (archived_at IS NULL), then archived ones ordered by
+        // most-recently-archived. Within each group, fall back to updated_at DESC
+        // so the default view matches prior behavior.
         Ok(self
             .conn
-            .call(|conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at FROM agents ORDER BY updated_at DESC",
-                )?;
+            .call(move |conn| {
+                let sql = if include_archived {
+                    "SELECT id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at, archived_at FROM agents ORDER BY (archived_at IS NOT NULL) ASC, archived_at DESC, updated_at DESC"
+                } else {
+                    "SELECT id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at, archived_at FROM agents WHERE archived_at IS NULL ORDER BY updated_at DESC"
+                };
+                let mut stmt = conn.prepare(sql)?;
                 let rows = stmt.query_map([], map_agent)?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()
             })
             .await?)
+    }
+
+    /// MON-66: stamp the agent as archived. Idempotent — re-archiving just
+    /// refreshes the timestamp. Does not touch anything else.
+    pub async fn archive_agent_internal(&self, agent_id: &str) -> Result<(), MonarchError> {
+        let agent_id = agent_id.to_string();
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE agents SET archived_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?1",
+                    params![agent_id],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// MON-66: clear the archive stamp. Restores the agent to the active roster.
+    pub async fn unarchive_agent_internal(&self, agent_id: &str) -> Result<(), MonarchError> {
+        let agent_id = agent_id.to_string();
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE agents SET archived_at = NULL WHERE id = ?1",
+                    params![agent_id],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn delete_agent_internal(&self, agent_id: &str) -> Result<(), MonarchError> {
@@ -1278,6 +1327,7 @@ fn map_agent(row: &Row<'_>) -> rusqlite::Result<AgentRow> {
         context_window: row.get(11)?,
         created_at: row.get(12)?,
         updated_at: row.get(13)?,
+        archived_at: row.get(14)?,
     })
 }
 
@@ -1355,8 +1405,27 @@ pub async fn db_upsert_agent(
 #[specta::specta]
 pub async fn db_get_agents(
     db: tauri::State<'_, Arc<Database>>,
+    include_archived: Option<bool>,
 ) -> Result<Vec<AgentRow>, MonarchError> {
-    db.get_agents_internal().await
+    db.get_agents_internal(include_archived.unwrap_or(false)).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_archive_agent(
+    db: tauri::State<'_, Arc<Database>>,
+    agent_id: String,
+) -> Result<(), MonarchError> {
+    db.archive_agent_internal(&agent_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_unarchive_agent(
+    db: tauri::State<'_, Arc<Database>>,
+    agent_id: String,
+) -> Result<(), MonarchError> {
+    db.unarchive_agent_internal(&agent_id).await
 }
 
 #[tauri::command]

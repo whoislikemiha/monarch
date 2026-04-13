@@ -62,6 +62,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         // SQLite persistence
         db::db_upsert_agent,
         db::db_get_agents,
+        db::db_archive_agent,
+        db::db_unarchive_agent,
         db::db_delete_agent,
         db::db_create_session,
         db::db_get_sessions,
@@ -194,6 +196,8 @@ pub fn run() {
             persistence::get_prompts_dir,
             db::db_upsert_agent,
             db::db_get_agents,
+            db::db_archive_agent,
+            db::db_unarchive_agent,
             db::db_delete_agent,
             db::db_create_session,
             db::db_get_sessions,

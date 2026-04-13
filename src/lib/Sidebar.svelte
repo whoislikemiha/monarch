@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { Agent, Project, SessionRecord, ShadowIdentity } from "./types";
-  import AgentStatusDot from "./AgentStatusDot.svelte";
   import { ShadowAvatar } from "./avatar";
 
   interface ProjectGroup {
@@ -23,9 +22,13 @@
     projects = [],
     collapsed = false,
     activeId,
+    showAll = false,
     onselect,
     oncreate,
-    onkill,
+    ondismiss,
+    ondelete,
+    onsummon,
+    ontoggleshowall,
     oneditproject,
     onsavetemplate,
   }: {
@@ -33,22 +36,39 @@
     projects?: Project[];
     collapsed?: boolean;
     activeId: string | null;
+    /** MON-66: when true, archived shadows are included in the list (greyed out). */
+    showAll?: boolean;
     onselect: (id: string) => void;
     oncreate: () => void;
-    onkill: (id: string) => void;
+    /** X button on a row — opens the dismiss confirm in App. */
+    ondismiss: (id: string) => void;
+    /** Context-menu "Delete permanently" — opens the delete confirm in App. */
+    ondelete: (id: string) => void;
+    /** Context-menu "Summon back" on an archived shadow — unarchives it. */
+    onsummon: (id: string) => void;
+    /** Active/All toggle emits the new value. */
+    ontoggleshowall: (next: boolean) => void;
     oneditproject?: (project: Project) => void;
     onsavetemplate?: (source: TemplateSource) => void;
   } = $props();
 
   // Custom themed context menu — native right-click menu is suppressed so
   // we can render one that matches the rest of the app.
-  let contextMenu: { x: number; y: number; source: TemplateSource } | null = $state(null);
+  let contextMenu: {
+    x: number;
+    y: number;
+    agentId: string;
+    archived: boolean;
+    source: TemplateSource;
+  } | null = $state(null);
 
   function openAgentMenu(e: MouseEvent, agent: Agent) {
     e.preventDefault();
     contextMenu = {
       x: e.clientX,
       y: e.clientY,
+      agentId: agent.id,
+      archived: !!agent.archivedAt,
       source: {
         name: agent.shadow?.shadowName || agent.name,
         provider: agent.provider,
@@ -67,6 +87,18 @@
   function handleSaveTemplate() {
     if (!contextMenu) return;
     onsavetemplate?.(contextMenu.source);
+    closeContextMenu();
+  }
+
+  function handleSummon() {
+    if (!contextMenu) return;
+    onsummon(contextMenu.agentId);
+    closeContextMenu();
+  }
+
+  function handleDeletePermanent() {
+    if (!contextMenu) return;
+    ondelete(contextMenu.agentId);
     closeContextMenu();
   }
 
@@ -112,7 +144,33 @@
     <!-- Full sidebar -->
     <div class="sidebar-header">
       <h1>Monarch</h1>
-      <button class="btn-new" onclick={oncreate} title="Extract Shadow (Ctrl+N)">+</button>
+      <div class="header-controls">
+        <div
+          class="view-toggle"
+          role="group"
+          aria-label="Shadow roster view"
+        >
+          <button
+            class="view-toggle-btn"
+            class:selected={!showAll}
+            onclick={() => ontoggleshowall(false)}
+            title="Show only active shadows"
+            aria-pressed={!showAll}
+          >
+            Active
+          </button>
+          <button
+            class="view-toggle-btn"
+            class:selected={showAll}
+            onclick={() => ontoggleshowall(true)}
+            title="Include archived shadows"
+            aria-pressed={showAll}
+          >
+            All
+          </button>
+        </div>
+        <button class="btn-new" onclick={oncreate} title="Extract Shadow (Ctrl+N)">+</button>
+      </div>
     </div>
 
     <div class="agent-list">
@@ -131,10 +189,12 @@
           <div class="section-label">Shadows</div>
         {/if}
         {#each group.agents as agent (agent.id)}
+          {@const isArchived = !!agent.archivedAt}
           <div
             class="agent-item"
             class:active={agent.id === activeId}
             class:standby={agent.status === "stopped"}
+            class:archived={isArchived}
             onclick={() => onselect(agent.id)}
             onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') onselect(agent.id); }}
             oncontextmenu={(e: MouseEvent) => openAgentMenu(e, agent)}
@@ -152,13 +212,25 @@
                 <span class="agent-model">{agent.model}</span>
               {/if}
             </div>
-            <button
-              class="btn-kill"
-              onclick={(e: MouseEvent) => { e.stopPropagation(); onkill(agent.id); }}
-              title="Kill"
-            >
-              &times;
-            </button>
+            {#if isArchived}
+              <button
+                class="btn-icon btn-summon"
+                onclick={(e: MouseEvent) => { e.stopPropagation(); onsummon(agent.id); }}
+                title="Summon back"
+                aria-label="Summon {agent.name} back"
+              >
+                &#x21BA;
+              </button>
+            {:else}
+              <button
+                class="btn-icon btn-dismiss"
+                onclick={(e: MouseEvent) => { e.stopPropagation(); ondismiss(agent.id); }}
+                title="Dismiss"
+                aria-label="Dismiss {agent.name}"
+              >
+                &times;
+              </button>
+            {/if}
           </div>
         {/each}
       {/each}
@@ -184,12 +256,29 @@
         style:top="{contextMenu.y}px"
         role="menu"
       >
+        {#if contextMenu.archived}
+          <button
+            class="context-menu-item"
+            onclick={handleSummon}
+            role="menuitem"
+          >
+            Summon back
+          </button>
+        {/if}
         <button
           class="context-menu-item"
           onclick={handleSaveTemplate}
           role="menuitem"
         >
           Save as template
+        </button>
+        <div class="context-menu-divider" role="separator"></div>
+        <button
+          class="context-menu-item danger"
+          onclick={handleDeletePermanent}
+          role="menuitem"
+        >
+          Delete permanently
         </button>
       </div>
     {/if}
@@ -262,7 +351,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px;
+    gap: 10px;
+    padding: 14px 16px;
     border-bottom: 1px solid var(--border-subtle);
   }
 
@@ -273,6 +363,40 @@
     color: var(--text-primary);
     letter-spacing: 0.5px;
     font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
+  }
+
+  .header-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .view-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--bg-panel-2);
+  }
+
+  .view-toggle-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: 'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .view-toggle-btn:hover {
+    color: var(--text-secondary);
+  }
+  .view-toggle-btn.selected {
+    background: var(--bg-panel-3);
+    color: var(--accent);
   }
 
   .btn-new {
@@ -373,6 +497,18 @@
   .agent-item.standby:hover {
     opacity: 1;
   }
+  /* MON-66: visually distinct from standby — stopped-but-active vs. dismissed.
+     Italic name + lower contrast signals "not currently on the roster". */
+  .agent-item.archived {
+    opacity: 0.45;
+    font-style: italic;
+  }
+  .agent-item.archived .agent-name {
+    color: var(--text-muted);
+  }
+  .agent-item.archived:hover {
+    opacity: 0.8;
+  }
 
   .avatar-wrap {
     grid-area: avatar;
@@ -420,7 +556,7 @@
     white-space: nowrap;
   }
 
-  .btn-kill {
+  .btn-icon {
     grid-area: kill;
     border: none;
     background: none;
@@ -431,8 +567,11 @@
     line-height: 1;
     transition: color 0.15s;
   }
-  .btn-kill:hover {
+  .btn-dismiss:hover {
     color: var(--error);
+  }
+  .btn-summon:hover {
+    color: var(--accent);
   }
 
   .empty-state {
@@ -480,5 +619,19 @@
   .context-menu-item:hover {
     background: var(--bg-panel-2);
     color: var(--accent);
+  }
+
+  .context-menu-item.danger {
+    color: var(--error, #eb5757);
+  }
+  .context-menu-item.danger:hover {
+    background: var(--error, #eb5757);
+    color: var(--bg-panel);
+  }
+
+  .context-menu-divider {
+    height: 1px;
+    background: var(--border-subtle);
+    margin: 2px 4px;
   }
 </style>
