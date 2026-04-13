@@ -51,26 +51,33 @@
   {/each}
 
   {#if streamingMessage}
+    {@const thinkingContent = streamingMessage.content
+      .filter((b): b is { type: "thinking"; thinking: string; redacted?: boolean } => b.type === "thinking")
+      .map((b) => b.thinking)
+      .join("\n")}
     {@const textContent = streamingMessage.content
       .filter((b): b is { type: "text"; text: string } => b.type === "text")
       .map((b) => b.text)
       .join("")}
-    {@const isThinking = streamingMessage.content.some((b) => b.type === "thinking")}
     <div class="message assistant-message streaming">
       <div class="message-label">
         Assistant
         <span class="streaming-indicator"></span>
       </div>
-      {#if isThinking && !textContent}
-        <div class="streaming-content streaming-thinking" aria-live="polite">
-          <span class="thinking-dots" aria-hidden="true">
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="dot"></span>
-          </span>
-          <span class="sr-only">Thinking</span>
+      {#if thinkingContent}
+        <div class="streaming-thinking-live" aria-live="polite">
+          <div class="streaming-thinking-label">
+            <span class="thinking-dots" aria-hidden="true">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+            </span>
+            <span>Thinking</span>
+          </div>
+          <div class="streaming-thinking-text">{thinkingContent}</div>
         </div>
-      {:else if textContent}
+      {/if}
+      {#if textContent}
         <div class="streaming-content">{textContent}</div>
       {/if}
     </div>
@@ -186,12 +193,32 @@
     word-break: break-word;
   }
 
-  .streaming-thinking {
-    color: var(--text-muted);
-    font-style: italic;
+  .streaming-thinking-live {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 6px;
+  }
+
+  .streaming-thinking-label {
     display: inline-flex;
     align-items: center;
     gap: 8px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    letter-spacing: 0.02em;
+  }
+
+  .streaming-thinking-text {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    font-style: italic;
+    border-left: 2px solid var(--border-strong);
+    padding: 2px 0 2px 12px;
+    margin-left: 4px;
   }
 
   .thinking-dots {
