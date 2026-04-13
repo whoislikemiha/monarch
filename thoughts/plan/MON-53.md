@@ -112,13 +112,26 @@ The refactor is best done as a single commit (or a tight series of commits that 
 - Field names of `AgentManager`, `AgentState`, `AgentStateEntry`, `AgentStateInner` — internal but touched by enough code that a rename is a distraction here.
 - Doc comments, especially the MON-14 / MON-27 / MON-30 / MON-32 / MON-34 / MON-37 / MON-38 notes — they're load-bearing context, not trivia. Moving them with their referents is part of the refactor.
 
-## Open questions
+## Resolved decisions
 
-1. **`detect_project` / `read_project_instructions` placement.** They live in `agent.rs` today but are filesystem-scope project metadata, not agent-loop concerns. The acceptance criteria keep them in the `agent` module (re-exported from `commands.rs`). Follow-up ticket to move them into `project.rs` proper, or leave alone?
-2. **`WsBroadcast` placement.** It's used by every submodule (sidecar broadcasts, event-handler emits, ws.rs consumes it). Best home: `mod.rs` or `sidecar.rs`? My inclination is `mod.rs` so it's available to all submodules without an explicit `sidecar::` prefix.
-3. **`chrono_now` scope.** `db.rs` and `project.rs` both import it from `agent`. Should this be moved to a neutral `util.rs` at the crate root as a small cleanup, or is that scope creep for this ticket? (My vote: scope creep — leave it in `agent` for MON-53, move it in a follow-up.)
-4. **`impl AgentManager` split across files.** Rust allows multiple `impl` blocks in different files within a module tree — this is the cleanest way to keep `sidecar.rs` methods as methods on `AgentManager` without the indirection of free functions. Confirm this is acceptable stylistically, or prefer free functions taking `&AgentManager`?
-5. **Commit granularity.** One atomic "move everything" commit (reviewable as a big diff but easier to read as "this block went there"), or five smaller commits (each moves one concern, each compiles, full bisectability)? My preference: staged commits, one per submodule, so review can be done concern-by-concern.
+1. **`detect_project` / `read_project_instructions` placement.** Stay in `agent/commands.rs` for MON-53; dedicated extraction happens in **MON-69** ("Extract project/cwd into first-class module") as groundwork for worktree/project-as-first-class-citizen. MON-69 is blocked by this ticket.
+2. **`WsBroadcast` placement.** Lives in `agent/mod.rs`. Rationale: three submodules touch it (`sidecar` constructs broadcasts, `event_handler` emits via it, `commands` wires it through `AgentManager`). Keeping it at the module root avoids circular `use` chains and matches its cross-cutting role.
+3. **`chrono_now` / `uuid_v4_simple`.** Promoted to a new crate-root `src-tauri/src/util.rs`. Consumers (`db.rs` line 636, `project.rs` line 9, every `agent/*.rs` submodule that timestamps rows) import via `crate::util::{chrono_now, uuid_v4_simple}`. The old `crate::agent::{chrono_now, uuid_v4_simple}` path is removed — not re-exported, because this is the one place we change an import path and the compiler will enforce it.
+4. **`impl AgentManager` split across files.** Multiple `impl` blocks across submodules (idiomatic Rust). `manager.rs` holds the primary `impl AgentManager { new, set_app_handle, get_app_handle, live_entry, remove_live_entry, spawn, send_command, kill, new_session, switch_session, load_session_context, respond_extension_ui, rebuild_state_from_session }`. `sidecar.rs` holds a second `impl AgentManager { ensure_sidecar, shutdown_sidecar, send_to_sidecar, send_with_recovery, recover_sidecar }`. No free-function indirection. Fields on `AgentManager` remain `pub(crate)` or `pub(super)` as needed so the sidecar impl can see them.
+5. **Commit granularity.** Staged commits, one per extracted concern, each must `cargo check` clean. Order below matches the execution sequence.
+
+## Commit plan
+
+Each commit lands on `mihabubnjevic/mon-53-split-agentrs-into-focused-modules`:
+
+1. `refactor(mon-53): create util.rs for chrono_now and uuid_v4_simple` — add `src-tauri/src/util.rs`, move the two helpers, update `db.rs` / `project.rs` / `agent.rs` imports.
+2. `refactor(mon-53): scaffold agent/ module` — convert `agent.rs` → `agent/mod.rs` byte-for-byte (no content moves yet), add empty submodule files, update `lib.rs` only if needed (shouldn't be).
+3. `refactor(mon-53): extract persist pipeline to agent/persist.rs` — move `PersistCommand`, `build_persist_commands`, `inner_event_tag`, `run_persist_consumer`.
+4. `refactor(mon-53): extract event dispatch to agent/event_handler.rs` — move `handle_sidecar_event`, `apply_and_maybe_emit`, `try_consume_debounce_snapshot`, `mark_agent_desynced`, `emit_event`, `emit_state_event`, `get_session_id`.
+5. `refactor(mon-53): extract sidecar process layer to agent/sidecar.rs` — move `SidecarProcess`, `resolve_sidecar_path`, and the `impl AgentManager` block holding `ensure_sidecar` / `shutdown_sidecar` / `send_to_sidecar` / `send_with_recovery` / `recover_sidecar`.
+6. `refactor(mon-53): extract tauri commands to agent/commands.rs` — move all `#[tauri::command]` wrappers and request DTOs (`ShadowSpec`, `SpawnAgentRequest`, `ExtensionUiResponseRequest`).
+7. `refactor(mon-53): finalize agent/mod.rs as facade` — what remains is `manager.rs` + the thin `mod.rs` re-exporting the public surface; confirm `cargo run -- --export-bindings` produces no diff.
+8. `docs(mon-53): implementation notes` — `thoughts/impl/MON-53.md`.
 
 ## Out of scope
 
