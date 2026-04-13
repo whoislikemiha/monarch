@@ -1,6 +1,7 @@
 <script lang="ts">
   import AssistantMessageComp from "./AssistantMessage.svelte";
   import ToolGroup from "./ToolGroup.svelte";
+  import { formatCost } from "./format";
   import type { DisplayItem, AssistantMessage } from "./types";
 
   let {
@@ -30,6 +31,9 @@
             <span class="token-tag"
               >{item.usage.totalTokens.toLocaleString()} tokens</span
             >
+          {/if}
+          {#if formatCost(item.usage?.cost?.total)}
+            <span class="cost-tag">{formatCost(item.usage?.cost?.total)}</span>
           {/if}
         </div>
         <AssistantMessageComp content={item.content} />
@@ -102,7 +106,8 @@
   }
 
   .model-tag,
-  .token-tag {
+  .token-tag,
+  .cost-tag {
     font-weight: 400;
     color: var(--text-muted);
     font-size: 10px;
