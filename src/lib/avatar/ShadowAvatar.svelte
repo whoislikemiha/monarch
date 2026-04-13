@@ -29,6 +29,11 @@
 
   // Cached input references keyed by name for fast access in $effect
   let inputMap = new Map<string, StateMachineInput>();
+  // Reactive flag so the input-driving $effect re-runs once Rive has loaded
+  // and `cacheInputs` has populated `inputMap`. Without this, an agent that
+  // is idle from mount onwards would never trigger the effect again, leaving
+  // the state machine stuck in whatever its default state is (e.g. Coding).
+  let riveReady = $state(false);
 
   // Track previous animation state for trigger detection
   let prevAnimState: AnimationState | null = null;
@@ -89,6 +94,7 @@
       const smNames: string[] = r.stateMachineNames ?? [];
       const smName = smNames[0] ?? stateMachine;
       cacheInputs(riveInstance!, smName);
+      riveReady = true;
     });
 
     riveInstance.on(EventType.LoadError, (e: any) => {
@@ -99,12 +105,13 @@
       riveInstance?.cleanup();
       riveInstance = null;
       inputMap.clear();
+      riveReady = false;
     };
   });
 
   // Drive Rive inputs from agent state changes
   $effect(() => {
-    if (inputMap.size === 0) return;
+    if (!riveReady) return;
 
     // Apply boolean states
     setBool("isIdle", animState.isIdle);
