@@ -1,15 +1,14 @@
 <script lang="ts">
   import { invoke } from "$lib/api";
   import type { Project } from "./types";
+  import { agentStore } from "./stores/agentStore.svelte";
 
   let {
     project,
-    agents,
     onclose,
     onupdate,
   }: {
     project: Project;
-    agents: { id: string; projectId?: string }[];
     onclose: () => void;
     onupdate: (project: Project) => void;
   } = $props();
@@ -75,7 +74,7 @@
 
       // Propagate to all running agents in this project — send updated
       // instructions so the sidecar can rebuild the system prompt live.
-      const projectAgents = agents.filter((a) => a.projectId === project.id);
+      const projectAgents = agentStore.agents.filter((a) => a.projectId === project.id);
       for (const agent of projectAgents) {
         try {
           await invoke("send_command", {

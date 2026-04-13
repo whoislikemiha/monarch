@@ -1,30 +1,21 @@
 <script lang="ts">
   import type { Agent } from "./types";
   import AgentStatusDot from "./AgentStatusDot.svelte";
-
-  let {
-    agents,
-    openTabs,
-    activeTabId,
-    onselect,
-    onclose,
-    onnewconversation,
-  }: {
-    agents: Agent[];
-    openTabs: string[];
-    activeTabId: string | null;
-    onselect: (id: string) => void;
-    onclose: (id: string) => void;
-    onnewconversation: (agentId: string) => void;
-  } = $props();
+  import { agentStore } from "./stores/agentStore.svelte";
 
   let showDropdown = $state(false);
-  let availableAgents = $derived(agents.filter((a) => !openTabs.includes(a.id)));
-  let tabAgents = $derived(openTabs.map((id) => agents.find((a) => a.id === id)).filter((a): a is Agent => !!a));
+  let availableAgents = $derived(
+    agentStore.agents.filter((a) => !agentStore.openTabs.includes(a.id)),
+  );
+  let tabAgents = $derived(
+    agentStore.openTabs
+      .map((id) => agentStore.agents.find((a) => a.id === id))
+      .filter((a): a is Agent => !!a),
+  );
 
   function handleDropdownSelect(agentId: string) {
     showDropdown = false;
-    onnewconversation(agentId);
+    agentStore.newConversation(agentId);
   }
 
   function closeDropdown() {
@@ -37,10 +28,10 @@
     {#each tabAgents as agent, i (agent.id)}
       <div
         class="tab"
-        class:active={agent.id === activeTabId}
+        class:active={agent.id === agentStore.activeTabId}
         class:standby={agent.status === "stopped"}
-        onclick={() => onselect(agent.id)}
-        onkeydown={(e) => { if (e.key === 'Enter') onselect(agent.id); }}
+        onclick={() => agentStore.selectAgent(agent.id)}
+        onkeydown={(e) => { if (e.key === 'Enter') agentStore.selectAgent(agent.id); }}
         title="{agent.name}{agent.model ? ` · ${agent.model}` : ''}"
         role="tab"
         tabindex="0"
@@ -49,7 +40,7 @@
         <span class="tab-name">{agent.name}</span>
         <button
           class="tab-close"
-          onclick={(e) => { e.stopPropagation(); onclose(agent.id); }}
+          onclick={(e) => { e.stopPropagation(); agentStore.closeTab(agent.id); }}
           title="Close tab"
         >&times;</button>
       </div>
@@ -67,7 +58,7 @@
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div class="dropdown-backdrop" role="presentation" onclick={closeDropdown}></div>
       <div class="dropdown" role="menu">
-        {#if availableAgents.length === 0 && agents.length === 0}
+        {#if availableAgents.length === 0 && agentStore.agents.length === 0}
           <div class="dropdown-empty">No agents — Ctrl+N to create</div>
         {:else if availableAgents.length === 0}
           <div class="dropdown-empty">All agents are open</div>

@@ -3,17 +3,16 @@
   import { invoke } from "$lib/api";
   import { open } from "@tauri-apps/plugin-dialog";
   import { matchBinding } from "$lib/keybindings.svelte";
-  import type { AgentConfig, AgentTemplate, Project, ShadowGrade } from "./types";
+  import type { AgentConfig, AgentTemplate, ShadowGrade } from "./types";
   import { SHADOW_GRADES } from "./types";
+  import { agentStore } from "./stores/agentStore.svelte";
 
   let {
     onspawn,
     oncancel,
-    projects = [],
   }: {
     onspawn: (config: AgentConfig) => void;
     oncancel: () => void;
-    projects?: Project[];
   } = $props();
 
   let modelInput = $state("");
@@ -505,11 +504,11 @@
       {/if}
     </div>
 
-    {#if projects.length > 0}
+    {#if agentStore.projects.length > 0}
       <div class="section">
         <span class="label">Project</span>
         <div class="project-chips">
-          {#each projects as p (p.id)}
+          {#each agentStore.projects as p (p.id)}
             <button
               class="project-chip"
               class:active={detectedProject?.rootPath === p.rootPath}
