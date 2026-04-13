@@ -24,7 +24,8 @@ use crate::sidecar_protocol::InnerEvent;
 use crate::util::chrono_now;
 
 use super::event_handler::mark_agent_desynced;
-use super::{AgentStateEntry, WsBroadcast};
+use super::manager::AgentStateEntry;
+use super::WsBroadcast;
 
 /// A persistence effect to apply in FIFO order by the single consumer.
 #[derive(Debug)]

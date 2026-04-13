@@ -17,8 +17,9 @@ use tokio::sync::{broadcast, mpsc};
 use crate::agent_state::{ApplyOutcome, LiveAgentState};
 use crate::sidecar_protocol::{apply_event, InnerEvent, SidecarEvent};
 
+use super::manager::{AgentManagerInner, AgentStateEntry};
 use super::persist::{build_persist_commands, PersistCommand};
-use super::{AgentManagerInner, AgentStateEntry, WsBroadcast, DEBOUNCE_MILLIS};
+use super::{WsBroadcast, DEBOUNCE_MILLIS};
 
 /// Look up the session_id for an agent from the consolidated inner state.
 /// MON-34: reads the map through the single `parking_lot::Mutex` shared
