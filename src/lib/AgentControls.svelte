@@ -95,8 +95,20 @@
     return estimatedContextTokens;
   });
 
+  // MON-50: session-total cost, summed over every assistant turn in the
+  // currently displayed conversation. sessionStats.totalCost comes from the
+  // DB and lags behind (it's only refreshed at bind/reset, not per-turn), so
+  // use it only as a floor for the rare case where items haven't loaded yet.
+  let itemsCostTotal = $derived(
+    items.reduce((total, item) => {
+      if (item.kind === "assistant") {
+        return total + (item.usage?.cost?.total ?? 0);
+      }
+      return total;
+    }, 0)
+  );
   let displayCost = $derived(
-    sessionStats?.totalCost ?? lastUsage?.cost?.total
+    itemsCostTotal > 0 ? itemsCostTotal : sessionStats?.totalCost
   );
   let hasContextMeter = $derived(
     contextWindow != null || sessionStats != null || lastUsage != null || items.length > 0

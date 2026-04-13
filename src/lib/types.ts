@@ -58,6 +58,12 @@ export interface Agent {
   sourceSessionId?: string; // Session ancestry to replay when restoring/continuing
   /** MON-66: ISO timestamp when the shadow was archived, or undefined if active. */
   archivedAt?: string;
+  /**
+   * MON-50: cached lifetime cost from `agent_stats.total_cost`. Loaded
+   * alongside the agent on startup and refreshed per turn end so the sidebar
+   * counter stays in sync.
+   */
+  lifetimeCost?: number;
 }
 
 // A session record — one conversation
@@ -67,6 +73,7 @@ export interface SessionRecord {
   provider?: string;
   startedAt: string;
   messageCount?: number;
+  totalCost?: number;
 }
 
 // Reusable spawn preset — captures the fields SpawnDialog exposes so

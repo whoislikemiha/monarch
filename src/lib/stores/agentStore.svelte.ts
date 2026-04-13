@@ -205,6 +205,19 @@ class AgentStore {
       for (const row of dbAgents) {
         const sessions = await invoke<SessionDbRow[]>("db_get_sessions", { agentId: row.id });
         const latestSession = sessions[0];
+        // MON-50: pull lifetime cost from agent_stats (the authoritative
+        // aggregate incremented atomically by Rust on every message_end).
+        // Swallow errors so a missing stats row can't block agent hydration.
+        let lifetimeCost: number | undefined;
+        try {
+          const stats = await invoke<{ totalCost: number } | null>(
+            "db_get_agent_stats",
+            { agentId: row.id },
+          );
+          lifetimeCost = stats?.totalCost;
+        } catch {
+          lifetimeCost = undefined;
+        }
         const agent: Agent = {
           id: row.id,
           viewKey: createViewKey(row.id),
@@ -227,9 +240,11 @@ class AgentStore {
             provider: s.provider || undefined,
             startedAt: s.startedAt,
             messageCount: s.messageCount,
+            totalCost: s.totalCost,
           })),
           sourceSessionId: latestSession?.id,
           archivedAt: row.archivedAt || undefined,
+          lifetimeCost,
         };
         loaded.push(agent);
       }
@@ -619,6 +634,26 @@ class AgentStore {
 
   updateAgent(id: string, updater: (agent: Agent) => Agent): void {
     this.agents = this.agents.map((agent) => (agent.id === id ? updater(agent) : agent));
+  }
+
+  /**
+   * MON-50: refresh `lifetimeCost` for a single agent from `agent_stats`.
+   * Called by `AgentView` when it observes `sessionStats.totalCost` tick,
+   * which happens at turn end after Rust persists the message. Errors
+   * swallowed — a stale counter is better than a noisy console.
+   */
+  async refreshLifetimeCost(agentId: string): Promise<void> {
+    try {
+      const stats = await invoke<{ totalCost: number } | null>(
+        "db_get_agent_stats",
+        { agentId },
+      );
+      if (stats) {
+        this.updateAgent(agentId, (a) => ({ ...a, lifetimeCost: stats.totalCost }));
+      }
+    } catch {
+      /* ignore */
+    }
   }
 
   /**

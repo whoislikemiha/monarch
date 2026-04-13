@@ -116,6 +116,7 @@
         provider: s.provider || undefined,
         startedAt: s.startedAt,
         messageCount: s.messageCount,
+        totalCost: s.totalCost,
       }));
       updateAgent((current) => {
         const activeSessionId = current.sessionId;
@@ -508,6 +509,20 @@
   $effect(() => {
     if (agent.id === boundAgentId) return;
     void bindAgent(agent);
+  });
+
+  // MON-50: refresh the sidebar lifetime-cost counter whenever the active
+  // session's total cost ticks. sessionStats.totalCost only changes at turn
+  // end (when Rust persists the assistant message), so this coalesces the
+  // 16ms snapshot bursts into one refresh per turn — one IPC roundtrip per
+  // message_end, no frontend accumulation or divergence risk.
+  let lastSeenSessionCost = $state<number | undefined>(undefined);
+  $effect(() => {
+    const cost = agent.sessionStats?.totalCost;
+    if (cost == null) return;
+    if (lastSeenSessionCost != null && cost === lastSeenSessionCost) return;
+    lastSeenSessionCost = cost;
+    void agentStore.refreshLifetimeCost(agent.id);
   });
 
   onDestroy(() => {
