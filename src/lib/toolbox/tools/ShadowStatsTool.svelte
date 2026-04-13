@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "$lib/api";
+  import { formatCost } from "$lib/format";
   import type { ToolProps } from "../types";
   import type { AgentStats, SpecializationScores } from "../../bindings";
 
@@ -73,10 +74,6 @@
     return n.toString();
   }
 
-  function formatCost(n: number): string {
-    return "$" + n.toFixed(4);
-  }
-
   function pct(n: number): string {
     return (n * 100).toFixed(0) + "%";
   }
@@ -129,7 +126,7 @@
       </div>
       <div class="row">
         <span class="label">Cost</span>
-        <span class="value mono">{formatCost(stats.totalCost)}</span>
+        <span class="value mono">{formatCost(stats.totalCost) ?? "$0"}</span>
       </div>
       <div class="row">
         <span class="label">Sessions</span>
