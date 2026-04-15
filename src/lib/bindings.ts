@@ -190,7 +190,13 @@ export type Cost = {
 	total?: number,
 };
 
-export type DisplayItem = { kind: "user"; content: string; timestamp: number | null } | { kind: "assistant"; content: ("Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Vec<Value> }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never })[]; model: string | null; usage: Usage | null; timestamp: number | null } | { kind: "tool-group"; executions: ToolExecution[]; turnComplete: boolean } | { kind: "status"; text: string } | { kind: "notification"; text: string; level: NotificationLevel };
+export type DisplayItem = { kind: "user"; content: string; timestamp: number | null } | { kind: "assistant"; content: ("Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Vec<Value> }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never })[]; model: string | null; usage: Usage | null; timestamp: number | null; 
+/**
+ *  MON-71: turn wall-clock duration, set when `MessageEnd` fires.
+ *  Persisted on the `messages.duration_ms` column; restored by
+ *  `display_items_from_messages`. None for pre-MON-71 rows.
+ */
+durationMs?: number | null } | { kind: "tool-group"; executions: ToolExecution[]; turnComplete: boolean } | { kind: "status"; text: string } | { kind: "notification"; text: string; level: NotificationLevel };
 
 export type ErrorDto = {
 	kind: string,
@@ -270,6 +276,13 @@ export type MessageRow = {
 	tokens: number,
 	cost: number,
 	timestamp: string,
+	/**
+	 *  MON-71: wall-clock duration of the assistant turn that produced this
+	 *  message, in milliseconds. NULL for rows written before MON-71, and for
+	 *  roles other than `assistant` (user and toolResult carry their own
+	 *  timing — tool durations live inside the toolResult JSON blob).
+	 */
+	durationMs?: number | null,
 };
 
 export type ModelInfo = {
@@ -366,6 +379,11 @@ export type StreamingMessage = {
 	model: string | null,
 	usage: Usage | null,
 	timestamp: number | null,
+	/**
+	 *  MON-71: wall-clock start of the current turn, stamped at `TurnStart`.
+	 *  Drives the live "N sec" ticker on the streaming assistant header.
+	 */
+	turnStartedAtMs?: number | null,
 };
 
 export type ToolDescriptor = {
@@ -380,6 +398,18 @@ export type ToolExecution = {
 	result: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never } | null,
 	isError: boolean | null,
 	status: ToolStatus,
+	/**
+	 *  MON-71: wall-clock start, stamped when `ToolExecutionStart` lands in
+	 *  Rust. Drives the live "N sec" ticker while running and feeds
+	 *  `duration_ms` on completion. None for historical rows restored from
+	 *  pre-MON-71 SQLite (no backfill).
+	 */
+	startedAtMs?: number | null,
+	/**
+	 *  MON-71: final end-to-end duration; set at `ToolExecutionEnd`.
+	 *  Preserved across restart via the tool-result JSON (`durationMs`).
+	 */
+	durationMs?: number | null,
 };
 
 export type ToolStatus = "running" | "done" | "error";

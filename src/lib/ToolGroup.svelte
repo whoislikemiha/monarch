@@ -2,7 +2,7 @@
   import ToolCallCard from "./ToolCallCard.svelte";
   import type { ToolExecution } from "./types";
 
-  let { executions, turnComplete }: { executions: ToolExecution[]; turnComplete: boolean } = $props();
+  let { executions, turnComplete, nowMs }: { executions: ToolExecution[]; turnComplete: boolean; nowMs: number } = $props();
 
   let expanded = $state(false);
 
@@ -66,7 +66,7 @@
   {#if expanded}
     <div class="tool-group-body">
       {#each executions as exec (exec.toolCallId)}
-        <ToolCallCard execution={exec} />
+        <ToolCallCard execution={exec} {nowMs} />
       {/each}
     </div>
   {/if}

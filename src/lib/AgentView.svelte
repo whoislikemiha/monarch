@@ -275,6 +275,17 @@
   let eventCount = $derived(live.eventCount);
   let isStreaming = $derived(live.isStreaming);
 
+  // MON-71: single per-view 1Hz ticker driving all live duration counters
+  // (turn header, running tool call, active thinking block). Only ticks
+  // while the agent is streaming so idle views don't trigger re-renders.
+  let nowMs: number = $state(Date.now());
+  $effect(() => {
+    if (!isStreaming) return;
+    nowMs = Date.now();
+    const id = setInterval(() => { nowMs = Date.now(); }, 1000);
+    return () => clearInterval(id);
+  });
+
   async function abort() {
     await sendPiCommand({ type: "abort" });
   }
@@ -586,7 +597,7 @@
     />
 
     <div class="messages-scroll" bind:this={scrollContainer} onscroll={updateIsAtBottom}>
-      <MessageList {items} {streamingMessage} />
+      <MessageList {items} {streamingMessage} {nowMs} />
 
       {#if agent.status === "stopped" && !isStandby}
         <div class="exit-banner">
