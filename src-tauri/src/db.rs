@@ -277,6 +277,13 @@ impl Database {
                     "ALTER TABLE agents ADD COLUMN archived_at TEXT;",
                 );
 
+                // MON-71: per-turn wall-clock duration on assistant messages.
+                // Nullable — old rows stay NULL (no backfill); pre-MON-71
+                // assistant messages simply render without a duration chip.
+                let _ = conn.execute_batch(
+                    "ALTER TABLE messages ADD COLUMN duration_ms INTEGER;",
+                );
+
                 // MON-49: the events table is forensic, not operational.
                 // Prune rows older than 30 days on startup so the table does
                 // not grow unbounded. Errors are swallowed — a failed prune
@@ -358,6 +365,12 @@ pub struct MessageRow {
     pub tokens: i32,
     pub cost: f64,
     pub timestamp: String,
+    /// MON-71: wall-clock duration of the assistant turn that produced this
+    /// message, in milliseconds. NULL for rows written before MON-71, and for
+    /// roles other than `assistant` (user and toolResult carry their own
+    /// timing — tool durations live inside the toolResult JSON blob).
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -574,11 +587,12 @@ impl Database {
             .conn
             .call(move |conn| {
                 conn.execute(
-                    "INSERT INTO messages (session_id, role, content, model, tokens, cost, timestamp)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    "INSERT INTO messages (session_id, role, content, model, tokens, cost, timestamp, duration_ms)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         message.session_id, message.role, message.content,
                         message.model, message.tokens, message.cost, message.timestamp,
+                        message.duration_ms,
                     ],
                 )?;
                 Ok(conn.last_insert_rowid())
@@ -736,7 +750,7 @@ impl Database {
                 let mut all_messages = Vec::new();
                 for sid in &chain {
                     let mut stmt = conn.prepare(
-                        "SELECT id, session_id, role, content, model, tokens, cost, timestamp FROM messages WHERE session_id = ?1 ORDER BY id ASC",
+                        "SELECT id, session_id, role, content, model, tokens, cost, timestamp, duration_ms FROM messages WHERE session_id = ?1 ORDER BY id ASC",
                     )?;
                     let rows = stmt.query_map(params![sid], map_message)?;
                     for row in rows {
@@ -838,7 +852,7 @@ impl Database {
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, session_id, role, content, model, tokens, cost, timestamp FROM messages WHERE session_id = ?1 ORDER BY id ASC",
+                    "SELECT id, session_id, role, content, model, tokens, cost, timestamp, duration_ms FROM messages WHERE session_id = ?1 ORDER BY id ASC",
                 )?;
                 let rows = stmt.query_map(params![session_id], map_message)?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -1368,6 +1382,7 @@ fn map_message(row: &Row<'_>) -> rusqlite::Result<MessageRow> {
         tokens: row.get(5)?,
         cost: row.get(6)?,
         timestamp: row.get(7)?,
+        duration_ms: row.get(8).ok(),
     })
 }
 

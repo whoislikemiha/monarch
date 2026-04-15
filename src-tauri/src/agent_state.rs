@@ -67,6 +67,16 @@ pub struct ToolExecution {
     pub result: Option<ToolResult>,
     pub is_error: Option<bool>,
     pub status: ToolStatus,
+    /// MON-71: wall-clock start, stamped when `ToolExecutionStart` lands in
+    /// Rust. Drives the live "N sec" ticker while running and feeds
+    /// `duration_ms` on completion. None for historical rows restored from
+    /// pre-MON-71 SQLite (no backfill).
+    #[serde(default)]
+    pub started_at_ms: Option<i64>,
+    /// MON-71: final end-to-end duration; set at `ToolExecutionEnd`.
+    /// Preserved across restart via the tool-result JSON (`durationMs`).
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
 }
 
 // ---- Streaming message -------------------------------------------------
@@ -78,6 +88,10 @@ pub struct StreamingMessage {
     pub model: Option<String>,
     pub usage: Option<Usage>,
     pub timestamp: Option<i64>,
+    /// MON-71: wall-clock start of the current turn, stamped at `TurnStart`.
+    /// Drives the live "N sec" ticker on the streaming assistant header.
+    #[serde(default)]
+    pub turn_started_at_ms: Option<i64>,
 }
 
 // ---- Display items -----------------------------------------------------
@@ -97,6 +111,11 @@ pub enum DisplayItem {
         model: Option<String>,
         usage: Option<Usage>,
         timestamp: Option<i64>,
+        /// MON-71: turn wall-clock duration, set when `MessageEnd` fires.
+        /// Persisted on the `messages.duration_ms` column; restored by
+        /// `display_items_from_messages`. None for pre-MON-71 rows.
+        #[serde(default)]
+        duration_ms: Option<i64>,
     },
     #[serde(rename = "tool-group")]
     ToolGroup {
@@ -161,6 +180,21 @@ pub struct LiveAgentState {
     /// If Pi SDK ever starts firing `MessageEnd` mid-agent-turn (parallel
     /// tool calls) this policy needs to be revisited — see MON-40.
     pub is_streaming: bool,
+    /// MON-71: wall-clock ms at the latest `TurnStart`. Copied onto
+    /// `StreamingMessage.turn_started_at_ms` at `MessageStart`, and used
+    /// to compute the turn's `duration_ms` at `MessageEnd`. Runtime-only
+    /// (skipped on wire) — the frontend reads the per-message
+    /// `turnStartedAtMs` / `durationMs` fields instead.
+    #[serde(skip)]
+    pub turn_started_at_ms: Option<i64>,
+    /// MON-71: per-block start times for thinking blocks in the currently
+    /// streaming assistant message, keyed by content-block index.
+    /// Populated as new thinking blocks first appear in `MessageUpdate`
+    /// content deltas, consumed at `MessageEnd` to inject
+    /// `_monarch.durationMs` into each thinking block's JSON. Cleared
+    /// per-turn.
+    #[serde(skip)]
+    pub thinking_block_starts: HashMap<usize, i64>,
 }
 
 // ---- Event application -------------------------------------------------
@@ -196,6 +230,8 @@ impl LiveAgentState {
         self.activity_status = String::new();
         self.desynced = false;
         self.is_streaming = false;
+        self.turn_started_at_ms = None;
+        self.thinking_block_starts.clear();
         self.state_version = self.state_version.saturating_add(1);
     }
 
@@ -203,12 +239,21 @@ impl LiveAgentState {
     /// `agent_end` when the sidecar never sent a distinct `message_end`.
     pub(crate) fn commit_streaming_message(&mut self) {
         if let Some(sm) = self.streaming_message.take() {
+            // MON-71: at agent-end the message_end boundary may have been
+            // skipped (older sidecar paths), so compute duration from the
+            // stamped turn start now if available.
+            let duration_ms = sm.turn_started_at_ms.map(|start| {
+                chrono::Utc::now().timestamp_millis().saturating_sub(start)
+            });
             self.items.push(DisplayItem::Assistant {
                 content: sm.content,
                 model: sm.model,
                 usage: sm.usage,
                 timestamp: sm.timestamp,
+                duration_ms,
             });
+            self.thinking_block_starts.clear();
+            self.turn_started_at_ms = None;
         }
     }
 
@@ -331,6 +376,11 @@ pub fn display_items_from_messages(
                             status: result_entry
                                 .map(|e| e.status)
                                 .unwrap_or(ToolStatus::Done),
+                            // MON-71: no started_at on recovery — we only
+                            // persisted the final duration. Passing None
+                            // renders a static duration chip (no ticker).
+                            started_at_ms: None,
+                            duration_ms: result_entry.and_then(|e| e.duration_ms),
                         });
                     }
                     for (id, exec) in pending_by_id {
@@ -352,6 +402,10 @@ pub fn display_items_from_messages(
                         model: msg.model.clone(),
                         usage: None,
                         timestamp: parse_timestamp(&msg.timestamp),
+                        // MON-71: turn duration restored from the
+                        // `messages.duration_ms` column if the row was
+                        // written post-MON-71; None for older rows.
+                        duration_ms: msg.duration_ms,
                     });
                 }
             }
@@ -402,6 +456,9 @@ fn parse_stored_tool_result(content: &str, fallback_id: &str) -> Option<ToolExec
         .unwrap_or("tool")
         .to_string();
     let is_error = obj.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
+    // MON-71: tool-call duration persisted inside the toolResult JSON blob.
+    // Uses `durationMs` (camelCase) to match the serde wire shape.
+    let duration_ms = obj.get("durationMs").and_then(|v| v.as_i64());
     let result_raw = obj.get("result").cloned();
     let result = result_raw.map(|r| {
         if let Some(s) = r.as_str() {
@@ -428,6 +485,8 @@ fn parse_stored_tool_result(content: &str, fallback_id: &str) -> Option<ToolExec
         } else {
             ToolStatus::Done
         },
+        started_at_ms: None,
+        duration_ms,
     })
 }
 

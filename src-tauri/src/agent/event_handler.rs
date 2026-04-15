@@ -18,7 +18,7 @@ use crate::agent_state::{ApplyOutcome, LiveAgentState};
 use crate::sidecar_protocol::{apply_event, InnerEvent, SidecarEvent};
 
 use super::manager::{AgentManagerInner, AgentStateEntry};
-use super::persist::{build_persist_commands, PersistCommand};
+use super::persist::{build_persist_commands, EventDurations, PersistCommand};
 use super::{WsBroadcast, DEBOUNCE_MILLIS};
 
 /// Look up the session_id for an agent from the consolidated inner state.
@@ -191,7 +191,14 @@ pub(super) async fn handle_sidecar_event(
             // consumer is lagging — that is the point of a bounded channel.
             let session_id = get_session_id(inner, &agent_id);
             let inner_raw = raw_value.get("event");
-            for cmd in build_persist_commands(&agent_id, session_id, &inner_event, inner_raw) {
+            // MON-71: pre-apply peek at the live state for finalized durations
+            // persisted alongside assistant/tool-result rows. MessageEnd uses
+            // `turn_started_at_ms`; ToolExecutionEnd uses the tool's stamped
+            // `started_at_ms`. Reading before apply is load-bearing because
+            // apply clears the turn anchor and writes the duration onto the
+            // ToolExecution — peeking after would see the mutation.
+            let durations = compute_event_durations(live_states, &agent_id, &inner_event).await;
+            for cmd in build_persist_commands(&agent_id, session_id, &inner_event, inner_raw, durations) {
                 if persist_tx.send(cmd).await.is_err() {
                     eprintln!("[monarch] persist consumer closed, dropping event");
                     break;
@@ -261,6 +268,43 @@ async fn try_consume_debounce_snapshot(
     let snapshot = g.state.clone();
     drop(g);
     Some(snapshot)
+}
+
+/// MON-71: read the pre-apply live state once, returning `EventDurations`
+/// with any finalized-now values so `build_persist_commands` can embed
+/// them in the row written to SQLite. Takes a read lock; never blocks
+/// beyond the copy of two i64s. Returns default (all None) for agents
+/// without a live state entry (e.g. very first event before lazy init).
+async fn compute_event_durations(
+    live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
+    agent_id: &str,
+    event: &InnerEvent,
+) -> EventDurations {
+    let entry = match live_states.get(agent_id) {
+        Some(e) => e.clone(),
+        None => return EventDurations::default(),
+    };
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let guard = entry.inner.read().await;
+    match event {
+        InnerEvent::MessageEnd { message } if message.role == "assistant" => EventDurations {
+            turn_duration_ms: guard
+                .state
+                .turn_started_at_ms
+                .map(|start| now_ms.saturating_sub(start)),
+            tool_duration_ms: None,
+        },
+        InnerEvent::ToolExecutionEnd { tool_call_id, .. } => EventDurations {
+            turn_duration_ms: None,
+            tool_duration_ms: guard
+                .state
+                .tool_executions
+                .get(tool_call_id)
+                .and_then(|e| e.started_at_ms)
+                .map(|start| now_ms.saturating_sub(start)),
+        },
+        _ => EventDurations::default(),
+    }
 }
 
 /// Route one typed inner event through the free `apply_event` in

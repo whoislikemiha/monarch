@@ -146,11 +146,22 @@ impl PersistCommand {
 /// alongside the typed `InnerEvent` sidesteps the need for `Serialize`
 /// on `InnerEvent::Unknown { raw }` (which would be a custom impl) and
 /// preserves exact wire bytes for debugging.
+/// MON-71: wall-clock durations pre-computed against the live state snapshot
+/// from before the event was applied. `turn_duration_ms` is the finalized
+/// turn duration at `MessageEnd`; `tool_duration_ms` is the finalized tool
+/// duration at `ToolExecutionEnd`. Both are `None` for any other event.
+#[derive(Default, Clone, Copy)]
+pub(super) struct EventDurations {
+    pub turn_duration_ms: Option<i64>,
+    pub tool_duration_ms: Option<i64>,
+}
+
 pub(super) fn build_persist_commands(
     agent_id: &str,
     session_id: Option<String>,
     event: &InnerEvent,
     inner_raw: Option<&serde_json::Value>,
+    durations: EventDurations,
 ) -> Vec<PersistCommand> {
     let mut cmds: Vec<PersistCommand> = Vec::with_capacity(2);
 
@@ -196,6 +207,7 @@ pub(super) fn build_persist_commands(
                     tokens,
                     cost,
                     timestamp: chrono_now(),
+                    duration_ms: durations.turn_duration_ms,
                 },
             });
 
@@ -229,13 +241,19 @@ pub(super) fn build_persist_commands(
                 .map(|r| serde_json::to_string(r).unwrap_or_default())
                 .unwrap_or_default();
 
-            let content = serde_json::json!({
+            // MON-71: embed tool duration inside the toolResult JSON blob so
+            // it survives the round trip through SQLite. The recovery path
+            // in `parse_stored_tool_result` reads it back as `durationMs`.
+            let mut content_obj = serde_json::json!({
                 "toolCallId": tool_call_id,
                 "toolName": tool_name,
                 "result": result_str,
                 "isError": *is_error,
-            })
-            .to_string();
+            });
+            if let (Some(d), Some(obj)) = (durations.tool_duration_ms, content_obj.as_object_mut()) {
+                obj.insert("durationMs".to_string(), serde_json::json!(d));
+            }
+            let content = content_obj.to_string();
 
             cmds.push(PersistCommand::SaveToolResult {
                 agent_id: agent_id.to_string(),
@@ -248,6 +266,7 @@ pub(super) fn build_persist_commands(
                     tokens: 0,
                     cost: 0.0,
                     timestamp: chrono_now(),
+                    duration_ms: None,
                 },
             });
 
