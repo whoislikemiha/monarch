@@ -139,6 +139,8 @@ export interface ThinkingContent {
   type: "thinking";
   thinking: string;
   redacted?: boolean;
+  /** MON-71: Rust-injected metadata, currently carrying `durationMs` for finalized thinking blocks. */
+  _monarch?: { durationMs?: number };
 }
 
 export interface ToolCallContent {
@@ -171,6 +173,8 @@ export interface AssistantMessage {
   stopReason?: string;
   errorMessage?: string;
   timestamp?: number;
+  /** MON-71: wall-clock anchor for the active turn; set on the streaming message so the frontend ticker has an anchor across debounced snapshots. */
+  turnStartedAtMs?: number | null;
 }
 
 export interface ToolResultMessage {
@@ -226,6 +230,10 @@ export interface ToolExecution {
   result?: any;
   isError?: boolean;
   status: "running" | "done" | "error";
+  /** MON-71: wall-clock start in ms since epoch; drives the live "N sec" ticker while running. */
+  startedAtMs?: number | null;
+  /** MON-71: final duration in ms; set at tool_execution_end and preserved across restart. */
+  durationMs?: number | null;
 }
 
 // Pi SDK events (via sidecar)
@@ -301,6 +309,8 @@ export type DisplayItem =
       usage?: Usage;
       model?: string;
       timestamp?: number;
+      /** MON-71: final turn duration in ms; set at MessageEnd and restored from SQLite on reload. */
+      durationMs?: number | null;
     }
   | { kind: "tool-group"; executions: ToolExecution[]; turnComplete: boolean }
   | { kind: "status"; text: string }

@@ -1,16 +1,26 @@
 <script lang="ts">
   import AssistantMessageComp from "./AssistantMessage.svelte";
   import ToolGroup from "./ToolGroup.svelte";
-  import { formatCost } from "./format";
+  import { formatCost, formatDuration } from "./format";
   import type { DisplayItem, AssistantMessage } from "./types";
 
   let {
     items,
     streamingMessage,
+    nowMs,
   }: {
     items: DisplayItem[];
     streamingMessage: AssistantMessage | null;
+    /** MON-71: 1Hz live ticker from AgentView; drives in-progress duration counters. */
+    nowMs: number;
   } = $props();
+
+  // MON-71: for a streaming turn, elapsed is `nowMs - turnStartedAtMs`;
+  // for a finalized turn it's the persisted `durationMs`.
+  function liveElapsed(startedAtMs?: number | null): number | null {
+    if (startedAtMs == null) return null;
+    return Math.max(0, nowMs - startedAtMs);
+  }
 </script>
 
 <div class="message-list">
@@ -35,11 +45,14 @@
           {#if formatCost(item.usage?.cost?.total)}
             <span class="cost-tag">{formatCost(item.usage?.cost?.total)}</span>
           {/if}
+          {#if formatDuration(item.durationMs)}
+            <span class="duration-tag">{formatDuration(item.durationMs)}</span>
+          {/if}
         </div>
         <AssistantMessageComp content={item.content} />
       </div>
     {:else if item.kind === "tool-group"}
-      <ToolGroup executions={item.executions} turnComplete={item.turnComplete} />
+      <ToolGroup executions={item.executions} turnComplete={item.turnComplete} {nowMs} />
     {:else if item.kind === "status"}
       <div class="status-message">{item.text}</div>
     {:else if item.kind === "notification"}
@@ -59,10 +72,14 @@
       .filter((b): b is { type: "text"; text: string } => b.type === "text")
       .map((b) => b.text)
       .join("")}
+    {@const liveTurnDuration = formatDuration(liveElapsed(streamingMessage.turnStartedAtMs))}
     <div class="message assistant-message streaming">
       <div class="message-label">
         Assistant
         <span class="streaming-indicator"></span>
+        {#if liveTurnDuration}
+          <span class="duration-tag">{liveTurnDuration}</span>
+        {/if}
       </div>
       {#if thinkingContent && !textContent}
         <!-- Thinking-only phase: render text live so the user can follow along. -->
@@ -131,7 +148,8 @@
 
   .model-tag,
   .token-tag,
-  .cost-tag {
+  .cost-tag,
+  .duration-tag {
     font-weight: 400;
     color: var(--text-muted);
     font-size: 10px;

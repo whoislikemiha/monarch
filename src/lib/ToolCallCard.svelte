@@ -1,9 +1,20 @@
 <script lang="ts">
   import type { ToolExecution } from "./types";
+  import { formatDuration } from "./format";
 
-  let { execution }: { execution: ToolExecution } = $props();
+  let { execution, nowMs }: { execution: ToolExecution; nowMs: number } = $props();
 
   let expanded = $state(false);
+
+  // MON-71: show live elapsed while running (nowMs - startedAtMs), final
+  // durationMs once the tool completes. Null when sub-1-second (formatter
+  // returns null) or when the tool was restored from DB without timing.
+  let durationLabel = $derived.by<string | null>(() => {
+    if (execution.status === "running" && execution.startedAtMs != null) {
+      return formatDuration(Math.max(0, nowMs - execution.startedAtMs));
+    }
+    return formatDuration(execution.durationMs);
+  });
 
   // Smart arg display per tool type
   function formatArgs(toolName: string, args: any): string {
@@ -114,6 +125,9 @@
     {#if execution.isError}
       <span class="error-tag">error</span>
     {/if}
+    {#if durationLabel}
+      <span class="duration-tag">{durationLabel}</span>
+    {/if}
   </button>
 
   {#if expanded}
@@ -212,6 +226,13 @@
     color: var(--error);
     font-size: 10px;
     flex-shrink: 0;
+  }
+
+  .duration-tag {
+    color: var(--text-muted);
+    font-size: 10px;
+    flex-shrink: 0;
+    margin-left: auto;
   }
 
   .tool-body {

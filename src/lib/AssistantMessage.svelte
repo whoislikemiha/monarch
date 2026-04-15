@@ -2,8 +2,20 @@
   import { marked } from "marked";
   import { slide } from "svelte/transition";
   import type { ContentBlock } from "./types";
+  import { formatDuration } from "./format";
 
   let { content }: { content: ContentBlock[] } = $props();
+
+  // MON-71: thinking blocks carry their finalized duration via Rust-injected
+  // `_monarch.durationMs`. When present, the toggle label reads
+  // "Thought for 15 sec" (Claude.ai/ChatGPT convention); when absent
+  // (pre-MON-71 rows, sub-1-sec blocks, live pre-finalize) it falls back
+  // to plain "Thinking".
+  function thinkingLabel(block: ContentBlock): string {
+    if (block.type !== "thinking") return "Thinking";
+    const d = formatDuration(block._monarch?.durationMs);
+    return d ? `Thought for ${d}` : "Thinking";
+  }
 
   // Collapsed by default — track which blocks the user has expanded.
   let expandedThinking: Set<number> = $state(new Set());
@@ -133,7 +145,7 @@
           onclick={() => toggleThinking(i)}
         >
           <span class="toggle-arrow" aria-hidden="true">{expanded ? "▾" : "▸"}</span>
-          <span class="toggle-label">Thinking</span>
+          <span class="toggle-label">{thinkingLabel(block)}</span>
           {#if block.redacted}
             <span class="redacted-tag">redacted</span>
           {/if}

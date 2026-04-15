@@ -438,6 +438,9 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
     let outcome = match event {
         InnerEvent::AgentStart => {
             state.activity_status = "Agent processing...".to_string();
+            // MON-71: stamp agent-span start so AgentEnd can decorate the
+            // "finished" status line with elapsed time.
+            state.agent_started_at_ms = Some(now_ms());
             state.items.push(DisplayItem::Status {
                 text: "Agent started".to_string(),
             });
@@ -447,14 +450,30 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
             state.activity_status = String::new();
             state.is_streaming = false;
             state.commit_streaming_message();
-            state.items.push(DisplayItem::Status {
-                text: "Agent finished".to_string(),
-            });
+            // MON-71: "Agent finished in 2 min 14 sec". Omit the suffix
+            // (and show plain "Agent finished") when we never saw an
+            // AgentStart (replayed session) or when the span was
+            // sub-1-second — matches the TS formatter's null behaviour.
+            let text = match state
+                .agent_started_at_ms
+                .take()
+                .map(|start| now_ms().saturating_sub(start))
+                .and_then(crate::agent_state::format_duration_ms)
+            {
+                Some(d) => format!("Agent finished in {}", d),
+                None => "Agent finished".to_string(),
+            };
+            state.items.push(DisplayItem::Status { text });
             ApplyOutcome::EmitNow
         }
         InnerEvent::TurnStart => {
             state.activity_status = "LLM call in progress...".to_string();
             state.current_tool_group_idx = None;
+            // MON-71: stamp the turn's start time. Used at MessageStart to seed
+            // `StreamingMessage.turn_started_at_ms` (so the frontend ticker has
+            // an anchor) and at MessageEnd to compute the final duration.
+            state.turn_started_at_ms = Some(now_ms());
+            state.thinking_block_starts.clear();
             ApplyOutcome::EmitNow
         }
         InnerEvent::TurnEnd => {
@@ -485,7 +504,14 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                     ApplyOutcome::EmitNow
                 }
                 "assistant" => {
-                    state.streaming_message = Some(streaming_from(message));
+                    let mut sm = streaming_from(message);
+                    // MON-71: if no TurnStart preceded this (compaction, retry),
+                    // stamp now so the ticker still has something to anchor to.
+                    let anchor = state.turn_started_at_ms.unwrap_or_else(now_ms);
+                    state.turn_started_at_ms = Some(anchor);
+                    sm.turn_started_at_ms = Some(anchor);
+                    record_new_thinking_blocks(&mut state.thinking_block_starts, &sm.content);
+                    state.streaming_message = Some(sm);
                     state.activity_status = "Receiving response...".to_string();
                     state.is_streaming = true;
                     ApplyOutcome::EmitNow
@@ -495,10 +521,14 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
         }
         InnerEvent::MessageUpdate { message } => {
             if message.role == "assistant" {
-                let sm = streaming_from(message);
+                let mut sm = streaming_from(message);
                 if let Some(usage) = sm.usage.clone() {
                     state.last_usage = Some(usage);
                 }
+                // MON-71: preserve the turn anchor set at MessageStart so the
+                // frontend's live ticker doesn't jitter between updates.
+                sm.turn_started_at_ms = state.turn_started_at_ms;
+                record_new_thinking_blocks(&mut state.thinking_block_starts, &sm.content);
                 state.streaming_message = Some(sm);
                 // MON-70: fall through so `state_version` gets bumped at the
                 // end of the match. Previously this early-returned, meaning
@@ -517,11 +547,23 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                 if let Some(usage) = sm.usage.clone() {
                     state.last_usage = Some(usage);
                 }
+                // MON-71: seal remaining thinking blocks and compute turn
+                // duration before pushing the finalized assistant item.
+                let now = now_ms();
+                let mut content = sm.content;
+                record_new_thinking_blocks(&mut state.thinking_block_starts, &content);
+                finalize_thinking_durations(&state.thinking_block_starts, &mut content, now);
+                state.thinking_block_starts.clear();
+                let duration_ms = state
+                    .turn_started_at_ms
+                    .map(|start| now.saturating_sub(start));
+                state.turn_started_at_ms = None;
                 state.items.push(DisplayItem::Assistant {
-                    content: sm.content,
+                    content,
                     model: sm.model,
                     usage: sm.usage,
                     timestamp: sm.timestamp,
+                    duration_ms,
                 });
                 state.streaming_message = None;
             }
@@ -534,6 +576,9 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
         } => {
             state.activity_status = format!("Running tool: {}", tool_name);
             state.is_streaming = true;
+            // MON-71: stamp start time. Drives live ticker while the tool is
+            // running; subtracted from the end stamp to compute duration.
+            let started_at_ms = now_ms();
             let exec = ToolExecution {
                 tool_call_id: tool_call_id.clone(),
                 tool_name: tool_name.clone(),
@@ -541,6 +586,8 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                 result: None,
                 is_error: None,
                 status: ToolStatus::Running,
+                started_at_ms: Some(started_at_ms),
+                duration_ms: None,
             };
             state
                 .tool_executions
@@ -577,10 +624,20 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
             };
             state.activity_status = String::new();
 
+            // MON-71: compute duration once from the stamped start time on
+            // the canonical `tool_executions` entry, then mirror it onto the
+            // tool group's execution below so both views stay in sync.
+            let duration_ms = state
+                .tool_executions
+                .get(tool_call_id)
+                .and_then(|e| e.started_at_ms)
+                .map(|start| now_ms().saturating_sub(start));
+
             if let Some(existing) = state.tool_executions.get_mut(tool_call_id) {
                 existing.result = result.clone();
                 existing.is_error = Some(*is_error);
                 existing.status = status;
+                existing.duration_ms = duration_ms;
             }
 
             if let Some(idx) = state.current_tool_group_idx {
@@ -594,6 +651,7 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                         exec.result = result.clone();
                         exec.is_error = Some(*is_error);
                         exec.status = status;
+                        exec.duration_ms = duration_ms;
                     }
                 }
             }
@@ -660,6 +718,65 @@ fn streaming_from(message: &Message) -> StreamingMessage {
         model: message.model.clone(),
         usage: message.usage.clone(),
         timestamp: message.timestamp,
+        turn_started_at_ms: None,
+    }
+}
+
+/// MON-71: current wall-clock in milliseconds since epoch. Thin wrapper so
+/// test code can stub it if needed; production uses `chrono::Utc::now()`.
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+/// MON-71: record start times for any thinking blocks that have appeared
+/// in the streaming content since the last call. Uses content-block index
+/// as the key — Pi SDK appends blocks in order, so index is stable for the
+/// lifetime of a turn. Existing entries are never overwritten so we keep
+/// the earliest-observed start (the block's real start moment, not the
+/// latest update that carried more thinking text).
+fn record_new_thinking_blocks(starts: &mut std::collections::HashMap<usize, i64>, content: &[serde_json::Value]) {
+    let now = now_ms();
+    for (i, block) in content.iter().enumerate() {
+        if block.get("type").and_then(|t| t.as_str()) == Some("thinking") {
+            starts.entry(i).or_insert(now);
+        }
+    }
+}
+
+/// MON-71: on `MessageEnd`, inject `_monarch.durationMs` into each thinking
+/// block's JSON so the duration survives the round trip through SQLite
+/// (content is persisted as opaque JSON). The injection key is namespaced
+/// to avoid colliding with any Pi SDK field that may land on these blocks.
+///
+/// End time uses `message_end_ms` for blocks that are immediately followed
+/// by another block (text or tool call) and for the final block — the
+/// tightest sensible boundary given we only observe deltas, not explicit
+/// thinking_end events at this layer. Rounding error is ≤ one debounce
+/// window (16 ms) which is invisible at the second-granularity display.
+fn finalize_thinking_durations(
+    starts: &std::collections::HashMap<usize, i64>,
+    content: &mut [serde_json::Value],
+    message_end_ms: i64,
+) {
+    for (i, block) in content.iter_mut().enumerate() {
+        if block.get("type").and_then(|t| t.as_str()) != Some("thinking") {
+            continue;
+        }
+        let Some(start) = starts.get(&i).copied() else {
+            continue;
+        };
+        let duration = message_end_ms.saturating_sub(start);
+        if let Some(obj) = block.as_object_mut() {
+            let meta = obj
+                .entry("_monarch".to_string())
+                .or_insert_with(|| serde_json::json!({}));
+            if let Some(meta_obj) = meta.as_object_mut() {
+                meta_obj.insert(
+                    "durationMs".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(duration)),
+                );
+            }
+        }
     }
 }
 
