@@ -438,6 +438,9 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
     let outcome = match event {
         InnerEvent::AgentStart => {
             state.activity_status = "Agent processing...".to_string();
+            // MON-71: stamp agent-span start so AgentEnd can decorate the
+            // "finished" status line with elapsed time.
+            state.agent_started_at_ms = Some(now_ms());
             state.items.push(DisplayItem::Status {
                 text: "Agent started".to_string(),
             });
@@ -447,9 +450,20 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
             state.activity_status = String::new();
             state.is_streaming = false;
             state.commit_streaming_message();
-            state.items.push(DisplayItem::Status {
-                text: "Agent finished".to_string(),
-            });
+            // MON-71: "Agent finished in 2 min 14 sec". Omit the suffix
+            // (and show plain "Agent finished") when we never saw an
+            // AgentStart (replayed session) or when the span was
+            // sub-1-second — matches the TS formatter's null behaviour.
+            let text = match state
+                .agent_started_at_ms
+                .take()
+                .map(|start| now_ms().saturating_sub(start))
+                .and_then(crate::agent_state::format_duration_ms)
+            {
+                Some(d) => format!("Agent finished in {}", d),
+                None => "Agent finished".to_string(),
+            };
+            state.items.push(DisplayItem::Status { text });
             ApplyOutcome::EmitNow
         }
         InnerEvent::TurnStart => {

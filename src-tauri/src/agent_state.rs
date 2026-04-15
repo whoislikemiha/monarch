@@ -195,6 +195,11 @@ pub struct LiveAgentState {
     /// per-turn.
     #[serde(skip)]
     pub thinking_block_starts: HashMap<usize, i64>,
+    /// MON-71: wall-clock ms at `AgentStart`. Used to decorate the
+    /// "Agent finished" status line with "in N min M sec" on `AgentEnd`.
+    /// Runtime-only; the frontend reads the already-formatted status text.
+    #[serde(skip)]
+    pub agent_started_at_ms: Option<i64>,
 }
 
 // ---- Event application -------------------------------------------------
@@ -232,6 +237,7 @@ impl LiveAgentState {
         self.is_streaming = false;
         self.turn_started_at_ms = None;
         self.thinking_block_starts.clear();
+        self.agent_started_at_ms = None;
         self.state_version = self.state_version.saturating_add(1);
     }
 
@@ -268,6 +274,35 @@ impl LiveAgentState {
 }
 
 // ---- Helpers ----
+
+/// MON-71: human-readable duration string mirroring `formatDuration` in
+/// `src/lib/format.ts`. Returns None for sub-1-second or invalid input so
+/// callers can elide the "in X time" suffix entirely.
+pub fn format_duration_ms(ms: i64) -> Option<String> {
+    if ms < 1000 {
+        return None;
+    }
+    let total_sec = ms / 1000;
+    if total_sec < 60 {
+        return Some(format!("{} sec", total_sec));
+    }
+    let total_min = total_sec / 60;
+    if total_min < 60 {
+        let sec = total_sec % 60;
+        return Some(if sec == 0 {
+            format!("{} min", total_min)
+        } else {
+            format!("{} min {} sec", total_min, sec)
+        });
+    }
+    let hr = total_min / 60;
+    let min = total_min % 60;
+    Some(if min == 0 {
+        format!("{} hr", hr)
+    } else {
+        format!("{} hr {} min", hr, min)
+    })
+}
 
 /// Extract plain-text content from a Pi message.content field which may be
 /// either a string or an array of content blocks. Mirrors the inline logic in
