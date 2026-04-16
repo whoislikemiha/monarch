@@ -1,7 +1,9 @@
 <script lang="ts">
   import type { Agent, Project, ShadowIdentity } from "./types";
   import { agentStore } from "./stores/agentStore.svelte";
+  import { liveAgentStore } from "./toolbox/liveAgentStore.svelte";
   import { formatCost } from "./format";
+  import { ShadowAvatar } from "./avatar";
 
   interface ProjectGroup {
     project?: Project;
@@ -169,11 +171,21 @@
           <div class="pills">
             {#each group.agents as agent (agent.id)}
               {@const isArchived = !!agent.archivedAt}
+              {@const live = liveAgentStore.byAgent.get(agent.id)}
+              {@const streaming = !!live?.isStreaming}
               {@const subtitle = agent.shadow?.shadowTitle || agent.shadow?.shadowGrade || agent.model || ""}
-              {@const cwdLabel = agent.cwd ? shortenPath(agent.cwd) : ""}
+              {@const liveStatus = live?.activityStatus || ""}
+              {@const statusLine = streaming
+                ? (liveStatus || "Thinking…")
+                : (isArchived
+                  ? "Dismissed"
+                  : agent.status === "stopped"
+                    ? "Paused"
+                    : (liveStatus || subtitle || "Idle"))}
               <div
                 class="pill"
                 class:active={agent.id === agentStore.activeTabId}
+                class:streaming
                 class:standby={agent.status === "stopped"}
                 class:archived={isArchived}
                 onclick={() => agentStore.selectAgent(agent.id)}
@@ -181,23 +193,28 @@
                 oncontextmenu={(e: MouseEvent) => openAgentMenu(e, agent)}
                 role="button"
                 tabindex="0"
+                title={agent.cwd ? `${agent.name}\n${shortenPath(agent.cwd)}` : agent.name}
               >
-                <div class="pill-main">
-                  <span class="pill-name" title={agent.name}>{agent.name}</span>
-                  {#if subtitle}
-                    <span class="pill-subtitle" title={subtitle}>{subtitle}</span>
-                  {/if}
+                <div class="pill-avatar">
+                  <ShadowAvatar
+                    agentId={agent.id}
+                    size={28}
+                    avatarType={agent.avatarType}
+                    avatarPath={agent.avatarPath}
+                  />
                 </div>
-                {#if cwdLabel || formatCost(agent.lifetimeCost)}
-                  <div class="pill-meta">
-                    {#if cwdLabel}
-                      <span class="pill-cwd" title={agent.cwd}>{cwdLabel}</span>
-                    {/if}
+                <div class="pill-body">
+                  <div class="pill-row-top">
+                    <span class="pill-name" title={agent.name}>{agent.name}</span>
                     {#if formatCost(agent.lifetimeCost)}
                       <span class="pill-cost">{formatCost(agent.lifetimeCost)}</span>
                     {/if}
                   </div>
-                {/if}
+                  <div class="pill-status" title={statusLine}>
+                    {#if streaming}<span class="pill-pulse-dot"></span>{/if}
+                    <span class="pill-status-text">{statusLine}</span>
+                  </div>
+                </div>
                 {#if isArchived}
                   <button
                     class="pill-btn pill-summon"
@@ -407,14 +424,9 @@
   }
 
   .pill {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    grid-template-areas:
-      "main btn"
-      "meta btn";
+    display: flex;
     align-items: center;
-    column-gap: 6px;
-    row-gap: 1px;
+    gap: 8px;
     padding: 5px 8px;
     border-radius: 6px;
     border: 1px solid transparent;
@@ -435,6 +447,9 @@
     border-color: var(--accent);
     color: var(--text-primary);
   }
+  .pill.streaming {
+    border-color: var(--accent);
+  }
   .pill.standby {
     opacity: 0.65;
   }
@@ -449,10 +464,28 @@
     opacity: 0.85;
   }
 
-  .pill-main {
-    grid-area: main;
+  .pill-avatar {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    border-radius: 6px;
+    overflow: hidden;
+    line-height: 0;
+    background: var(--bg-panel);
+  }
+
+  .pill-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .pill-row-top {
     display: flex;
     align-items: baseline;
+    justify-content: space-between;
     gap: 6px;
     min-width: 0;
   }
@@ -464,36 +497,6 @@
     white-space: nowrap;
   }
 
-  .pill-subtitle {
-    font-size: 9px;
-    color: var(--accent);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 50%;
-  }
-
-  .pill-meta {
-    grid-area: meta;
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 6px;
-    min-width: 0;
-  }
-
-  .pill-cwd {
-    font-size: 9px;
-    color: var(--text-muted);
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    direction: rtl;
-    text-align: left;
-  }
-
   .pill-cost {
     font-size: 9px;
     color: var(--text-muted);
@@ -501,8 +504,42 @@
     white-space: nowrap;
   }
 
+  .pill-status {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    font-size: 9px;
+    color: var(--text-muted);
+  }
+
+  .pill-status-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .pill.streaming .pill-status {
+    color: var(--accent);
+  }
+
+  .pill-pulse-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+    animation: pill-pulse 1.2s ease-in-out infinite;
+  }
+
+  @keyframes pill-pulse {
+    0%, 100% { opacity: 0.4; transform: scale(0.85); }
+    50% { opacity: 1; transform: scale(1.1); }
+  }
+
   .pill-btn {
-    grid-area: btn;
+    flex-shrink: 0;
     align-self: stretch;
     border: none;
     background: none;

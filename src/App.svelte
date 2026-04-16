@@ -5,7 +5,6 @@
   import AgentView from "./lib/AgentView.svelte";
   import SpawnDialog from "./lib/SpawnDialog.svelte";
   import ConfirmDialog from "./lib/ConfirmDialog.svelte";
-  import TabBar from "./lib/TabBar.svelte";
   import ProjectEditor from "./lib/ProjectEditor.svelte";
   import ToolRail from "./lib/toolbox/ToolRail.svelte";
   import SettingsDialog from "./lib/SettingsDialog.svelte";
@@ -310,7 +309,6 @@
   />
   <div class="main-row">
     <div class="main-panel">
-      <TabBar />
       <div class="main-content">
         {#if activeAgent}
           {#key activeAgent.viewKey}
