@@ -2,6 +2,8 @@
   import type { Agent, DisplayItem, SessionStats, Usage } from "./types";
   import { ShadowAvatar } from "./avatar";
 
+  export type PortraitCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
   let {
     agent,
     projectName,
@@ -19,6 +21,8 @@
     oncompact,
     onnewsession,
     onprojectedit,
+    onmove,
+    corner = "bottom-right",
   }: {
     agent: Agent;
     projectName?: string;
@@ -36,7 +40,60 @@
     oncompact?: () => void;
     onnewsession?: () => void;
     onprojectedit?: () => void;
+    onmove?: (corner: PortraitCorner) => void;
+    corner?: PortraitCorner;
   } = $props();
+
+  // --- Drag to reposition ---
+  let portraitEl: HTMLDivElement | undefined = $state(undefined);
+  let dragState: {
+    startX: number;
+    startY: number;
+    pointerId: number;
+  } | null = null;
+  let dragOffsetX = $state(0);
+  let dragOffsetY = $state(0);
+  let isDragging = $state(false);
+
+  function handleHandleDown(e: PointerEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragState = { startX: e.clientX, startY: e.clientY, pointerId: e.pointerId };
+    isDragging = true;
+    showCommandMenu = false;
+    showThinkingPicker = false;
+  }
+
+  function handleHandleMove(e: PointerEvent) {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    dragOffsetX = e.clientX - dragState.startX;
+    dragOffsetY = e.clientY - dragState.startY;
+  }
+
+  function handleHandleUp(e: PointerEvent) {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+
+    const anchor = portraitEl?.closest(".messages-area") as HTMLElement | null;
+    if (anchor && portraitEl) {
+      const bounds = anchor.getBoundingClientRect();
+      const pr = portraitEl.getBoundingClientRect();
+      const cx = pr.left + pr.width / 2;
+      const cy = pr.top + pr.height / 2;
+      const midX = bounds.left + bounds.width / 2;
+      const midY = bounds.top + bounds.height / 2;
+      const horiz: "left" | "right" = cx < midX ? "left" : "right";
+      const vert: "top" | "bottom" = cy < midY ? "top" : "bottom";
+      const next: PortraitCorner = `${vert}-${horiz}` as PortraitCorner;
+      onmove?.(next);
+    }
+
+    dragState = null;
+    dragOffsetX = 0;
+    dragOffsetY = 0;
+    isDragging = false;
+  }
 
   const DEFAULT_CONTEXT_WINDOW = 128000;
   const CHARS_PER_TOKEN = 4;
@@ -191,7 +248,26 @@
 
 <svelte:window onclick={() => { showThinkingPicker = false; showCommandMenu = false; }} />
 
-<div class="portrait" class:streaming={isStreaming}>
+<div
+  class="portrait"
+  class:streaming={isStreaming}
+  class:dragging={isDragging}
+  data-corner={corner}
+  bind:this={portraitEl}
+  style:transform={isDragging ? `translate(${dragOffsetX}px, ${dragOffsetY}px)` : undefined}
+>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="drag-handle"
+    title="Drag to reposition"
+    onpointerdown={handleHandleDown}
+    onpointermove={handleHandleMove}
+    onpointerup={handleHandleUp}
+    onpointercancel={handleHandleUp}
+  >
+    <span class="drag-dots">&bull; &bull; &bull;</span>
+  </div>
+
   {#if hasContextMeter}
     <div
       class="context-meter"
@@ -327,6 +403,7 @@
 
 <style>
   .portrait {
+    position: relative;
     display: flex;
     flex-direction: column;
     width: 196px;
@@ -339,6 +416,41 @@
     box-shadow: 0 8px 24px var(--shadow-dark, rgba(0, 0, 0, 0.35));
     pointer-events: auto;
     user-select: none;
+    will-change: transform;
+  }
+
+  .portrait.dragging {
+    cursor: grabbing;
+    opacity: 0.92;
+    transition: none;
+  }
+
+  .drag-handle {
+    height: 14px;
+    margin: -4px -4px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    cursor: grab;
+    border-radius: 6px;
+    opacity: 0.55;
+    transition: opacity 0.12s, background 0.12s;
+  }
+
+  .drag-handle:hover {
+    opacity: 1;
+    background: var(--bg-panel-2);
+  }
+
+  .portrait.dragging .drag-handle {
+    cursor: grabbing;
+  }
+
+  .drag-dots {
+    font-size: 14px;
+    line-height: 1;
+    letter-spacing: 2px;
   }
 
   .portrait.streaming {
@@ -404,8 +516,6 @@
 
   .command-menu {
     position: absolute;
-    right: calc(100% + 8px);
-    bottom: 0;
     min-width: 170px;
     padding: 4px;
     background: var(--bg-panel-2);
@@ -416,6 +526,20 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+
+  /* Menu opens toward the chat center based on which corner the portrait sits in. */
+  .portrait[data-corner$="-right"] .command-menu {
+    right: calc(100% + 8px);
+  }
+  .portrait[data-corner$="-left"] .command-menu {
+    left: calc(100% + 8px);
+  }
+  .portrait[data-corner^="bottom-"] .command-menu {
+    bottom: 0;
+  }
+  .portrait[data-corner^="top-"] .command-menu {
+    top: 0;
   }
 
   .command-item {

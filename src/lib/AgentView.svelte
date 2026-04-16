@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { invoke, listen, type UnlistenFn } from "$lib/api";
   import { commands } from "$lib/bindings";
   import MessageList from "./MessageList.svelte";
   import ChatInput, { type PendingImage } from "./ChatInput.svelte";
-  import AgentPortrait from "./AgentPortrait.svelte";
+  import AgentPortrait, { type PortraitCorner } from "./AgentPortrait.svelte";
   import ExtensionDialog from "./ExtensionDialog.svelte";
   import PromptEditor from "./PromptEditor.svelte";
   import HistoryPanel from "./HistoryPanel.svelte";
@@ -44,6 +44,25 @@
   let pendingSourceSessionId: string | undefined = $state(undefined);
   let showPromptEditor = $state(false);
   let showHistory = $state(false);
+
+  // MON-77: portrait-corner preference (persisted via ui_state).
+  let portraitCorner = $state<PortraitCorner>("bottom-right");
+
+  onMount(async () => {
+    try {
+      const saved = await invoke<string | null>("db_get_ui_state", { key: "portraitCorner" });
+      if (saved === "top-left" || saved === "top-right" || saved === "bottom-left" || saved === "bottom-right") {
+        portraitCorner = saved;
+      }
+    } catch {}
+  });
+
+  async function setPortraitCorner(c: PortraitCorner) {
+    portraitCorner = c;
+    try {
+      await invoke("db_set_ui_state", { key: "portraitCorner", value: c });
+    } catch {}
+  }
 
   let unlistenState: UnlistenFn | undefined;
   let unlistenEvent: UnlistenFn | undefined;
@@ -681,7 +700,7 @@
         {/if}
       </div>
 
-      <div class="portrait-anchor">
+      <div class="portrait-anchor pos-{portraitCorner}">
         <AgentPortrait
           {agent}
           {projectName}
@@ -699,6 +718,8 @@
           oncompact={compact}
           onnewsession={newSession}
           {onprojectedit}
+          onmove={setPortraitCorner}
+          corner={portraitCorner}
         />
       </div>
     </div>
@@ -874,11 +895,14 @@
 
   .portrait-anchor {
     position: absolute;
-    bottom: 12px;
-    right: 12px;
     z-index: 5;
     pointer-events: none;
   }
+
+  .portrait-anchor.pos-bottom-right { bottom: 12px; right: 12px; }
+  .portrait-anchor.pos-bottom-left { bottom: 12px; left: 12px; }
+  .portrait-anchor.pos-top-right { top: 12px; right: 12px; }
+  .portrait-anchor.pos-top-left { top: 12px; left: 12px; }
 
   .portrait-anchor > :global(.portrait) {
     pointer-events: auto;
