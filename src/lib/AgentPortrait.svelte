@@ -352,7 +352,7 @@
         title={`Context: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens (${usedPct}% used, ${freePct}% free)`}
       >
         <div class="mini-ctx-fill" style:width={`${usedPct}%`}></div>
-        <span class="mini-ctx-number">{usedPct}%</span>
+        <span class="mini-ctx-number">{formatTokens(liveContextTokens)}/{formatTokens(resolvedContextWindow)}</span>
       </div>
     {/if}
 
