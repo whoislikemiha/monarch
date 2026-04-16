@@ -10,10 +10,10 @@ import {
 	type AgentSession,
 	type AgentSessionEventListener,
 } from "@mariozechner/pi-coding-agent";
-import type { Api, Model, ThinkingLevel } from "@mariozechner/pi-ai";
+import type { Api, ImageContent, Model, TextContent, ThinkingLevel } from "@mariozechner/pi-ai";
 import { buildSystemPrompt } from "./shadow-oath.js";
 import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
-import type { CreateSessionCommand, LoadSessionCommand } from "./protocol.js";
+import type { CreateSessionCommand, LoadSessionCommand, PromptContentPart } from "./protocol.js";
 
 interface ManagedSession {
 	session: AgentSession;
@@ -314,15 +314,36 @@ export class RuntimeManager {
 		this.emit({ type: "session_destroyed", agentId });
 	}
 
-	async prompt(agentId: string, message: string): Promise<void> {
+	async prompt(agentId: string, message: string | PromptContentPart[]): Promise<void> {
 		const managed = this.getSession(agentId);
 		if (!managed) return;
 
 		try {
-			if (managed.session.isStreaming) {
-				await managed.session.followUp(message);
+			if (typeof message === "string") {
+				// Plain-text path — preserve existing behaviour exactly.
+				if (managed.session.isStreaming) {
+					await managed.session.followUp(message);
+				} else {
+					await managed.session.prompt(message);
+				}
 			} else {
-				await managed.session.prompt(message);
+				// Multimodal path — extract text and image parts separately.
+				const text = message
+					.filter((p): p is { type: "text"; text: string } => p.type === "text")
+					.map((p) => p.text)
+					.join("");
+				const images: ImageContent[] = message
+					.filter(
+						(p): p is { type: "image"; data: string; mimeType: string } =>
+							p.type === "image",
+					)
+					.map((p) => ({ type: "image", data: p.data, mimeType: p.mimeType }));
+
+				if (managed.session.isStreaming) {
+					await managed.session.followUp(text, images);
+				} else {
+					await managed.session.prompt(text, { images });
+				}
 			}
 		} catch (err) {
 			this.emit({
