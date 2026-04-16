@@ -486,21 +486,25 @@
         class:streaming-rate={isStreaming}
         title={isStreaming ? "Live output rate" : "Last turn's output rate"}
       >
-        {formatRate(tokPerSec)}
+        <span class="rate-label">rate</span>
+        <span>{formatRate(tokPerSec)}</span>
       </span>
     {/if}
 
-    {#if hasContextMeter}
-      {#if sessionStats && sessionStats.totalTokens > 0}
-        <span
-          class="billing-tag"
-          title="Session-lifetime billing total (not current context occupancy)"
-        >
-          Σ {formatTokens(sessionStats.totalTokens)}{#if displayCost} · ${displayCost.toFixed(4)}{/if}
-        </span>
-      {:else if displayCost}
-        <span class="billing-tag">${displayCost.toFixed(4)}</span>
-      {/if}
+    {#if hasContextMeter && (displayCost || (sessionStats && sessionStats.totalTokens > 0))}
+      <span
+        class="billing-tag"
+        title="Session-lifetime totals (tokens sent + cost incurred across this conversation)"
+      >
+        {#if displayCost != null}
+          <span class="billing-cost">${displayCost.toFixed(4)}</span>
+        {:else}
+          <span class="billing-cost">—</span>
+        {/if}
+        {#if sessionStats && sessionStats.totalTokens > 0}
+          <span class="billing-tokens">{formatTokens(sessionStats.totalTokens)} tok</span>
+        {/if}
+      </span>
     {/if}
 
   </div>
@@ -513,9 +517,9 @@
     display: flex;
     flex-direction: column;
     width: 196px;
-    gap: 7px;
-    padding: 8px;
-    border-radius: 12px;
+    gap: 4px;
+    padding: 6px;
+    border-radius: 4px;
     background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
     border: 1px solid var(--border-subtle);
     backdrop-filter: blur(8px);
@@ -732,7 +736,7 @@
     position: relative;
     align-self: center;
     border: 1px solid var(--border-strong);
-    border-radius: 8px;
+    border-radius: 2px;
     overflow: hidden;
     display: flex;
     align-items: center;
@@ -760,10 +764,10 @@
   .command-menu {
     position: absolute;
     min-width: 170px;
-    padding: 4px;
+    padding: 3px;
     background: var(--bg-panel-2);
     border: 1px solid var(--border-subtle);
-    border-radius: 8px;
+    border-radius: 3px;
     box-shadow: 0 12px 32px var(--shadow-dark, rgba(0, 0, 0, 0.4));
     z-index: 60;
     display: flex;
@@ -788,7 +792,7 @@
   .command-item {
     padding: 7px 10px;
     border: none;
-    border-radius: 4px;
+    border-radius: 2px;
     background: transparent;
     color: var(--text-secondary);
     font-size: 11px;
@@ -871,7 +875,7 @@
     color: var(--accent);
     padding: 3px 6px;
     background: var(--bg-panel-2);
-    border-radius: 4px;
+    border-radius: 2px;
     text-align: center;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -887,7 +891,7 @@
     font-size: 10px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     padding: 3px 6px;
-    border-radius: 4px;
+    border-radius: 2px;
     background: var(--bg-panel-2);
     border: 1px solid var(--border-subtle);
     color: var(--text-secondary);
@@ -908,8 +912,8 @@
     margin-bottom: 4px;
     background: var(--bg-panel-2);
     border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    padding: 4px;
+    border-radius: 2px;
+    padding: 3px;
     z-index: 60;
     display: flex;
     flex-direction: column;
@@ -918,7 +922,7 @@
   .thinking-option {
     padding: 5px 8px;
     border: none;
-    border-radius: 4px;
+    border-radius: 2px;
     background: transparent;
     color: var(--text-secondary);
     font-size: 11px;
@@ -962,16 +966,28 @@
   }
 
   .billing-tag {
-    font-size: 9px;
+    font-size: 10px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     color: var(--text-muted);
     padding: 3px 6px;
-    border-radius: 4px;
+    border-radius: 2px;
     background: var(--bg-panel-2);
-    text-align: center;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
     overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .billing-cost {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .billing-tokens {
+    color: var(--text-muted);
+    font-size: 9px;
   }
 
   .rate-tag {
@@ -979,14 +995,24 @@
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     color: var(--text-secondary);
     padding: 3px 6px;
-    border-radius: 4px;
+    border-radius: 2px;
     background: var(--bg-panel-2);
-    text-align: center;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
     white-space: nowrap;
   }
 
   .rate-tag.streaming-rate {
     color: var(--accent);
+  }
+
+  .rate-label {
+    color: var(--text-muted);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
   }
 
 </style>
