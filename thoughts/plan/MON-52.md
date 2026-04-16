@@ -88,18 +88,24 @@ Owns everything that's specific to picking a provider + model + thinking level, 
 
 **CSS that moves here:** the overlay/dialog chrome, `.section`, `.label`, `.row`, `.field`, `.flex-grow`, `.cwd-row`, `.browse-btn`, `.project-chips`, `.project-chip*`, `.project-info*`, `.template-save-check`, `.template-save-hint`, `.actions`, `.btn-cancel`, `.btn-spawn`, `.shortcut`, the shared `input,select` rules, and the mobile `@media (max-width: 640px)` block.
 
-### 4. Reconcile `SpawnDialog.svelte` with the new layout
+### 4. Reconcile `SpawnDialog.svelte` with the new layout — DECIDED: four files, split by concern
 
-`App.svelte` currently imports `SpawnDialog`. Two viable paths — plan picks option A unless the open question on naming comes back otherwise:
+Four `.svelte` files, each named for its concern:
 
-- **Option A (preferred):** Rename the file. Delete `SpawnDialog.svelte`, ship `SpawnForm.svelte` as the new top-level component, update `App.svelte`'s import + tag to `<SpawnForm>`. Keeps the tree flat and mirrors the ticket's naming verbatim.
-- **Option B:** Keep `SpawnDialog.svelte` as a ~5-line shim that renders `<SpawnForm {...$props()} />`. Preserves any external references (e.g. old plan files, grep hits in tests if any appear later) at the cost of a useless indirection.
+- **`SpawnDialog.svelte`** — outer chrome only. Owns `.overlay` + `.dialog` shell, `<svelte:window onkeydown>`, `h2` title, and relays `onspawn` / `oncancel` props down. ~30–50 LOC.
+- **`SpawnForm.svelte`** — form body. Composes `<TemplateSelector>` + `<ModelSelector>`, owns shadow identity, CWD + project detection + project chips, save-as-template checkbox + `persistCurrentAsTemplate`, and `handleSpawn` that builds `AgentConfig`. Rendered as `SpawnDialog`'s only child. ~250–350 LOC.
+- **`ModelSelector.svelte`** — see §1.
+- **`TemplateSelector.svelte`** — see §2.
+
+`App.svelte` keeps importing `SpawnDialog`. External contract unchanged.
+
+Why split rather than collapse: `SpawnDialog` = "how this appears on screen" (overlay, escape-to-close, theming) vs. `SpawnForm` = "what the user is filling in" (state, backend calls, submit). Two concerns, two files.
 
 ### 5. Cross-component wiring concerns
 
 - **Provider-change model reset.** Today the provider `$effect` inside `SpawnDialog` resets `modelInput` to `fixedModelId || ""`. After the split that `$effect` lives inside `ModelSelector`. Because `ModelSelector` owns `provider` and `model` as bindable props, the reset is still visible to the parent via the same bind — parent's `applyTemplate` can keep using `queueMicrotask` to set the model after the reset has propagated.
 - **LM Studio context window.** The current code reads `selectedLmStudioModel?.contextWindow` inside `handleSpawn` in the outer component. After the split, `ModelSelector` owns the derived value; we expose it via a bindable `contextWindow` prop so `SpawnForm.handleSpawn` can still stamp it into `AgentConfig`.
-- **Escape vs. dropdown.** Current dialog-level keydown only closes on Escape if `!showDropdown`. After the split, `showDropdown` lives inside `ModelSelector`. Either lift it to a bindable prop, or rely on `ModelSelector` swallowing Escape with `stopPropagation` so the dialog-level handler doesn't see it. Preferring the latter — less leaky.
+- **Escape vs. dropdown — DECIDED:** `ModelSelector`'s keydown handler calls `e.stopPropagation()` (and `preventDefault()`) on Escape when its dropdown is open. That way `SpawnDialog`'s window-level handler can unconditionally `oncancel()` on Escape — no bindable `showDropdown` leaking out, no `!showDropdown` guard on the parent. Cleaner encapsulation than today.
 - **Fixed model lock.** `fixedModelId` (derived from `provider === "openai-codex"`) makes the text input readonly and drives placeholder text. It's an internal concern of `ModelSelector`; nothing outside needs to know.
 - **Save-as-template sequencing.** Today `handleSpawn` does `if (saveAsTemplate && shadowName.trim()) await persistCurrentAsTemplate();` before invoking `onspawn`. That stays in `SpawnForm.handleSpawn` — both the checkbox and the saver live there.
 
@@ -108,13 +114,28 @@ Owns everything that's specific to picking a provider + model + thinking level, 
 - Update `ONBOARDING.md` L369 (component tree) and L590 (file reference table) to reflect the new split. One line per file, matching the existing style.
 - `CLAUDE.md` does not need changes (no rules, conventions, or key-file pointers are affected).
 
-## Open questions
+## Resolved decisions (from round 1)
 
-1. **Keep the `SpawnDialog.svelte` filename or rename it to `SpawnForm.svelte`?** The ticket lists `SpawnForm.svelte` as the form-fields component; I'm reading that as "rename". If the user prefers keeping `SpawnDialog` as the top-level file (so grep/history still hits the same name) and having it *contain* `SpawnForm` + `TemplateSelector` + `ModelSelector`, that's also defensible — in that case `SpawnForm.svelte` would just be a middle layer. Going with the rename unless told otherwise.
-2. **Escape-while-dropdown-open.** Preferred approach is to have `ModelSelector` swallow Escape when its dropdown is open (close dropdown, stop propagation), so the parent dialog's keydown handler doesn't need to know about dropdown state. That preserves current UX without a leaky bindable. Confirm this is acceptable.
-3. **Should `ModelSelector` also expose the `allModels` list or the selected `ModelInfo`?** The LM Studio context window is the only caller-visible piece of the model list today; exposing just that as a bindable `contextWindow` is cheaper than exposing the full list. Sticking with the narrow surface unless the runtime-switcher follow-up needs more.
-4. **Thinking-level placement.** The ticket says "provider/model/thinking level" belongs in `ModelSelector`. Accepting that literally. One could argue `thinkingLevel` is more of a generation parameter than a model identity, but keeping it with `ModelSelector` matches the ticket and keeps the spawn form simpler. Flag if a different grouping is preferred.
-5. **Split of `.svelte` styles.** Each child owns its own scoped styles. One consequence: the shared `input, select` rules currently at `SpawnDialog.svelte:1101–1127` must be duplicated into any child that uses raw inputs (i.e. `ModelSelector` for the model text input, `SpawnForm` for cwd and shadow inputs). Acceptable given the ~200 lines of CSS in total, but worth flagging in case the user would rather extract a shared stylesheet.
+1. **Filenames** — four files, named for their concerns: `SpawnDialog` (outer shell) + `SpawnForm` (body) + `ModelSelector` + `TemplateSelector`. See §4.
+2. **Escape vs. dropdown** — `ModelSelector` swallows Escape via `e.stopPropagation()`; `SpawnDialog`'s Escape handler becomes unconditional. See §5.
+3. **`ModelSelector` surface** — narrow bindable set (`provider`, `model`, `thinkingLevel`, `contextWindow`). No `allModels` / selected `ModelInfo` exposed until a concrete second caller needs it. Plus the opportunistic cleanups below.
+4. **Thinking level** — lives in `ModelSelector`, matching the ticket. Resolved.
+5. **CSS duplication** — each child owns its scoped styles. Shared `input, select` rules are duplicated per child. All children use the existing theme CSS variables (`var(--bg-panel-2)`, `var(--border-subtle)`, etc.), so theme responsiveness is preserved. No shared stylesheet.
+
+## Opportunistic cleanups (in-scope, fall out naturally)
+
+Small tidy-ups that become obvious once things are being moved — batching them into this refactor costs little and avoids a second pass:
+
+- **Promote the local `ModelInfo`, `ProviderAuthStatus`, `DetectedProject` types to `src/lib/types.ts`.** They're declared inside `SpawnDialog.svelte` today; after the split they'd be declared-or-imported in at least two places (`ModelSelector` uses `ModelInfo` + `ProviderAuthStatus`, `SpawnForm` uses `DetectedProject`). Promoting centralises them and makes them usable by the future runtime switcher without another move. No semantic change — identical shapes.
+- **Extract `providers`, `REFRESHABLE_PROVIDERS`, `thinkingLevels` constants into `src/lib/providers.ts`.** Same reasoning — they're provider catalogue facts, not `ModelSelector`-specific trivia. Keeps the runtime switcher's future consumption trivial.
+- **Replace the existing `invoke<ModelInfo[]>` / `invoke<ProviderAuthStatus>` / `invoke<DetectedProject | null>` generic calls with the typed `commands.*` bindings from `src/lib/bindings.ts`** where equivalents exist. (Spot-check during implementation: if the auto-generated types match exactly, swap; otherwise leave the `invoke` generic in place. Not a goal by itself — only do the easy ones.)
+- **Delete the `formatCtxTokens` helper from the module scope and co-locate it inside `ModelSelector`** (it's only used there today).
+
+These are bundled into the refactor because they directly involve code being moved anyway. Hard no on anything else (no new abstractions, no `CwdField` spin-off, no pre-baked runtime-switcher scaffolding).
+
+## Remaining open questions
+
+None blocking implementation. Flag during implementation if any of the opportunistic cleanups turn out to be messier than expected, and back them out of scope if so.
 
 ## Out of scope
 
