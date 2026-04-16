@@ -45,15 +45,15 @@ Each accepted image is appended to the pending queue. The thumbnail strip render
 
 ---
 
-## Open questions
+## Decisions (resolved)
 
-1. **Image size limits** — base64-encoding a large screenshot can be several MB. Should we cap at some size (e.g., 5 MB uncompressed) and surface a user-facing error, or silently resize? This is marked out of scope for now but may need addressing before ship if agents time out on large payloads.
+1. **Image size limit** — 5 MB per image. If the decoded file exceeds this, silently reject it (no attachment added). A small error indicator or toast can surface the rejection reason.
 
-2. **Drag target scope** — should dragging work anywhere in the agent view (full panel), or only over the chat input area? Full-panel feels more natural but requires careful z-index and visual feedback design.
+2. **Drag target scope** — the full agent view panel, not just the text area. A visual drag-overlay (e.g., a dimmed border glow) should appear on `dragover` to make the drop zone discoverable.
 
-3. **Clipboard permission on Linux** — `navigator.clipboard.read()` requires `clipboard-read` permission, which is denied in many Linux environments. The paste event approach (`ClipboardEvent.clipboardData`) is more broadly supported but may need a fallback or user guidance.
+3. **Clipboard approach** — use `ClipboardEvent.clipboardData` on the `paste` event, not `navigator.clipboard.read()`. The `clipboardData` path requires no permissions and works in Tauri's WebView on all platforms. Requires the textarea to be focused, which is already the expected state.
 
-4. **Multiple images in one message** — the spec says thumbnails with X buttons, implying multiple are supported. Is there a practical cap (e.g., 4 images per message) that should be enforced in the UI?
+4. **Maximum images per message** — cap at 5. If the queue is full, additional paste/drag/pick attempts are silently ignored (or the button is disabled).
 
 ---
 
