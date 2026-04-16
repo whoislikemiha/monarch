@@ -170,7 +170,7 @@
   <div class="avatar-frame" title={avatarTooltip}>
     <ShadowAvatar
       agentId={agent.id}
-      size={128}
+      size={180}
       avatarType={agent.avatarType}
       avatarPath={agent.avatarPath}
     />
@@ -228,10 +228,10 @@
   .portrait {
     display: flex;
     flex-direction: column;
-    width: 140px;
-    gap: 6px;
-    padding: 6px;
-    border-radius: 10px;
+    width: 196px;
+    gap: 7px;
+    padding: 8px;
+    border-radius: 12px;
     background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
     border: 1px solid var(--border-subtle);
     backdrop-filter: blur(8px);
