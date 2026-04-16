@@ -77,7 +77,10 @@ pub enum SidecarCommand {
     },
     Prompt {
         agent_id: String,
-        message: String,
+        /// Either a plain string or an array of content parts (text + image).
+        /// Kept as `Value` so both shapes serialize transparently to the sidecar
+        /// without Rust needing to mirror the full multimodal union.
+        message: serde_json::Value,
     },
     Abort {
         agent_id: String,
