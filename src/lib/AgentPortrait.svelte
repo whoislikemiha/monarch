@@ -174,6 +174,12 @@
       avatarType={agent.avatarType}
       avatarPath={agent.avatarPath}
     />
+    <div class="avatar-caption">
+      <span class="caption-name">{agent.shadow?.shadowName || agent.name}</span>
+      {#if agent.shadow?.shadowTitle}
+        <span class="caption-title">{agent.shadow.shadowTitle}</span>
+      {/if}
+    </div>
   </div>
 
   <div class="stack">
@@ -245,6 +251,7 @@
   }
 
   .avatar-frame {
+    position: relative;
     align-self: center;
     border: 1px solid var(--border-strong);
     border-radius: 8px;
@@ -254,6 +261,46 @@
     justify-content: center;
     background: var(--bg-panel-2);
     line-height: 0;
+  }
+
+  .avatar-caption {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 12px 8px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: linear-gradient(
+      to top,
+      rgba(0, 0, 0, 0.8) 0%,
+      rgba(0, 0, 0, 0.55) 40%,
+      rgba(0, 0, 0, 0) 100%
+    );
+    pointer-events: none;
+    line-height: 1.2;
+  }
+
+  .caption-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .caption-title {
+    font-size: 10px;
+    color: color-mix(in srgb, var(--accent) 80%, #fff);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .stack {
