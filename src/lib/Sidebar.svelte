@@ -501,10 +501,7 @@
     color: var(--text-primary);
   }
   .agent-item.standby {
-    opacity: 0.5;
-  }
-  .agent-item.standby:hover {
-    opacity: 1;
+    opacity: 0.65;
   }
   /* MON-66: visually distinct from standby — stopped-but-active vs. dismissed.
      Italic name + lower contrast signals "not currently on the roster". */
@@ -530,9 +527,11 @@
     overflow: hidden;
   }
 
-  .avatar-wrap :global(canvas) {
+  .avatar-wrap :global(canvas),
+  .avatar-wrap :global(img) {
     width: 100% !important;
     height: 100% !important;
+    object-fit: cover;
   }
 
   .agent-info {
