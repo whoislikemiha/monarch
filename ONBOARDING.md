@@ -366,7 +366,10 @@ Model discovery lives in [`src-tauri/src/models.rs`](./src-tauri/src/models.rs) 
 ```
 App.svelte                       — root: agents[], activeId, session restore, keybindings
 ├── Sidebar.svelte               — active + saved agents
-├── SpawnDialog.svelte           — new agent: shadow identity + model picker
+├── SpawnDialog.svelte           — modal chrome for the new-agent flow
+│   └── SpawnForm.svelte         — form body (shadow identity, cwd, save-as-template)
+│       ├── TemplateSelector.svelte — load/apply/delete AgentTemplateRow chips
+│       └── ModelSelector.svelte    — provider, model picker, LM Studio ctx, thinking
 ├── HistoryPanel.svelte          — session browser for a saved agent
 ├── AgentView.svelte             — main workspace per active agent
 │   ├── AgentHeader.svelte       — name, model, shadow grade
@@ -587,7 +590,11 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `main.ts` | Svelte mount. |
 | `lib/types.ts` | Shared TypeScript types. |
 | `lib/Sidebar.svelte` | Agent list + saved agents. |
-| `lib/SpawnDialog.svelte` | Shadow identity + model picker. |
+| `lib/SpawnDialog.svelte` | Modal shell for the new-agent flow. |
+| `lib/SpawnForm.svelte` | Form body: shadow identity, cwd, save-as-template, handleSpawn. |
+| `lib/TemplateSelector.svelte` | Template chip row, loads via `db_list_agent_templates`. |
+| `lib/ModelSelector.svelte` | Provider, model picker, auth status, thinking level, LM Studio context — reusable. |
+| `lib/providers.ts` | `PROVIDERS`, `REFRESHABLE_PROVIDERS`, `THINKING_LEVELS` catalogue. |
 | `lib/HistoryPanel.svelte` | Session browser. |
 | `lib/AgentView.svelte` | Per-agent workspace + event listeners. |
 | `lib/AgentHeader.svelte` | Name / model / grade header. |
