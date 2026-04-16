@@ -14,6 +14,11 @@
     sessionStats,
     onabort,
     onthinking,
+    onprompt,
+    onhistory,
+    oncompact,
+    onnewsession,
+    onprojectedit,
   }: {
     agent: Agent;
     projectName?: string;
@@ -26,12 +31,23 @@
     sessionStats?: SessionStats;
     onabort: () => void;
     onthinking: (level: string) => void;
+    onprompt?: () => void;
+    onhistory?: () => void;
+    oncompact?: () => void;
+    onnewsession?: () => void;
+    onprojectedit?: () => void;
   } = $props();
 
   const DEFAULT_CONTEXT_WINDOW = 128000;
   const CHARS_PER_TOKEN = 4;
   const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
   let showThinkingPicker = $state(false);
+  let showCommandMenu = $state(false);
+
+  function runCommand(fn?: () => void) {
+    showCommandMenu = false;
+    fn?.();
+  }
 
   function formatTokens(n: number): string {
     if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
@@ -173,7 +189,7 @@
   });
 </script>
 
-<svelte:window onclick={() => (showThinkingPicker = false)} />
+<svelte:window onclick={() => { showThinkingPicker = false; showCommandMenu = false; }} />
 
 <div class="portrait" class:streaming={isStreaming}>
   {#if hasContextMeter}
@@ -203,18 +219,65 @@
   {/if}
 
   <div class="avatar-frame" title={avatarTooltip}>
-    <ShadowAvatar
-      agentId={agent.id}
-      size={180}
-      avatarType={agent.avatarType}
-      avatarPath={agent.avatarPath}
-    />
+    <button
+      class="avatar-btn"
+      onclick={(e: MouseEvent) => { e.stopPropagation(); showCommandMenu = !showCommandMenu; showThinkingPicker = false; }}
+      title="Agent actions"
+      aria-label="Agent actions"
+      aria-haspopup="menu"
+      aria-expanded={showCommandMenu}
+    >
+      <ShadowAvatar
+        agentId={agent.id}
+        size={180}
+        avatarType={agent.avatarType}
+        avatarPath={agent.avatarPath}
+      />
+    </button>
     <div class="avatar-caption">
       <span class="caption-name">{agent.shadow?.shadowName || agent.name}</span>
       {#if agent.shadow?.shadowTitle}
         <span class="caption-title">{agent.shadow.shadowTitle}</span>
       {/if}
     </div>
+
+    {#if showCommandMenu}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="command-menu" onclick={(e: MouseEvent) => e.stopPropagation()} role="menu" tabindex="-1">
+        {#if isStreaming}
+          <button class="command-item danger" onclick={() => runCommand(onabort)} role="menuitem">
+            Abort
+          </button>
+          <div class="command-divider"></div>
+        {/if}
+        {#if onnewsession}
+          <button class="command-item" onclick={() => runCommand(onnewsession)} role="menuitem">
+            New chat
+          </button>
+        {/if}
+        {#if oncompact}
+          <button class="command-item" onclick={() => runCommand(oncompact)} role="menuitem">
+            Compact context
+          </button>
+        {/if}
+        {#if onhistory}
+          <button class="command-item" onclick={() => runCommand(onhistory)} role="menuitem">
+            Session history
+          </button>
+        {/if}
+        <div class="command-divider"></div>
+        {#if onprompt}
+          <button class="command-item" onclick={() => runCommand(onprompt)} role="menuitem">
+            System prompt
+          </button>
+        {/if}
+        {#if onprojectedit && projectName}
+          <button class="command-item" onclick={() => runCommand(onprojectedit)} role="menuitem">
+            Project instructions
+          </button>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   <div class="stack">
@@ -259,9 +322,6 @@
       {/if}
     {/if}
 
-    {#if isStreaming}
-      <button class="abort-btn" onclick={onabort}>Abort</button>
-    {/if}
   </div>
 </div>
 
@@ -324,6 +384,71 @@
     justify-content: center;
     background: var(--bg-panel-2);
     line-height: 0;
+  }
+
+  .avatar-btn {
+    all: unset;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    line-height: 0;
+  }
+
+  .avatar-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  .command-menu {
+    position: absolute;
+    right: calc(100% + 8px);
+    bottom: 0;
+    min-width: 170px;
+    padding: 4px;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    box-shadow: 0 12px 32px var(--shadow-dark, rgba(0, 0, 0, 0.4));
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .command-item {
+    padding: 7px 10px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    white-space: nowrap;
+  }
+
+  .command-item:hover {
+    background: var(--bg-panel-3);
+    color: var(--text-primary);
+  }
+
+  .command-item.danger {
+    color: var(--error, #eb5757);
+  }
+  .command-item.danger:hover {
+    background: var(--error, #eb5757);
+    color: var(--bg-panel);
+  }
+
+  .command-divider {
+    height: 1px;
+    background: var(--border-subtle);
+    margin: 2px 4px;
   }
 
   .avatar-caption {
@@ -537,20 +662,4 @@
     white-space: nowrap;
   }
 
-  .abort-btn {
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    padding: 5px 10px;
-    border-radius: 6px;
-    background: var(--error);
-    border: none;
-    color: var(--text-on-accent);
-    cursor: pointer;
-    font-weight: 600;
-    transition: filter 0.15s;
-  }
-
-  .abort-btn:hover {
-    filter: brightness(1.08);
-  }
 </style>

@@ -5,7 +5,6 @@
   import MessageList from "./MessageList.svelte";
   import ChatInput, { type PendingImage } from "./ChatInput.svelte";
   import AgentPortrait from "./AgentPortrait.svelte";
-  import AgentHeader from "./AgentHeader.svelte";
   import ExtensionDialog from "./ExtensionDialog.svelte";
   import PromptEditor from "./PromptEditor.svelte";
   import HistoryPanel from "./HistoryPanel.svelte";
@@ -656,14 +655,7 @@
       </div>
     </div>
   {:else}
-    <!-- Normal chat view -->
-    <AgentHeader
-      onprompt={() => (showPromptEditor = true)}
-      onhistory={() => (showHistory = true)}
-      oncompact={compact}
-      onnewsession={newSession}
-      {onprojectedit}
-    />
+    <!-- Normal chat view (commands live on the portrait) -->
 
     <div class="messages-area">
       <div class="messages-scroll" bind:this={scrollContainer} onscroll={updateIsAtBottom}>
@@ -702,6 +694,11 @@
           sessionStats={agent.sessionStats}
           onabort={abort}
           onthinking={setThinkingLevel}
+          onprompt={() => (showPromptEditor = true)}
+          onhistory={() => (showHistory = true)}
+          oncompact={compact}
+          onnewsession={newSession}
+          {onprojectedit}
         />
       </div>
     </div>
