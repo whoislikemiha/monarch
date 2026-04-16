@@ -1,0 +1,437 @@
+<script lang="ts">
+  import type { Agent, DisplayItem, SessionStats, Usage } from "./types";
+  import { ShadowAvatar } from "./avatar";
+
+  let {
+    agent,
+    projectName,
+    isStreaming,
+    items,
+    lastUsage,
+    contextWindow,
+    thinkingLevel,
+    model,
+    sessionStats,
+    onabort,
+    onthinking,
+  }: {
+    agent: Agent;
+    projectName?: string;
+    isStreaming: boolean;
+    items: DisplayItem[];
+    lastUsage?: Usage;
+    contextWindow?: number;
+    thinkingLevel?: string;
+    model?: string;
+    sessionStats?: SessionStats;
+    onabort: () => void;
+    onthinking: (level: string) => void;
+  } = $props();
+
+  const DEFAULT_CONTEXT_WINDOW = 128000;
+  const CHARS_PER_TOKEN = 4;
+  const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
+  let showThinkingPicker = $state(false);
+
+  function formatTokens(n: number): string {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+    if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+    return n.toString();
+  }
+
+  function estimateTokens(text: string): number {
+    return Math.ceil(text.length / CHARS_PER_TOKEN);
+  }
+
+  function stringifyResult(result: unknown): string {
+    if (result == null) return "";
+    if (typeof result === "string") return result;
+    if (typeof result === "object" && result && "content" in result && Array.isArray((result as any).content)) {
+      return (result as any).content
+        .map((part: any) => (part?.type === "text" ? part.text : `[${part?.type || "content"}]`))
+        .join("\n");
+    }
+    return JSON.stringify(result);
+  }
+
+  let estimatedContextTokens = $derived.by(() =>
+    items.reduce((total, item) => {
+      if (item.kind === "user") {
+        return total + estimateTokens(item.content);
+      }
+
+      if (item.kind === "assistant") {
+        return total + item.content.reduce((messageTotal, block) => {
+          if (block.type === "text") return messageTotal + estimateTokens(block.text);
+          if (block.type === "thinking") return messageTotal + estimateTokens(block.thinking);
+          return messageTotal;
+        }, 0);
+      }
+
+      if (item.kind === "tool-group") {
+        return total + item.executions.reduce((groupTotal, execution) => {
+          const argsText = execution.args ? JSON.stringify(execution.args) : "";
+          const resultText = stringifyResult(execution.result);
+          return groupTotal + estimateTokens(argsText) + estimateTokens(resultText);
+        }, 0);
+      }
+
+      return total;
+    }, 0)
+  );
+
+  // Live context occupancy: what's sitting in the model's context right now,
+  // taken from the most recent assistant message's usage. NOT session-lifetime
+  // billing — that accumulates across every turn and massively overstates
+  // occupancy after a few messages.
+  let liveContextTokens = $derived.by(() => {
+    if (lastUsage) {
+      const cached = (lastUsage.cacheRead ?? 0) + (lastUsage.cacheWrite ?? 0);
+      if (lastUsage.input && lastUsage.input > 0) {
+        return lastUsage.input + cached;
+      }
+      if (lastUsage.totalTokens) {
+        const output = lastUsage.output ?? 0;
+        return Math.max(lastUsage.totalTokens - output, 0);
+      }
+    }
+    return estimatedContextTokens;
+  });
+
+  let itemsCostTotal = $derived(
+    items.reduce((total, item) => {
+      if (item.kind === "assistant") {
+        return total + (item.usage?.cost?.total ?? 0);
+      }
+      return total;
+    }, 0)
+  );
+  let displayCost = $derived(
+    itemsCostTotal > 0 ? itemsCostTotal : sessionStats?.totalCost
+  );
+  let hasContextMeter = $derived(
+    contextWindow != null || sessionStats != null || lastUsage != null || items.length > 0
+  );
+  let resolvedContextWindow = $derived(contextWindow ?? DEFAULT_CONTEXT_WINDOW);
+  let isEstimatedContextWindow = $derived(contextWindow == null);
+  let isEstimatedOccupancy = $derived(!lastUsage && estimatedContextTokens > 0);
+  let usedRatio = $derived(
+    resolvedContextWindow > 0
+      ? Math.min(liveContextTokens / resolvedContextWindow, 1)
+      : 0
+  );
+  let usedPct = $derived(Math.round(usedRatio * 100));
+  let freeTokens = $derived(Math.max(resolvedContextWindow - liveContextTokens, 0));
+  let freePct = $derived(Math.max(100 - usedPct, 0));
+  let contextFill = $derived(Math.max((1 - usedRatio) * 100, 0));
+  let contextState = $derived(
+    usedRatio >= 0.9 ? "critical" : usedRatio >= 0.7 ? "warning" : "healthy"
+  );
+
+  function shortenPath(path: string): string {
+    return path.replace(/^\/home\/[^/]+/, "~");
+  }
+
+  let avatarTooltip = $derived.by(() => {
+    const parts: string[] = [];
+    if (agent.shadow?.shadowName) parts.push(agent.shadow.shadowName);
+    else if (agent.name) parts.push(agent.name);
+    if (agent.shadow?.shadowTitle) parts.push(agent.shadow.shadowTitle);
+    if (projectName) parts.push(`/${projectName}`);
+    else if (agent.cwd) parts.push(shortenPath(agent.cwd));
+    return parts.join(" · ");
+  });
+</script>
+
+<svelte:window onclick={() => (showThinkingPicker = false)} />
+
+<div class="portrait" class:streaming={isStreaming}>
+  <div class="avatar-frame" title={avatarTooltip}>
+    <ShadowAvatar
+      agentId={agent.id}
+      size={280}
+      avatarType={agent.avatarType}
+      avatarPath={agent.avatarPath}
+    />
+  </div>
+
+  <div class="stack">
+    {#if model}
+      <span class="model" title={model}>{model}</span>
+    {/if}
+
+    <div class="thinking-wrap">
+      <button
+        class="thinking-btn"
+        onclick={(e: MouseEvent) => { e.stopPropagation(); showThinkingPicker = !showThinkingPicker; }}
+        title="Set thinking level"
+      >
+        thinking: {thinkingLevel || "off"}
+      </button>
+      {#if showThinkingPicker}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div class="thinking-dropdown" onclick={(e: MouseEvent) => e.stopPropagation()} role="menu" tabindex="-1">
+          {#each thinkingLevels as level}
+            <button
+              class="thinking-option"
+              class:active={level === (thinkingLevel || "off")}
+              onclick={() => { onthinking(level); showThinkingPicker = false; }}
+            >
+              {level}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    {#if hasContextMeter}
+      <div
+        class="context-meter"
+        class:warning={contextState === "warning"}
+        class:critical={contextState === "critical"}
+        title={`Context snapshot: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens in context, ${freeTokens.toLocaleString()} free (${freePct}% headroom)${isEstimatedOccupancy ? " — occupancy estimated from restored content" : ""}${isEstimatedContextWindow ? " — window is estimated" : ""}`}
+      >
+        <div class="context-row">
+          <span class="context-label">ctx</span>
+          <span class="context-value">{usedPct}%</span>
+        </div>
+        <div class="context-track">
+          <div class="context-fill" style:width={`${contextFill}%`}></div>
+        </div>
+        <div class="context-row context-row-sub">
+          <span class="context-tokens">{formatTokens(liveContextTokens)}/{formatTokens(resolvedContextWindow)}</span>
+          <span class="context-free">{freePct}% free</span>
+        </div>
+      </div>
+
+      {#if sessionStats && sessionStats.totalTokens > 0}
+        <span
+          class="billing-tag"
+          title="Session-lifetime billing total (not current context occupancy)"
+        >
+          Σ {formatTokens(sessionStats.totalTokens)}{#if displayCost} · ${displayCost.toFixed(4)}{/if}
+        </span>
+      {:else if displayCost}
+        <span class="billing-tag">${displayCost.toFixed(4)}</span>
+      {/if}
+    {/if}
+
+    {#if isStreaming}
+      <button class="abort-btn" onclick={onabort}>Abort</button>
+    {/if}
+  </div>
+</div>
+
+<style>
+  .portrait {
+    display: flex;
+    flex-direction: column;
+    width: 140px;
+    gap: 6px;
+    padding: 6px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
+    border: 1px solid var(--border-subtle);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 8px 24px var(--shadow-dark, rgba(0, 0, 0, 0.35));
+    pointer-events: auto;
+    user-select: none;
+  }
+
+  .portrait.streaming {
+    border-color: var(--accent);
+  }
+
+  .avatar-frame {
+    width: 128px;
+    height: 128px;
+    align-self: center;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-panel-2);
+  }
+
+  .avatar-frame :global(canvas),
+  .avatar-frame :global(img) {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover;
+  }
+
+  .stack {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .model {
+    font-size: 10px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    color: var(--accent);
+    padding: 3px 6px;
+    background: var(--bg-panel-2);
+    border-radius: 4px;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .thinking-wrap {
+    position: relative;
+  }
+
+  .thinking-btn {
+    width: 100%;
+    font-size: 10px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    padding: 3px 6px;
+    border-radius: 4px;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+
+  .thinking-btn:hover {
+    background: var(--bg-panel-3);
+    border-color: var(--border-strong);
+  }
+
+  .thinking-dropdown {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
+    margin-bottom: 4px;
+    background: var(--bg-panel-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 4px;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .thinking-option {
+    padding: 5px 8px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.1s;
+  }
+
+  .thinking-option:hover {
+    background: var(--bg-panel-3);
+  }
+
+  .thinking-option.active {
+    color: var(--accent);
+  }
+
+  .context-meter {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-panel-2);
+  }
+
+  .context-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 10px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    line-height: 1;
+  }
+
+  .context-row-sub {
+    font-size: 9px;
+  }
+
+  .context-label {
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .context-value {
+    color: var(--text-secondary);
+  }
+
+  .context-tokens {
+    color: var(--text-muted);
+  }
+
+  .context-free {
+    color: var(--text-muted);
+  }
+
+  .context-track {
+    position: relative;
+    width: 100%;
+    height: 6px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--context-track-bg);
+  }
+
+  .context-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: var(--success);
+    transition: width 0.25s ease, background 0.2s ease;
+  }
+
+  .context-meter.warning .context-fill {
+    background: var(--warning);
+  }
+
+  .context-meter.critical .context-fill {
+    background: var(--error);
+  }
+
+  .billing-tag {
+    font-size: 9px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    color: var(--text-muted);
+    padding: 3px 6px;
+    border-radius: 4px;
+    background: var(--bg-panel-2);
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .abort-btn {
+    font-size: 11px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    padding: 5px 10px;
+    border-radius: 6px;
+    background: var(--error);
+    border: none;
+    color: var(--text-on-accent);
+    cursor: pointer;
+    font-weight: 600;
+    transition: filter 0.15s;
+  }
+
+  .abort-btn:hover {
+    filter: brightness(1.08);
+  }
+</style>
