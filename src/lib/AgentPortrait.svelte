@@ -745,7 +745,7 @@
   .caption-name {
     font-size: 12px;
     font-weight: 600;
-    color: #fff;
+    color: rgba(255, 255, 255, 0.78);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
     overflow: hidden;
