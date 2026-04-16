@@ -557,11 +557,12 @@
     left: 0;
     right: 0;
     height: 16px;
+    padding: 0 6px;
     background: var(--context-track-bg, #000);
     color: #fff;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-end;
     font-size: 10px;
     font-weight: 600;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
