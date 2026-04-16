@@ -288,6 +288,12 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             state.db.upsert_agent_internal(&agent).await?;
             Ok(Value::Null)
         }
+        "db_update_agent" => {
+            let payload = serde_json::from_value(args.get("payload").cloned().unwrap_or(args.clone()))
+                .map_err(|e| MonarchError::invalid_input(format!("Invalid payload: {}", e)))?;
+            state.db.update_agent_internal(&payload).await?;
+            Ok(Value::Null)
+        }
         "db_get_agents" => {
             let include_archived = args
                 .get("includeArchived")

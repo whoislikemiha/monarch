@@ -338,6 +338,8 @@ impl AgentManager {
             created_at: now.clone(),
             updated_at: now.clone(),
             archived_at: None,
+            avatar_type: None,
+            avatar_path: None,
         })
         .await?;
 
@@ -512,6 +514,8 @@ impl AgentManager {
             created_at: chrono_now(),
             updated_at: chrono_now(),
             archived_at: None,
+            avatar_type: None,
+            avatar_path: None,
         })
         .await?;
 
