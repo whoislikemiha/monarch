@@ -8,11 +8,13 @@
     items,
     streamingMessage,
     nowMs,
+    agentName = "Assistant",
   }: {
     items: DisplayItem[];
     streamingMessage: AssistantMessage | null;
     /** MON-71: 1Hz live ticker from AgentView; drives in-progress duration counters. */
     nowMs: number;
+    agentName?: string;
   } = $props();
 
   // MON-71: for a streaming turn, elapsed is `nowMs - turnStartedAtMs`;
@@ -33,7 +35,7 @@
     {:else if item.kind === "assistant"}
       <div class="message assistant-message">
         <div class="message-label">
-          Assistant
+          {agentName}
           {#if item.model}
             <span class="model-tag">{item.model}</span>
           {/if}
@@ -75,7 +77,7 @@
     {@const liveTurnDuration = formatDuration(liveElapsed(streamingMessage.turnStartedAtMs))}
     <div class="message assistant-message streaming">
       <div class="message-label">
-        Assistant
+        {agentName}
         <span class="streaming-indicator"></span>
         {#if liveTurnDuration}
           <span class="duration-tag">{liveTurnDuration}</span>
