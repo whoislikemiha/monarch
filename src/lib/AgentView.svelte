@@ -293,6 +293,10 @@
   }
 
   function handleDragOver(e: DragEvent) {
+    // Don't light up the drop overlay while the agent is working — the
+    // chat input is disabled and drops would only accumulate unsendable
+    // pending thumbnails, which is confusing.
+    if (isStreaming) return;
     if (e.dataTransfer?.types.includes("Files")) {
       e.preventDefault();
       isDragging = true;
@@ -310,6 +314,7 @@
   function handleDrop(e: DragEvent) {
     e.preventDefault();
     isDragging = false;
+    if (isStreaming) return;
     const files = e.dataTransfer?.files;
     if (!files) return;
     for (const file of files) {

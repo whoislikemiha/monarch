@@ -83,7 +83,11 @@
       }
     }
 
-    // Linux fallback — ask Tauri for the clipboard image directly.
+    // Linux fallback — ask Tauri for the clipboard image directly. Bail
+    // out of every failure path *without* preventDefault so the browser
+    // still delivers any text payload on the same clipboard (Linux lets
+    // text + image coexist).
+    if (images.length >= MAX_IMAGES) return;
     try {
       const img = await readImage();
       const { width, height } = await img.size();
@@ -94,13 +98,15 @@
         height,
       );
       if (!dataUrl) return;
-      e.preventDefault();
-      if (images.length >= MAX_IMAGES) return;
       const commaIdx = dataUrl.indexOf(",");
       const data = dataUrl.slice(commaIdx + 1);
-      // Rough size guard — PNGs compress well but a giant RGBA buffer could
+      // Rough size guard — PNGs compress well but a giant RGBA buffer can
       // still produce a too-large image. Check the encoded string length.
       if (data.length * 0.75 > MAX_BYTES) return;
+      // Only suppress the default paste once we're committed to inserting
+      // the image; otherwise a size-rejected attempt would eat the user's
+      // text paste too.
+      e.preventDefault();
       images = [
         ...images,
         { id: crypto.randomUUID(), dataUrl, data, mimeType: "image/png" },
