@@ -158,13 +158,27 @@
   function updatePosition() {
     if (!textareaEl) return;
     const rect = textareaEl.getBoundingClientRect();
-    // Anchor the dropdown below the textarea, aligned to its left edge, and
-    // clamp its width to the textarea's width. Using fixed positioning keeps
-    // the host markup (ChatInput) untouched.
+    // ChatInput sits at the bottom of the viewport, so anchoring below
+    // routinely overflows the screen. Flip above whenever there isn't
+    // enough room below (or the other side has more room). Cap max-height
+    // to the actually-available space so we never overflow either way.
+    const DESIRED = 240;
+    const GAP = 4;
+    const spaceBelow = window.innerHeight - rect.bottom - GAP;
+    const spaceAbove = rect.top - GAP;
+    const flipAbove = spaceBelow < DESIRED && spaceAbove > spaceBelow;
+    const maxH = Math.max(80, Math.min(DESIRED, flipAbove ? spaceAbove : spaceBelow));
+    // Using `position: fixed` (set in the stylesheet) so we can compute
+    // coords purely from `getBoundingClientRect()` without caring about
+    // the ancestors' positioning context.
+    const vertical = flipAbove
+      ? `bottom: ${window.innerHeight - rect.top + GAP}px;`
+      : `top: ${rect.bottom + GAP}px;`;
     dropdownStyle =
-      `top: ${rect.bottom + 4}px;` +
+      vertical +
       `left: ${rect.left}px;` +
-      `width: ${rect.width}px;`;
+      `width: ${rect.width}px;` +
+      `max-height: ${maxH}px;`;
   }
 
   // ---- Listener wiring ----
