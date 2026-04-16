@@ -1,11 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "$lib/api";
-  import Sidebar from "./lib/Sidebar.svelte";
+  import AgentRoster from "./lib/AgentRoster.svelte";
   import AgentView from "./lib/AgentView.svelte";
   import SpawnDialog from "./lib/SpawnDialog.svelte";
   import ConfirmDialog from "./lib/ConfirmDialog.svelte";
-  import TabBar from "./lib/TabBar.svelte";
   import ProjectEditor from "./lib/ProjectEditor.svelte";
   import ToolRail from "./lib/toolbox/ToolRail.svelte";
   import SettingsDialog from "./lib/SettingsDialog.svelte";
@@ -279,7 +278,7 @@
 <svelte:window onkeydown={handleKeydown} onwheel={handleWheel} />
 
 <main class="app">
-  <Sidebar
+  <AgentRoster
     oncreate={() => (showSpawnDialog = true)}
     ondismiss={requestDismiss}
     ondelete={requestDelete}
@@ -308,36 +307,37 @@
       if (a) editingAgent = a;
     }}
   />
-  <div class="main-panel">
-    <TabBar />
-    <div class="main-content">
-      {#if activeAgent}
-        {#key activeAgent.viewKey}
-          <AgentView
-            agent={activeAgent}
-            projectName={activeProject?.name}
-            onprojectedit={() => { if (activeProject) editingProject = activeProject; }}
-            bind:customPrompt={activeCustomPrompt}
-            bind:this={agentViewRef}
-          />
-        {/key}
-      {:else}
-        <div class="empty-state">
-          <span class="empty-icon">&gt;_</span>
-          <p>Extract a shadow to begin</p>
-          <p class="hint">Ctrl+N extract &middot; Ctrl+B sidebar &middot; Ctrl+1-9 switch</p>
-        </div>
-      {/if}
+  <div class="main-row">
+    <div class="main-panel">
+      <div class="main-content">
+        {#if activeAgent}
+          {#key activeAgent.viewKey}
+            <AgentView
+              agent={activeAgent}
+              projectName={activeProject?.name}
+              onprojectedit={() => { if (activeProject) editingProject = activeProject; }}
+              bind:customPrompt={activeCustomPrompt}
+              bind:this={agentViewRef}
+            />
+          {/key}
+        {:else}
+          <div class="empty-state">
+            <span class="empty-icon">&gt;_</span>
+            <p>Extract a shadow to begin</p>
+            <p class="hint">Ctrl+N extract &middot; Ctrl+B roster &middot; Ctrl+1-9 switch</p>
+          </div>
+        {/if}
+      </div>
     </div>
+    <ToolPanelStack
+      {openToolIds}
+      {agentContext}
+      width={toolboxWidth}
+      onclose={closeTool}
+      onresize={(w) => (toolboxWidth = w)}
+    />
+    <ToolRail {openToolIds} ontoggle={toggleTool} onsettings={() => (showSettings = true)} />
   </div>
-  <ToolPanelStack
-    {openToolIds}
-    {agentContext}
-    width={toolboxWidth}
-    onclose={closeTool}
-    onresize={(w) => (toolboxWidth = w)}
-  />
-  <ToolRail {openToolIds} ontoggle={toggleTool} onsettings={() => (showSettings = true)} />
 </main>
 
 {#if showSpawnDialog}
@@ -400,11 +400,20 @@
 <style>
   .app {
     display: flex;
-    flex-direction: row;
+    flex-direction: column;
     width: 100vw;
     height: 100vh;
     min-width: 0;
     min-height: 100vh;
+    overflow: hidden;
+  }
+
+  .main-row {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    min-height: 0;
+    min-width: 0;
     overflow: hidden;
   }
 

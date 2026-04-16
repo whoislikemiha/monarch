@@ -1,0 +1,53 @@
+# MON-77 — Warcraft-style agent portrait (bottom-left overlay)
+
+## Summary
+
+Today the active shadow's identity and live runtime readouts are scattered across three UI surfaces: a large avatar card in the sidebar roster, a small avatar + name + project badge in the chat `AgentHeader`, and a context "healthbar" + model + thinking + billing in the `AgentControls` strip sitting between `MessageList` and `ChatInput`. The result is a top-heavy chat where the readouts the user cares about while typing live nowhere near the typing area, and the sidebar is dominated by big avatars that duplicate information already visible in the header.
+
+This ticket reworks those three surfaces into one. The sidebar roster becomes a compact text list (shadow name, shadow title, folder). The chat's top bar is stripped down to just its action affordances (`+ new chat` and the `...` menu). A new portrait overlay — evoking a Warcraft-III character selection portrait — is anchored to the bottom-left of the messages area, floating above `MessageList` but sitting left of / above `ChatInput`, and stacks the avatar, model, thinking picker, ctx healthbar, and abort button in that vertical order. The change is UI-only; no backend, no sidecar, no data-model changes.
+
+## Relevant files and areas
+
+- **`src/App.svelte`** — hosts the `.app` flex layout (`Sidebar | main-panel | ToolPanelStack | ToolRail`) and the `.main-panel` inside which the `TabBar` + `AgentView` live. Nothing structural changes here except possibly loosening the min-width of the sidebar, but worth a read to confirm no layout knobs surprise the overlay (App.svelte:281-341, App.svelte:400-461).
+- **`src/lib/Sidebar.svelte`** — the roster. The `.agent-item` grid (lines 192-236) currently renders a big `ShadowAvatar` in a grid cell above the name/grade/cost stack. This grid collapses to a one-line (or two-line) text row. Also touches `.avatar-wrap` + related CSS (Sidebar.svelte:473-535) which becomes unused and should be deleted, not orphaned. The header `+` / Active-All toggle and collapsed rail stay as-is.
+- **`src/lib/AgentHeader.svelte`** — the chat's top bar. The `.header-left` cluster (AgentHeader.svelte:38-57) renders `ShadowAvatar`, agent name, shadow title, and the project badge or cwd span — all of that goes away. `.header-right` (new chat button + `...` menu) stays. The component may shrink to just `.header-right`, in which case it remains worth keeping as a component (still parameterised by the five action callbacks) or inlined into `AgentView`; judgment call.
+- **`src/lib/AgentControls.svelte`** — the current live-controls strip. Its model tag, thinking picker, ctx meter, billing tag, and abort button (AgentControls.svelte:136-203) all move into the new portrait. The component becomes either (a) deleted, with its logic lifted into the portrait, or (b) repurposed as the portrait's inner stack. The token-accounting derivations (`estimatedContextTokens`, `liveContextTokens`, `itemsCostTotal`, `contextState`, etc. — lines 52-133) are non-trivial and should be preserved verbatim; they are what keeps the healthbar honest.
+- **`src/lib/AgentView.svelte`** — composes the chat. AgentView.svelte:658-744 is the normal-view branch that currently wires `AgentHeader`, `MessageList`, `AgentControls`, `ChatInput` in a vertical flex column with a `.input-area` wrapping controls + input. The portrait is mounted inside the chat container (as a sibling of `.messages-scroll`) with `position: absolute`, positioned bottom-left with insets. The `.input-area` loses `<AgentControls />` and keeps only `<ChatInput />`.
+- **`src/lib/avatar/`** — `ShadowAvatar` (used by Sidebar at size 200, AgentHeader at size 40) is used at a larger size (~120-160px) in the portrait. No component changes expected; just a new caller with a bigger `size` prop.
+- **`src/lib/TabBar.svelte`** — out of scope per acceptance criteria, but worth sanity-checking that removing the header avatar/name doesn't make users feel the active agent is unidentifiable; the tab already carries a status dot + agent name, so identity is preserved at the top.
+- **`src/lib/MessageList.svelte`** — no changes, but the portrait overlays its scroll area, so the scroll container's `overflow` and `position` semantics in `AgentView` are the right place to anchor `position: absolute` (the `.messages-scroll` wrapper at AgentView.svelte:670, paired with `.agent-view` at AgentView.svelte:850).
+
+## What needs to change
+
+This is a UI refactor with three coherent surfaces to touch. Keeping the work inside one PR is fine — the surfaces are small and interconnected — but the conceptual pieces are:
+
+1. **Create a portrait component (new file, e.g. `src/lib/AgentPortrait.svelte`).** Props: the live-state inputs that `AgentControls` takes today (`isStreaming`, `items`, `lastUsage`, `contextWindow`, `thinkingLevel`, `model`, `sessionStats`, `onabort`, `onthinking`), plus enough agent info to render `ShadowAvatar` (`agentId`, `avatarType`, `avatarPath`, and the shadow name/title for optional below-avatar labels). Layout is a vertical stack: avatar square on top, model name, thinking picker, ctx healthbar (reusing the track + fill markup and thresholds from `AgentControls`), and a conditional Abort button. The context-token derivations should be lifted wholesale from `AgentControls.svelte` — they are tested-by-eye and moving them should be mechanical. Keep tooltip semantics (the rich `title=` string on the meter) identical.
+
+2. **Reposition it inside the chat.** Mount `<AgentPortrait ... />` inside `AgentView.svelte`'s normal-view branch as a sibling of `.messages-scroll`, inside the same parent that owns `position: relative` (either `.agent-view` itself or a new inner container — whichever is simpler to anchor against). The portrait is `position: absolute; left: <gutter>; bottom: <above-input-offset>;` and has a `z-index` that sits above message content but below modals. The input area is `position: relative` already via the flex column; the portrait lives over messages, not over the input.
+
+3. **Slim `AgentHeader`.** Delete the left cluster (avatar + name + shadow title + project badge / cwd). Keep the right cluster (`+ new chat` + `...` menu). If the header's styling ends up essentially an empty bar with a menu, inline it into `AgentView` and drop the component; if it still earns its keep, leave it. Either way, the `projectName` and `onprojectedit` props stop flowing through the header — but `onprojectedit` is still needed by the menu item "Project Instructions", so keep that wiring.
+
+4. **Slim `Sidebar.svelte`.** Rework `.agent-item` from a two-row grid (avatar row + info/kill row) to a single-row flex: shadow name (primary), shadow title or model fallback (secondary, muted), folder/cwd hint (tertiary, further muted, truncated from the left so the leaf directory is visible) — plus the dismiss/summon button on the right. Drop `.avatar-wrap` and related CSS. Keep context menu, archive styling, selection/active state, and the collapsed rail untouched. `formatCost` readout can be kept inline if there's space; otherwise move it into a hover tooltip so the row stays readable at 220px width.
+
+5. **Delete `AgentControls.svelte` (or repurpose it).** After wiring the portrait, the old component is unused. Preference is to delete it to avoid drift between two implementations of the ctx math; if the portrait reuses it as a sub-component, document that so future changes don't regress only one side.
+
+6. **CSS sanity at narrow widths.** At min-width the sidebar + chat + toolbox stack can get tight; make sure the portrait's width has a sensible `max-width` (e.g. 220px) and that message content has left padding matching the portrait width so text doesn't slide under the portrait. Alternatively, let messages flow under the portrait with a translucent portrait background — but that's a design choice; default recommendation is "reserve space, no overlap".
+
+## Open questions
+
+1. **Portrait size.** I'm assuming the avatar square lands in the 120-140px range, with the full portrait (avatar + three stacked rows + abort) around 200px tall and ~200-220px wide. Confirm, or name a preferred size.
+2. **Overlap vs. reserve.** Should messages flow *under* the portrait (pure overlay, messages visible through translucent bg) or should the `MessageList` reserve left padding equal to the portrait width so messages never overlap? The Warcraft-III reference suggests pure overlay; the practical reading/copy experience suggests reserved space. Default: reserve space.
+3. **Billing tag (`Σ tokens · cost`).** It's in `AgentControls` today. Should it land on the portrait stack, move to a subtle bottom corner of the chat, or be dropped in this pass? Not part of the user's explicit list (model + thinking + ctx), so assuming it moves into the portrait under the healthbar unless told otherwise.
+4. **Sidebar row — keep cost?** `formatCost(agent.lifetimeCost)` is currently shown per row. In the slimmer text-only layout it may crowd the row. Keep as a trailing muted tag, hide behind hover, or drop? Default: keep as a trailing muted tag on the same row.
+5. **Header collapse.** If `AgentHeader` ends up with only "+ new chat" + `...`, do we inline those into the chat container as a floating top-right control (matching the portrait's bottom-left) and drop the whole top bar? That would give the chat a full-bleed messages column. Clean aesthetically; slightly larger diff. Default assumption: keep a thin top bar with just those two buttons for now.
+6. **Project/cwd surface.** After removing the project badge from the header and the avatar/meta from the sidebar row, the project + cwd still need to be visible somewhere for context (e.g. "is this the right repo for the command I'm about to run"). Options: (a) sidebar roster row's folder hint, (b) a small line under the portrait's model/thinking stack, (c) a tooltip on the avatar. Default: (a) in the sidebar + (c) on the portrait avatar as a hover tooltip, no dedicated line.
+7. **AgentControls file fate.** Delete vs. retain as a shared sub-component inside the portrait? Default: delete, lift its logic into the new `AgentPortrait.svelte` so there's a single source of truth for the ctx math.
+
+## Out of scope reminders
+
+- No `TabBar` changes.
+- No `ToolRail` / `ToolPanelStack` changes.
+- No avatar generation / `ShadowAvatar` internals.
+- No backend, sidecar, or Rust changes. Zero `bindings.ts` regeneration.
+- No new animations (portrait entry, streaming pulse, ctx bar easing). Save for a polish follow-up.
+- No session/history/prompt dialog restyling — they still open from the `...` menu and use existing components.

@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { invoke, listen, type UnlistenFn } from "$lib/api";
   import { commands } from "$lib/bindings";
   import MessageList from "./MessageList.svelte";
   import ChatInput, { type PendingImage } from "./ChatInput.svelte";
-  import AgentControls from "./AgentControls.svelte";
-  import AgentHeader from "./AgentHeader.svelte";
+  import AgentPortrait, { type PortraitCorner } from "./AgentPortrait.svelte";
   import ExtensionDialog from "./ExtensionDialog.svelte";
   import PromptEditor from "./PromptEditor.svelte";
   import HistoryPanel from "./HistoryPanel.svelte";
@@ -45,6 +44,36 @@
   let pendingSourceSessionId: string | undefined = $state(undefined);
   let showPromptEditor = $state(false);
   let showHistory = $state(false);
+
+  // MON-77: portrait placement + minified preference (persisted via ui_state).
+  let portraitCorner = $state<PortraitCorner>("bottom-right");
+  let portraitMinified = $state<boolean>(false);
+
+  onMount(async () => {
+    try {
+      const savedCorner = await invoke<string | null>("db_get_ui_state", { key: "portraitCorner" });
+      if (savedCorner === "top-left" || savedCorner === "top-right" || savedCorner === "bottom-left" || savedCorner === "bottom-right") {
+        portraitCorner = savedCorner;
+      }
+      const savedMinified = await invoke<string | null>("db_get_ui_state", { key: "portraitMinified" });
+      if (savedMinified === "true") portraitMinified = true;
+      else if (savedMinified === "false") portraitMinified = false;
+    } catch {}
+  });
+
+  async function setPortraitCorner(c: PortraitCorner) {
+    portraitCorner = c;
+    try {
+      await invoke("db_set_ui_state", { key: "portraitCorner", value: c });
+    } catch {}
+  }
+
+  async function setPortraitMinified(next: boolean) {
+    portraitMinified = next;
+    try {
+      await invoke("db_set_ui_state", { key: "portraitMinified", value: next ? "true" : "false" });
+    } catch {}
+  }
 
   let unlistenState: UnlistenFn | undefined;
   let unlistenEvent: UnlistenFn | undefined;
@@ -656,38 +685,59 @@
       </div>
     </div>
   {:else}
-    <!-- Normal chat view -->
-    <AgentHeader
-      {agent}
-      {projectName}
-      onprompt={() => (showPromptEditor = true)}
-      onhistory={() => (showHistory = true)}
-      oncompact={compact}
-      onnewsession={newSession}
-      {onprojectedit}
-    />
+    <!-- Normal chat view (commands live on the portrait) -->
 
-    <div class="messages-scroll" bind:this={scrollContainer} onscroll={updateIsAtBottom}>
-      <MessageList
-        {items}
-        {streamingMessage}
-        {nowMs}
-        agentName={agent.name}
-        {sentImages}
-        onimageclick={(src) => (lightboxSrc = src)}
-      />
+    <div class="messages-area">
+      <div class="messages-scroll" bind:this={scrollContainer} onscroll={updateIsAtBottom}>
+        <MessageList
+          {items}
+          {streamingMessage}
+          {nowMs}
+          agentName={agent.name}
+          {sentImages}
+          onimageclick={(src) => (lightboxSrc = src)}
+        />
 
-      {#if agent.status === "stopped" && !isStandby}
-        <div class="exit-banner">
-          <span>Agent stopped</span>
-          <button class="restart-btn" onclick={() => agentStore.restartAgent(agent.id)}>Restart</button>
-        </div>
-      {/if}
-      {#if isStandby}
-        <div class="standby-banner">
-          <span>Session paused — send a message to wake</span>
-        </div>
-      {/if}
+        {#if agent.status === "stopped" && !isStandby}
+          <div class="exit-banner">
+            <span>Agent stopped</span>
+            <button class="restart-btn" onclick={() => agentStore.restartAgent(agent.id)}>Restart</button>
+          </div>
+        {/if}
+        {#if isStandby}
+          <div class="standby-banner">
+            <span>Session paused — send a message to wake</span>
+          </div>
+        {/if}
+      </div>
+
+      <div class="portrait-anchor pos-{portraitCorner}">
+        <AgentPortrait
+          {agent}
+          {projectName}
+          {isStreaming}
+          {items}
+          {lastUsage}
+          contextWindow={agent.contextWindow}
+          thinkingLevel={agent.thinkingLevel}
+          provider={agent.provider}
+          model={agent.model}
+          sessionStats={agent.sessionStats}
+          onabort={abort}
+          onthinking={setThinkingLevel}
+          onprompt={() => (showPromptEditor = true)}
+          onhistory={() => (showHistory = true)}
+          oncompact={compact}
+          onnewsession={newSession}
+          {onprojectedit}
+          onmove={setPortraitCorner}
+          corner={portraitCorner}
+          minified={portraitMinified}
+          onminify={setPortraitMinified}
+          {streamingMessage}
+          {nowMs}
+        />
+      </div>
     </div>
 
     {#if agent.stderrLines?.length}
@@ -721,18 +771,6 @@
     {/if}
 
     <div class="input-area">
-      <AgentControls
-        {isStreaming}
-        {items}
-        {lastUsage}
-        contextWindow={agent.contextWindow}
-        thinkingLevel={agent.thinkingLevel}
-        provider={agent.provider}
-        model={agent.model}
-        sessionStats={agent.sessionStats}
-        onabort={abort}
-        onthinking={setThinkingLevel}
-      />
       <ChatInput
         onsend={sendPrompt}
         onthumbclick={(src) => (lightboxSrc = src)}
@@ -856,11 +894,40 @@
     height: 100%;
   }
 
+  .messages-area {
+    flex: 1;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
   .messages-scroll {
     flex: 1;
     overflow-y: auto;
     padding: 16px 20px;
     scroll-behavior: smooth;
+  }
+
+  .portrait-anchor {
+    position: absolute;
+    z-index: 5;
+    pointer-events: none;
+  }
+
+  .portrait-anchor.pos-bottom-right { bottom: 12px; right: 12px; }
+  .portrait-anchor.pos-bottom-left { bottom: 12px; left: 12px; }
+  .portrait-anchor.pos-top-right { top: 12px; right: 12px; }
+  .portrait-anchor.pos-top-left { top: 12px; left: 12px; }
+
+  .portrait-anchor > :global(.portrait) {
+    pointer-events: auto;
+  }
+
+  @media (max-width: 720px) {
+    .portrait-anchor {
+      display: none;
+    }
   }
 
   .input-area {
