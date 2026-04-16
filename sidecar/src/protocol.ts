@@ -31,10 +31,14 @@ export interface DestroySessionCommand {
   agentId: string;
 }
 
+export type PromptContentPart =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
 export interface PromptCommand {
   type: "prompt";
   agentId: string;
-  message: string;
+  message: string | PromptContentPart[];
 }
 
 export interface AbortCommand {

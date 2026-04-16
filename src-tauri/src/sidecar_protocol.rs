@@ -77,7 +77,10 @@ pub enum SidecarCommand {
     },
     Prompt {
         agent_id: String,
-        message: String,
+        /// Either a plain string or an array of content parts (text + image).
+        /// Kept as `Value` so both shapes serialize transparently to the sidecar
+        /// without Rust needing to mirror the full multimodal union.
+        message: serde_json::Value,
     },
     Abort {
         agent_id: String,
@@ -500,6 +503,11 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                     state.items.push(DisplayItem::User {
                         content,
                         timestamp: message.timestamp,
+                        // Live-stream path — attachments only surface on
+                        // the follow-up DB-driven snapshot. The frontend
+                        // bridges the gap with its ephemeral `sentImages`
+                        // map until the rebuild catches up.
+                        attachments: Vec::new(),
                     });
                     ApplyOutcome::EmitNow
                 }
@@ -1007,7 +1015,7 @@ mod tests {
         assert_eq!(outcome, ApplyOutcome::EmitNow);
         assert_eq!(count_items(&s, "user"), 1);
         match &s.items[0] {
-            DisplayItem::User { content, timestamp } => {
+            DisplayItem::User { content, timestamp, .. } => {
                 assert_eq!(content, "hello world");
                 assert_eq!(*timestamp, Some(1000));
             }

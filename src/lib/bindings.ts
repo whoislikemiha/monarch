@@ -101,6 +101,12 @@ export const commands = {
 	 *  asset protocol to be scoped, which requires additional capability config.
 	 */
 	readAvatarDataUrl: (path: string) => typedError<string, ErrorDto>(__TAURI_INVOKE("read_avatar_data_url", { path })),
+	/**
+	 *  MON-75: Read a saved chat-message attachment and return it as a base64
+	 *  data URL. Mirrors `read_avatar_data_url` but is keyed on an arbitrary
+	 *  path (attachments live under stable UUIDs, not an entity id).
+	 */
+	readAttachmentDataUrl: (path: string) => typedError<string, ErrorDto>(__TAURI_INVOKE("read_attachment_data_url", { path })),
 	dbUpsertAgent: (agent: AgentRow) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_upsert_agent", { agent })),
 	// MON-73: Update user-editable agent fields without touching spawn-time fields.
 	dbUpdateAgent: (payload: AgentUpdatePayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_agent", { payload })),
@@ -225,7 +231,15 @@ export type Cost = {
 	total?: number,
 };
 
-export type DisplayItem = { kind: "user"; content: string; timestamp: number | null } | { kind: "assistant"; content: ("Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Vec<Value> }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never })[]; model: string | null; usage: Usage | null; timestamp: number | null; 
+export type DisplayItem = { kind: "user"; content: string; timestamp: number | null; 
+/**
+ *  MON-75: image attachments that were sent with this user
+ *  message. Populated for snapshots rebuilt from SQLite (via
+ *  `display_items_from_messages`); empty for messages assembled
+ *  live from sidecar events, since the frontend still holds the
+ *  data-URL ephemerally until the DB round-trip lands.
+ */
+attachments?: MessageAttachmentRow[] } | { kind: "assistant"; content: ("Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Vec<Value> }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never })[]; model: string | null; usage: Usage | null; timestamp: number | null; 
 /**
  *  MON-71: turn wall-clock duration, set when `MessageEnd` fires.
  *  Persisted on the `messages.duration_ms` column; restored by
@@ -302,6 +316,18 @@ export type MemoryRow = {
 	accessCount: number,
 };
 
+/**
+ *  MON-75: one row in `message_attachments`. Exposed to the frontend so
+ *  the display snapshot can surface attachment paths to MessageList for
+ *  rendering; the webview resolves each path through the
+ *  `read_attachment_data_url` command.
+ */
+export type MessageAttachmentRow = {
+	path: string,
+	mimeType: string,
+	position: number,
+};
+
 export type MessageRow = {
 	id: number,
 	sessionId: string,
@@ -318,6 +344,14 @@ export type MessageRow = {
 	 *  timing — tool durations live inside the toolResult JSON blob).
 	 */
 	durationMs?: number | null,
+	/**
+	 *  MON-75: image attachments persisted alongside user messages. Empty
+	 *  for assistant/tool rows and for user messages without images.
+	 *  Populated by `get_messages_with_ancestry`; ignored by writers
+	 *  (`save_message_internal` never inserts attachments — that goes
+	 *  through `save_message_attachment_internal`).
+	 */
+	attachments?: MessageAttachmentRow[],
 };
 
 export type ModelInfo = {

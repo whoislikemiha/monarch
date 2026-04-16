@@ -310,7 +310,16 @@ export interface AgentViewState {
 
 // Display item — what we render in the message list
 export type DisplayItem =
-  | { kind: "user"; content: string; timestamp?: number }
+  | {
+      kind: "user";
+      content: string;
+      timestamp?: number;
+      /** MON-75: persisted image attachments sent with this user message.
+       * Only present on snapshots rebuilt from SQLite; empty for items
+       * assembled live from sidecar events (the frontend bridges the
+       * in-flight window with its ephemeral `sentImages` map). */
+      attachments?: MessageAttachment[];
+    }
   | {
       kind: "assistant";
       content: ContentBlock[];
@@ -323,3 +332,12 @@ export type DisplayItem =
   | { kind: "tool-group"; executions: ToolExecution[]; turnComplete: boolean }
   | { kind: "status"; text: string }
   | { kind: "notification"; text: string; level: "info" | "warning" | "error" };
+
+/** MON-75: frontend-side attachment descriptor. Mirrors the
+ * `MessageAttachmentRow` specta export but lives here so `types.ts` stays
+ * the one place the display layer imports from. */
+export interface MessageAttachment {
+  path: string;
+  mimeType: string;
+  position: number;
+}

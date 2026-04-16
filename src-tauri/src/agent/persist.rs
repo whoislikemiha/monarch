@@ -20,12 +20,24 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::db::{Database, MessageRow};
 use crate::error::MonarchError;
+use crate::persistence::write_attachment_bytes;
 use crate::sidecar_protocol::InnerEvent;
 use crate::util::chrono_now;
 
 use super::event_handler::mark_agent_desynced;
 use super::manager::AgentStateEntry;
 use super::WsBroadcast;
+
+/// MON-75: raw image content extracted from a user `message_end`,
+/// awaiting the parent message's DB id before it can be written to disk
+/// and linked via `message_attachments`. Base64 is held in-memory until
+/// the consumer applies the command — typical payloads are ~1 MB and
+/// there is exactly one send in flight per agent.
+#[derive(Debug, Clone)]
+pub(super) struct PendingAttachment {
+    pub data_base64: String,
+    pub mime_type: String,
+}
 
 /// A persistence effect to apply in FIFO order by the single consumer.
 #[derive(Debug)]
@@ -42,9 +54,15 @@ pub(super) enum PersistCommand {
     /// both the `save_message_internal` and the
     /// `increment_session_message_count` call in that order, so the stats
     /// update cannot race the insert.
+    ///
+    /// MON-75: user messages may also carry `attachments` — base64 image
+    /// blobs the LLM was shown. They are written to disk and linked via
+    /// `message_attachments` only after the parent row gets its id back
+    /// from the insert, keeping the attachment → message FK valid.
     SaveAssistantMessage {
         agent_id: String,
         message: MessageRow,
+        attachments: Vec<PendingAttachment>,
     },
     /// Persist a `tool_execution_end` as a synthesized `toolResult` row.
     SaveToolResult {
@@ -99,13 +117,49 @@ impl PersistCommand {
                 )
                 .await
             }
-            Self::SaveAssistantMessage { message, .. } => {
+            Self::SaveAssistantMessage {
+                message,
+                attachments,
+                ..
+            } => {
                 let session_id = message.session_id.clone();
                 let tokens = message.tokens;
                 let cost = message.cost;
-                db.save_message_internal(&message).await?;
+                let message_id = db.save_message_internal(&message).await?;
+                // MON-75: write image attachments to disk and link them
+                // back to the row we just inserted. A failure here should
+                // not roll back the message — the text still persists and
+                // the chat stays legible; the user just sees a thumbnail
+                // gap. So surface the error via `?` only after the
+                // session-count update so stats stay consistent.
+                let mut attach_err: Option<MonarchError> = None;
+                for (position, att) in attachments.into_iter().enumerate() {
+                    match write_attachment_bytes(&att.data_base64, &att.mime_type).await {
+                        Ok(path) => {
+                            let path_str = path.to_string_lossy().to_string();
+                            if let Err(e) = db
+                                .save_message_attachment_internal(
+                                    message_id,
+                                    &path_str,
+                                    &att.mime_type,
+                                    position as i64,
+                                )
+                                .await
+                            {
+                                attach_err.get_or_insert(e);
+                            }
+                        }
+                        Err(e) => {
+                            attach_err.get_or_insert(e);
+                        }
+                    }
+                }
                 db.increment_session_message_count(&session_id, tokens, cost)
-                    .await
+                    .await?;
+                match attach_err {
+                    Some(e) => Err(e),
+                    None => Ok(()),
+                }
             }
             Self::SaveToolResult { message, .. } => {
                 db.save_message_internal(&message).await.map(|_| ())
@@ -185,8 +239,17 @@ pub(super) fn build_persist_commands(
             } else {
                 message.role.clone()
             };
-            let content = message
-                .content
+            // MON-75: for user messages, pull any inline base64 image
+            // blocks out of the content value before serialization. The
+            // stored content stays text-only; image bytes are written to
+            // disk and linked via `message_attachments` by the consumer.
+            let (content_value, attachments): (Option<serde_json::Value>, Vec<PendingAttachment>) =
+                if role == "user" {
+                    extract_image_attachments(message.content.clone())
+                } else {
+                    (message.content.clone(), Vec::new())
+                };
+            let content = content_value
                 .as_ref()
                 .map(|c| serde_json::to_string(c).unwrap_or_default())
                 .unwrap_or_default();
@@ -208,7 +271,9 @@ pub(super) fn build_persist_commands(
                     cost,
                     timestamp: chrono_now(),
                     duration_ms: durations.turn_duration_ms,
+                    attachments: Vec::new(),
                 },
+                attachments,
             });
 
             // MON-63: increment per-agent lifetime stats
@@ -267,6 +332,7 @@ pub(super) fn build_persist_commands(
                     cost: 0.0,
                     timestamp: chrono_now(),
                     duration_ms: None,
+                    attachments: Vec::new(),
                 },
             });
 
@@ -287,6 +353,54 @@ pub(super) fn build_persist_commands(
     }
 
     cmds
+}
+
+/// MON-75: split a user-message `content` Value into (text-only content,
+/// list of image attachments to persist). Handles both wire shapes the
+/// sidecar forwards:
+///   - array of blocks: `[{type:"text",text}, {type:"image",data,mimeType}]`
+///   - single string (no images possible)
+///   - anything else falls through unchanged with an empty attachment list.
+/// The returned content has image blocks removed; if the resulting array
+/// is empty the content falls back to an empty string so downstream code
+/// that expects a content column never sees null.
+fn extract_image_attachments(
+    content: Option<serde_json::Value>,
+) -> (Option<serde_json::Value>, Vec<PendingAttachment>) {
+    let Some(value) = content else {
+        return (None, Vec::new());
+    };
+    let serde_json::Value::Array(blocks) = value else {
+        return (Some(value), Vec::new());
+    };
+
+    let mut attachments = Vec::new();
+    let mut kept = Vec::with_capacity(blocks.len());
+    for block in blocks {
+        if block
+            .get("type")
+            .and_then(|t| t.as_str())
+            .map(|t| t == "image")
+            .unwrap_or(false)
+        {
+            let data = block.get("data").and_then(|d| d.as_str()).unwrap_or("");
+            let mime = block
+                .get("mimeType")
+                .and_then(|m| m.as_str())
+                .unwrap_or("image/png");
+            if !data.is_empty() {
+                attachments.push(PendingAttachment {
+                    data_base64: data.to_string(),
+                    mime_type: mime.to_string(),
+                });
+                // Do not keep the image block; the bytes move to disk.
+                continue;
+            }
+        }
+        kept.push(block);
+    }
+
+    (Some(serde_json::Value::Array(kept)), attachments)
 }
 
 /// Stable snake_case tag for an `InnerEvent`, used by `LogEvent.event_type`

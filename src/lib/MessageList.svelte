@@ -1,20 +1,29 @@
 <script lang="ts">
   import AssistantMessageComp from "./AssistantMessage.svelte";
   import ToolGroup from "./ToolGroup.svelte";
+  import AttachmentThumb from "./AttachmentThumb.svelte";
   import { formatCost, formatDuration } from "./format";
   import type { DisplayItem, AssistantMessage } from "./types";
+  import type { PendingImage } from "./ChatInput.svelte";
 
   let {
     items,
     streamingMessage,
     nowMs,
     agentName = "Assistant",
+    sentImages,
+    onimageclick,
   }: {
     items: DisplayItem[];
     streamingMessage: AssistantMessage | null;
     /** MON-71: 1Hz live ticker from AgentView; drives in-progress duration counters. */
     nowMs: number;
     agentName?: string;
+    /** Ephemeral map of images attached to user messages, keyed by the
+     * 0-based index among user messages in `items`. Owned by AgentView and
+     * cleared whenever the bound session changes. */
+    sentImages?: Map<number, PendingImage[]>;
+    onimageclick?: (src: string) => void;
   } = $props();
 
   // MON-71: for a streaming turn, elapsed is `nowMs - turnStartedAtMs`;
@@ -23,14 +32,59 @@
     if (startedAtMs == null) return null;
     return Math.max(0, nowMs - startedAtMs);
   }
+
+  // Maps items[i] → that user message's 0-based index among user messages.
+  // Non-user items are absent from the map.
+  let userIndexAt = $derived.by(() => {
+    const m = new Map<number, number>();
+    let n = 0;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].kind === "user") {
+        m.set(i, n);
+        n++;
+      }
+    }
+    return m;
+  });
 </script>
 
 <div class="message-list">
   {#each items as item, i (i)}
     {#if item.kind === "user"}
+      {@const userIdx = userIndexAt.get(i)}
+      {@const persistedAttachments = item.attachments ?? []}
+      {@const ephemeralImgs =
+        persistedAttachments.length === 0 && userIdx != null
+          ? sentImages?.get(userIdx)
+          : undefined}
+      {@const hasAnyImages =
+        persistedAttachments.length > 0 ||
+        (ephemeralImgs && ephemeralImgs.length > 0)}
       <div class="message user-message">
         <div class="message-label">You</div>
-        <div class="message-content">{item.content}</div>
+        {#if item.content}
+          <div class="message-content">{item.content}</div>
+        {/if}
+        {#if hasAnyImages}
+          <div class="sent-image-strip" class:text-above={!!item.content}>
+            {#if persistedAttachments.length > 0}
+              {#each persistedAttachments as att (att.path)}
+                <AttachmentThumb attachment={att} onclick={onimageclick} />
+              {/each}
+            {:else if ephemeralImgs}
+              {#each ephemeralImgs as img (img.id)}
+                <button
+                  type="button"
+                  class="sent-thumb"
+                  onclick={() => onimageclick?.(img.dataUrl)}
+                  aria-label="View image"
+                >
+                  <img src={img.dataUrl} alt="attachment" />
+                </button>
+              {/each}
+            {/if}
+          </div>
+        {/if}
       </div>
     {:else if item.kind === "assistant"}
       <div class="message assistant-message">
@@ -170,6 +224,40 @@
     background: var(--bg-panel-2);
     border-radius: 8px;
     border: 1px solid var(--accent-blue-border);
+  }
+
+  .sent-image-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .sent-image-strip.text-above {
+    margin-top: 6px;
+  }
+
+  .sent-thumb {
+    width: 72px;
+    height: 72px;
+    padding: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    overflow: hidden;
+    background: transparent;
+    cursor: zoom-in;
+    flex-shrink: 0;
+    transition: border-color 0.15s;
+  }
+
+  .sent-thumb:hover {
+    border-color: var(--accent-blue);
+  }
+
+  .sent-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
   }
 
   .streaming-indicator {

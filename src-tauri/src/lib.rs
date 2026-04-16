@@ -62,6 +62,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         persistence::get_prompts_dir,
         persistence::save_avatar_image,
         persistence::read_avatar_data_url,
+        persistence::read_attachment_data_url,
         // SQLite persistence
         db::db_upsert_agent,
         db::db_update_agent,
@@ -180,6 +181,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(agent_mgr)
         .manage(model_cache)
         .manage(database)
@@ -200,6 +202,7 @@ pub fn run() {
             persistence::get_prompts_dir,
             persistence::save_avatar_image,
         persistence::read_avatar_data_url,
+        persistence::read_attachment_data_url,
             db::db_upsert_agent,
             db::db_update_agent,
             db::db_get_agents,

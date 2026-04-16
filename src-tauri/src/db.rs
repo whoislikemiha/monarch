@@ -288,6 +288,23 @@ impl Database {
                 let _ = conn.execute_batch("ALTER TABLE agents ADD COLUMN avatar_type TEXT;");
                 let _ = conn.execute_batch("ALTER TABLE agents ADD COLUMN avatar_path TEXT;");
 
+                // MON-75: per-message image attachments. Bytes live under
+                // ~/.config/monarch/attachments/{uuid}.{ext}; this table
+                // just keeps an ordered reference so rebuilt snapshots and
+                // session replays can find them. `position` is the ordinal
+                // within a single user message (0-based).
+                let _ = conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS message_attachments (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                        path TEXT NOT NULL,
+                        mime_type TEXT NOT NULL,
+                        position INTEGER NOT NULL DEFAULT 0
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_message_attachments_message
+                        ON message_attachments(message_id);",
+                );
+
                 // MON-49: the events table is forensic, not operational.
                 // Prune rows older than 30 days on startup so the table does
                 // not grow unbounded. Errors are swallowed — a failed prune
@@ -397,6 +414,25 @@ pub struct MessageRow {
     /// timing — tool durations live inside the toolResult JSON blob).
     #[serde(default)]
     pub duration_ms: Option<i64>,
+    /// MON-75: image attachments persisted alongside user messages. Empty
+    /// for assistant/tool rows and for user messages without images.
+    /// Populated by `get_messages_with_ancestry`; ignored by writers
+    /// (`save_message_internal` never inserts attachments — that goes
+    /// through `save_message_attachment_internal`).
+    #[serde(default)]
+    pub attachments: Vec<MessageAttachmentRow>,
+}
+
+/// MON-75: one row in `message_attachments`. Exposed to the frontend so
+/// the display snapshot can surface attachment paths to MessageList for
+/// rendering; the webview resolves each path through the
+/// `read_attachment_data_url` command.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageAttachmentRow {
+    pub path: String,
+    pub mime_type: String,
+    pub position: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -653,6 +689,32 @@ impl Database {
             .await?)
     }
 
+    /// MON-75: link one persisted image blob to its parent user message.
+    /// `path` is the absolute filesystem path returned by
+    /// `persistence::write_attachment_bytes`; `position` is the ordinal
+    /// within the message so order matches what the user sent.
+    pub async fn save_message_attachment_internal(
+        &self,
+        message_id: i64,
+        path: &str,
+        mime_type: &str,
+        position: i64,
+    ) -> Result<(), MonarchError> {
+        let path = path.to_string();
+        let mime_type = mime_type.to_string();
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT INTO message_attachments (message_id, path, mime_type, position)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![message_id, path, mime_type, position],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
     pub async fn update_session_internal(
         &self,
         session_id: &str,
@@ -800,7 +862,7 @@ impl Database {
                 }
                 chain.reverse(); // oldest first
 
-                let mut all_messages = Vec::new();
+                let mut all_messages: Vec<MessageRow> = Vec::new();
                 for sid in &chain {
                     let mut stmt = conn.prepare(
                         "SELECT id, session_id, role, content, model, tokens, cost, timestamp, duration_ms FROM messages WHERE session_id = ?1 ORDER BY id ASC",
@@ -810,6 +872,33 @@ impl Database {
                         all_messages.push(row?);
                     }
                 }
+
+                // MON-75: hydrate attachments per message in one pass. Only
+                // user rows are expected to have any, so scoping the query
+                // to `role = 'user'` keeps it cheap; positions come back
+                // sorted so the UI renders them in send order.
+                let mut att_stmt = conn.prepare(
+                    "SELECT path, mime_type, position
+                     FROM message_attachments
+                     WHERE message_id = ?1
+                     ORDER BY position ASC",
+                )?;
+                for msg in all_messages.iter_mut() {
+                    if msg.role != "user" {
+                        continue;
+                    }
+                    let rows = att_stmt.query_map(params![msg.id], |row| {
+                        Ok(MessageAttachmentRow {
+                            path: row.get(0)?,
+                            mime_type: row.get(1)?,
+                            position: row.get(2)?,
+                        })
+                    })?;
+                    for att in rows {
+                        msg.attachments.push(att?);
+                    }
+                }
+
                 Ok(all_messages)
             })
             .await?)
@@ -1438,6 +1527,11 @@ fn map_message(row: &Row<'_>) -> rusqlite::Result<MessageRow> {
         cost: row.get(6)?,
         timestamp: row.get(7)?,
         duration_ms: row.get(8).ok(),
+        // Filled in by `get_messages_with_ancestry` via a second query —
+        // the row returned from a single messages SELECT cannot join the
+        // attachments table because rusqlite row handlers are sync and
+        // sibling queries are easier to reason about than window joins.
+        attachments: Vec::new(),
     })
 }
 

@@ -105,6 +105,13 @@ pub enum DisplayItem {
     User {
         content: String,
         timestamp: Option<i64>,
+        /// MON-75: image attachments that were sent with this user
+        /// message. Populated for snapshots rebuilt from SQLite (via
+        /// `display_items_from_messages`); empty for messages assembled
+        /// live from sidecar events, since the frontend still holds the
+        /// data-URL ephemerally until the DB round-trip lands.
+        #[serde(default)]
+        attachments: Vec<crate::db::MessageAttachmentRow>,
     },
     Assistant {
         content: ContentBlocks,
@@ -359,6 +366,7 @@ pub fn display_items_from_messages(
                 restored.push(DisplayItem::User {
                     content: text,
                     timestamp: parse_timestamp(&msg.timestamp),
+                    attachments: msg.attachments.clone(),
                 });
             }
             "toolResult" => {

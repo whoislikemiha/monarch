@@ -3,12 +3,13 @@
   import { invoke, listen, type UnlistenFn } from "$lib/api";
   import { commands } from "$lib/bindings";
   import MessageList from "./MessageList.svelte";
-  import ChatInput from "./ChatInput.svelte";
+  import ChatInput, { type PendingImage } from "./ChatInput.svelte";
   import AgentControls from "./AgentControls.svelte";
   import AgentHeader from "./AgentHeader.svelte";
   import ExtensionDialog from "./ExtensionDialog.svelte";
   import PromptEditor from "./PromptEditor.svelte";
   import HistoryPanel from "./HistoryPanel.svelte";
+  import ImageLightbox from "./ImageLightbox.svelte";
   import type { Agent, DisplayItem, ExtensionUIRequest } from "./types";
   import type { LiveAgentState as WireLiveAgentState } from "./bindings";
   import {
@@ -50,11 +51,19 @@
   let unlistenExit: UnlistenFn | undefined;
   let unlistenStderr: UnlistenFn | undefined;
   let scrollContainer: HTMLDivElement | undefined = $state(undefined);
-  let chatInputRef: { focus: () => void } | undefined = $state(undefined);
+  let chatInputRef: { focus: () => void; addImageFile: (file: File) => void } | undefined = $state(undefined);
+  let isDragging = $state(false);
   let boundAgentId = $state("");
   let sessionReadyResolve: (() => void) | null = null;
   let boundSessionId: string | undefined = $state(undefined);
   let activationVersion = 0;
+  let lightboxSrc = $state<string | null>(null);
+
+  // Ephemeral map of sent-with-message images, keyed by the user message's
+  // 0-based index among user messages in `items`. Cleared whenever we bind a
+  // different agent/session or start a new one — image data is not persisted
+  // alongside history, so reloaded sessions will show text only.
+  let sentImages = $state(new Map<number, PendingImage[]>());
 
   // Live state — read from liveAgentStore keyed by the bound agent id.
   // The store is a passive receiver of Rust-assembled snapshots from
@@ -258,13 +267,61 @@
     await invoke("send_command", { id: agent.id, commandJson: JSON.stringify(cmd) });
   }
 
-  async function sendPrompt(message: string) {
+  async function sendPrompt(message: string, images: PendingImage[] = []) {
     if (agent.status === "stopped") {
       const sessionReady = new Promise<void>((resolve) => { sessionReadyResolve = resolve; });
       await agentStore.spawnStoppedAgent(agent.id);
       await sessionReady;
     }
-    await sendPiCommand({ type: "prompt", message });
+    // Record images against the upcoming user message *before* dispatching
+    // so the MessageList lookup works the moment Rust emits the new state.
+    if (images.length > 0) {
+      const userIndex = live.items.filter((i) => i.kind === "user").length;
+      const next = new Map(sentImages);
+      next.set(userIndex, images);
+      sentImages = next;
+    }
+    if (images.length === 0) {
+      await sendPiCommand({ type: "prompt", message });
+    } else {
+      const parts = [
+        ...(message ? [{ type: "text", text: message }] : []),
+        ...images.map((img) => ({ type: "image", data: img.data, mimeType: img.mimeType })),
+      ];
+      await sendPiCommand({ type: "prompt", message: parts });
+    }
+  }
+
+  function handleDragOver(e: DragEvent) {
+    // Don't light up the drop overlay while the agent is working — the
+    // chat input is disabled and drops would only accumulate unsendable
+    // pending thumbnails, which is confusing.
+    if (isStreaming) return;
+    if (e.dataTransfer?.types.includes("Files")) {
+      e.preventDefault();
+      isDragging = true;
+    }
+  }
+
+  function handleDragLeave(e: DragEvent) {
+    // Only clear when leaving the wrapper itself, not a child element.
+    const wrapper = (e.currentTarget as HTMLElement);
+    if (!wrapper.contains(e.relatedTarget as Node)) {
+      isDragging = false;
+    }
+  }
+
+  function handleDrop(e: DragEvent) {
+    e.preventDefault();
+    isDragging = false;
+    if (isStreaming) return;
+    const files = e.dataTransfer?.files;
+    if (!files) return;
+    for (const file of files) {
+      if (file.type.startsWith("image/")) {
+        chatInputRef?.addImageFile(file);
+      }
+    }
   }
 
   // Convenience accessors used by the template — thin wrappers around `live`.
@@ -350,6 +407,7 @@
       sessions: nextSessions,
     }));
     boundSessionId = newSessionId;
+    sentImages = new Map();
 
     // Clear Rust-owned live state and emit a fresh snapshot. Passing
     // sessionId=null resets to an empty state with a single status item.
@@ -458,6 +516,8 @@
     boundSessionId = target.sessionId;
     clearListeners();
     resetUiLocalState();
+    sentImages = new Map();
+    lightboxSrc = null;
 
     const sessionsPromise = refreshSessionsFromDb(target.id);
     const promptPromise = invoke<string | null>("get_agent_prompt", { agentId: target.id })
@@ -542,7 +602,18 @@
   });
 </script>
 
-<div class="agent-view-wrapper">
+<div
+  class="agent-view-wrapper"
+  class:dragging={isDragging}
+  role="region"
+  aria-label="Agent view"
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleDrop}
+>
+{#if isDragging}
+  <div class="drop-overlay">Drop image to attach</div>
+{/if}
 <div class="agent-view">
   {#if showCompactError}
     <!-- Compact error view — no chat, just the error and actions -->
@@ -597,7 +668,14 @@
     />
 
     <div class="messages-scroll" bind:this={scrollContainer} onscroll={updateIsAtBottom}>
-      <MessageList {items} {streamingMessage} {nowMs} agentName={agent.name} />
+      <MessageList
+        {items}
+        {streamingMessage}
+        {nowMs}
+        agentName={agent.name}
+        {sentImages}
+        onimageclick={(src) => (lightboxSrc = src)}
+      />
 
       {#if agent.status === "stopped" && !isStandby}
         <div class="exit-banner">
@@ -656,6 +734,7 @@
       />
       <ChatInput
         onsend={sendPrompt}
+        onthumbclick={(src) => (lightboxSrc = src)}
         disabled={isStreaming}
         bind:this={chatInputRef}
       />
@@ -713,6 +792,7 @@
         sessions: nextSessions,
       }));
       boundSessionId = session.sessionId;
+      sentImages = new Map();
       await refreshSessionsFromDb();
 
       // Replay old messages into the sidecar's LLM context
@@ -751,6 +831,10 @@
     shadowGrade={agent.shadow?.shadowGrade}
     onclose={() => (showPromptEditor = false)}
   />
+{/if}
+
+{#if lightboxSrc}
+  <ImageLightbox src={lightboxSrc} onclose={() => (lightboxSrc = null)} />
 {/if}
 
 <style>
@@ -1048,5 +1132,26 @@
   @keyframes pulse {
     0%, 100% { opacity: 0.4; }
     50% { opacity: 1; }
+  }
+
+  .agent-view-wrapper {
+    position: relative;
+  }
+
+  .drop-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 100;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 2px dashed var(--accent);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    font-size: 14px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    font-weight: 600;
+    pointer-events: none;
   }
 </style>
