@@ -1,6 +1,5 @@
 <script lang="ts">
   import { open } from "@tauri-apps/plugin-dialog";
-  import { convertFileSrc } from "@tauri-apps/api/core";
   import { invoke } from "$lib/api";
 
   interface AvatarPreset {
@@ -25,6 +24,19 @@
   } = $props();
 
   let uploading = $state(false);
+  /** Cached data URL for the custom uploaded image — avoids re-loading on every render. */
+  let customDataUrl = $state<string | undefined>(undefined);
+
+  // When the dialog opens for an agent that already has a custom image, load it.
+  $effect(() => {
+    if (avatarType === "image" && avatarPath && !avatarPath.startsWith("/avatars/")) {
+      invoke<string>("read_avatar_data_url", { path: avatarPath })
+        .then((url) => { customDataUrl = url; })
+        .catch(() => { customDataUrl = undefined; });
+    } else {
+      customDataUrl = undefined;
+    }
+  });
 
   function isSelected(preset: AvatarPreset): boolean {
     // Default state: no avatarType means the default rive preset
@@ -52,6 +64,9 @@
         agentId,
         srcPath: selected,
       });
+      // Load data URL immediately so the preview renders without an extra round-trip.
+      const dataUrl = await invoke<string>("read_avatar_data_url", { path: storedPath });
+      customDataUrl = dataUrl;
       avatarType = "image";
       avatarPath = storedPath;
     } catch (e) {
@@ -88,16 +103,15 @@
       </button>
     {/each}
 
-    {#if avatarType === "image" && avatarPath && !avatarPath.startsWith("/avatars/")}
+    {#if avatarType === "image" && avatarPath && !avatarPath.startsWith("/avatars/") && customDataUrl}
       <!-- Custom uploaded image currently selected -->
-      {@const customSrc = avatarPath.startsWith("/") ? convertFileSrc(avatarPath) : avatarPath}
       <button
         class="preset-card selected"
         type="button"
         title="Custom upload"
         onclick={() => {}}
       >
-        <img src={customSrc} alt="Custom" class="preset-thumb" />
+        <img src={customDataUrl} alt="Custom" class="preset-thumb" />
         <span class="preset-label">Custom</span>
       </button>
     {/if}

@@ -95,6 +95,12 @@ export const commands = {
 	 *  naming it after the agent. Returns the stored absolute path.
 	 */
 	saveAvatarImage: (agentId: string, srcPath: string) => typedError<string, ErrorDto>(__TAURI_INVOKE("save_avatar_image", { agentId, srcPath })),
+	/**
+	 *  MON-73: Read a saved avatar image and return it as a base64 data URL.
+	 *  Lets the webview display local filesystem images without needing the Tauri
+	 *  asset protocol to be scoped, which requires additional capability config.
+	 */
+	readAvatarDataUrl: (path: string) => typedError<string, ErrorDto>(__TAURI_INVOKE("read_avatar_data_url", { path })),
 	dbUpsertAgent: (agent: AgentRow) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_upsert_agent", { agent })),
 	// MON-73: Update user-editable agent fields without touching spawn-time fields.
 	dbUpdateAgent: (payload: AgentUpdatePayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_agent", { payload })),

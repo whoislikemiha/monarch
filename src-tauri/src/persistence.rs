@@ -60,6 +60,32 @@ pub async fn get_prompts_dir() -> Result<String, MonarchError> {
     prompts_dir_string().await
 }
 
+/// MON-73: Read a saved avatar image and return it as a base64 data URL.
+/// Lets the webview display local filesystem images without needing the Tauri
+/// asset protocol to be scoped, which requires additional capability config.
+#[tauri::command]
+#[specta::specta]
+pub async fn read_avatar_data_url(path: String) -> Result<String, MonarchError> {
+    let bytes = tokio::fs::read(&path).await.map_err(|e| {
+        MonarchError::persistence(format!("Failed to read avatar image: {}", e))
+    })?;
+    let ext = std::path::Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "svg" => "image/svg+xml",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "image/png",
+    };
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", mime, b64))
+}
+
 /// MON-73: Copy a user-selected image file into the Monarch avatars directory,
 /// naming it after the agent. Returns the stored absolute path.
 #[tauri::command]

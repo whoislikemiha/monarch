@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { Rive, EventType, StateMachineInputType, Layout, Fit, Alignment } from "@rive-app/canvas";
   import type { StateMachineInput } from "@rive-app/canvas";
-  import { convertFileSrc } from "@tauri-apps/api/core";
+  import { invoke } from "$lib/api";
   import { liveAgentStore, detachedLiveState } from "../toolbox/liveAgentStore.svelte";
   import {
     deriveAnimationState,
@@ -41,18 +41,27 @@
   );
 
   /**
-   * Resolve image src: built-in paths start with "/" (served from static),
-   * absolute filesystem paths are wrapped in Tauri's asset protocol.
+   * Resolved image src. Built-in paths start with "/avatars/" and are served
+   * from the static dir directly. Absolute filesystem paths (user uploads)
+   * are loaded via a Rust command that returns a base64 data URL — the Tauri
+   * asset protocol requires explicit scope config that we don't carry.
    */
-  const imageSrc = $derived.by(() => {
-    if (!avatarPath) return "";
-    if (avatarPath.startsWith("/")) return avatarPath;
-    // Absolute filesystem path — use Tauri's asset protocol.
-    try {
-      return convertFileSrc(avatarPath);
-    } catch {
-      return avatarPath;
+  let resolvedImageSrc = $state("");
+
+  $effect(() => {
+    if (!isImage || !avatarPath) {
+      resolvedImageSrc = "";
+      return;
     }
+    // Built-in bundled paths served from the frontend static dir.
+    if (avatarPath.startsWith("/avatars/") || avatarPath.startsWith("data:")) {
+      resolvedImageSrc = avatarPath;
+      return;
+    }
+    // Filesystem path — read via Rust and return as data URL.
+    invoke<string>("read_avatar_data_url", { path: avatarPath })
+      .then((url) => { resolvedImageSrc = url; })
+      .catch(() => { resolvedImageSrc = ""; });
   });
 
   let canvasEl: HTMLCanvasElement;
@@ -202,7 +211,7 @@
 
 {#if isImage}
   <img
-    src={imageSrc}
+    src={resolvedImageSrc}
     alt="Agent avatar"
     class="shadow-avatar shadow-avatar--image"
     style="width: {size}px; height: {size}px;"
