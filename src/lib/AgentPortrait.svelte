@@ -368,7 +368,10 @@
         <span class="context-value">{usedPct}%</span>
       </div>
       <div class="context-track">
-        <div class="context-fill" style:width={`${contextFill}%`}></div>
+        <div class="context-fill" style:width={`${usedPct}%`}></div>
+        {#if isStreaming}
+          <div class="context-shimmer" style:width={`${usedPct}%`} aria-hidden="true"></div>
+        {/if}
       </div>
       {#if sparkPath}
         <svg class="context-spark" viewBox="0 0 {SPARK_W} {SPARK_H}" preserveAspectRatio="none" aria-hidden="true">
@@ -407,6 +410,9 @@
         title={`Context: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens (${usedPct}% used, ${freePct}% free)`}
       >
         <div class="mini-ctx-fill" style:width={`${usedPct}%`}></div>
+        {#if isStreaming}
+          <div class="mini-ctx-shimmer" style:width={`${usedPct}%`} aria-hidden="true"></div>
+        {/if}
         {#if tokPerSec != null}
           <span class="mini-ctx-rate">{formatRate(tokPerSec)}</span>
         {/if}
@@ -655,16 +661,51 @@
     top: 0;
     right: 0;
     bottom: 0;
-    background: var(--accent);
-    transition: width 0.25s ease, background 0.2s ease;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--accent) 70%, transparent) 0%,
+      var(--accent) 100%
+    );
+    box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+    transition: width 0.3s cubic-bezier(0.22, 1, 0.36, 1), background 0.2s ease;
+  }
+
+  .mini-ctx-shimmer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, #fff 24%, transparent) 50%,
+      transparent 100%
+    );
+    mix-blend-mode: overlay;
+    animation: ctx-shimmer 1.6s linear infinite;
+    pointer-events: none;
   }
 
   .mini-ctx.warning .mini-ctx-fill {
-    background: var(--warning);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--warning) 70%, transparent) 0%,
+      var(--warning) 100%
+    );
+    box-shadow: 0 0 8px color-mix(in srgb, var(--warning) 55%, transparent);
   }
 
   .mini-ctx.critical .mini-ctx-fill {
-    background: var(--error);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--error) 70%, transparent) 0%,
+      var(--error) 100%
+    );
+    box-shadow: 0 0 8px color-mix(in srgb, var(--error) 60%, transparent);
+  }
+
+  .mini-ctx.critical {
+    animation: ctx-critical-breath 2.2s ease-in-out infinite;
   }
 
   .mini-ctx-number {
@@ -925,10 +966,29 @@
     display: flex;
     flex-direction: column;
     gap: 3px;
-    padding: 4px 6px;
-    border-radius: 6px;
-    border: 1px solid var(--border-subtle);
-    background: var(--bg-panel-2);
+    padding: 5px 7px;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border-subtle));
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--bg-panel) 92%, transparent),
+      color-mix(in srgb, var(--bg-panel-2) 92%, transparent)
+    );
+    box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent);
+  }
+
+  .context-meter.warning {
+    border-color: color-mix(in srgb, var(--warning) 40%, var(--border-subtle));
+  }
+
+  .context-meter.critical {
+    border-color: color-mix(in srgb, var(--error) 55%, var(--border-subtle));
+    animation: ctx-critical-breath 2.2s ease-in-out infinite;
+  }
+
+  @keyframes ctx-critical-breath {
+    0%, 100% { box-shadow: inset 0 0 0 0 color-mix(in srgb, var(--error) 0%, transparent); }
+    50% { box-shadow: inset 0 0 8px 1px color-mix(in srgb, var(--error) 35%, transparent); }
   }
 
   .context-row {
@@ -965,25 +1025,66 @@
   .context-track {
     position: relative;
     width: 100%;
-    height: 6px;
+    height: 8px;
     overflow: hidden;
     border-radius: 999px;
     background: var(--context-track-bg);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
   }
 
   .context-fill {
-    height: 100%;
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
     border-radius: inherit;
-    background: var(--success);
-    transition: width 0.25s ease, background 0.2s ease;
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--accent) 70%, transparent) 0%,
+      var(--accent) 100%
+    );
+    box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 45%, transparent);
+    transition: width 0.3s cubic-bezier(0.22, 1, 0.36, 1), background 0.2s ease;
+  }
+
+  .context-shimmer {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    border-radius: inherit;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, #fff 22%, transparent) 50%,
+      transparent 100%
+    );
+    mix-blend-mode: overlay;
+    animation: ctx-shimmer 1.6s linear infinite;
+    pointer-events: none;
+  }
+
+  @keyframes ctx-shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
   }
 
   .context-meter.warning .context-fill {
-    background: var(--warning);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--warning) 70%, transparent) 0%,
+      var(--warning) 100%
+    );
+    box-shadow: 0 0 6px color-mix(in srgb, var(--warning) 50%, transparent);
   }
 
   .context-meter.critical .context-fill {
-    background: var(--error);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--error) 70%, transparent) 0%,
+      var(--error) 100%
+    );
+    box-shadow: 0 0 8px color-mix(in srgb, var(--error) 60%, transparent);
   }
 
   .context-spark {
