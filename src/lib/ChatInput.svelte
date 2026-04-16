@@ -1,19 +1,84 @@
 <script lang="ts">
+  export interface PendingImage {
+    id: string;
+    dataUrl: string;
+    data: string;
+    mimeType: string;
+  }
+
+  const MAX_IMAGES = 5;
+  const MAX_BYTES = 5 * 1024 * 1024;
+
   let {
     onsend,
     disabled = false,
     placeholder: customPlaceholder,
   }: {
-    onsend: (message: string) => void;
+    onsend: (message: string, images: PendingImage[]) => void;
     disabled?: boolean;
     placeholder?: string;
   } = $props();
 
   let text = $state("");
+  let images = $state<PendingImage[]>([]);
   let textareaEl: HTMLTextAreaElement;
+  let fileInputEl: HTMLInputElement;
 
   export function focus() {
     textareaEl?.focus();
+  }
+
+  export function addImageFile(file: File) {
+    void addFile(file);
+  }
+
+  async function addFile(file: File) {
+    if (images.length >= MAX_IMAGES) return;
+    if (!file.type.startsWith("image/")) return;
+    if (file.size > MAX_BYTES) return;
+
+    const dataUrl = await readAsDataUrl(file);
+    const commaIdx = dataUrl.indexOf(",");
+    const data = dataUrl.slice(commaIdx + 1);
+    images = [
+      ...images,
+      { id: crypto.randomUUID(), dataUrl, data, mimeType: file.type },
+    ];
+  }
+
+  function readAsDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function removeImage(id: string) {
+    images = images.filter((img) => img.id !== id);
+  }
+
+  function handlePaste(e: ClipboardEvent) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) void addFile(file);
+        break;
+      }
+    }
+  }
+
+  function handleFileInput(e: Event) {
+    const input = e.target as HTMLInputElement;
+    if (!input.files) return;
+    for (const file of input.files) {
+      void addFile(file);
+    }
+    input.value = "";
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -25,9 +90,10 @@
 
   function send() {
     const trimmed = text.trim();
-    if (!trimmed || disabled) return;
-    onsend(trimmed);
+    if ((!trimmed && images.length === 0) || disabled) return;
+    onsend(trimmed, images);
     text = "";
+    images = [];
     if (textareaEl) {
       textareaEl.style.height = "auto";
     }
@@ -41,29 +107,153 @@
 </script>
 
 <div class="chat-input" class:disabled>
-  <textarea
-    bind:this={textareaEl}
-    bind:value={text}
-    onkeydown={handleKeydown}
-    oninput={autoResize}
-    placeholder={customPlaceholder || (disabled ? "Agent is working..." : "Message...")}
-    {disabled}
-    rows="1"
-  ></textarea>
-  <button class="send-btn" onclick={send} disabled={disabled || !text.trim()}>
-    Send
-  </button>
+  {#if images.length > 0}
+    <div class="image-strip">
+      {#each images as img (img.id)}
+        <div class="thumb">
+          <img src={img.dataUrl} alt="attachment" />
+          <button
+            class="remove-btn"
+            onclick={() => removeImage(img.id)}
+            aria-label="Remove image"
+          >×</button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  <div class="input-row">
+    <button
+      class="attach-btn"
+      onclick={() => fileInputEl.click()}
+      disabled={disabled || images.length >= MAX_IMAGES}
+      title="Attach image"
+      aria-label="Attach image"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+      </svg>
+    </button>
+
+    <textarea
+      bind:this={textareaEl}
+      bind:value={text}
+      onkeydown={handleKeydown}
+      oninput={autoResize}
+      onpaste={handlePaste}
+      placeholder={customPlaceholder || (disabled ? "Agent is working..." : "Message...")}
+      {disabled}
+      rows="1"
+    ></textarea>
+
+    <button
+      class="send-btn"
+      onclick={send}
+      disabled={disabled || (!text.trim() && images.length === 0)}
+    >
+      Send
+    </button>
+  </div>
+
+  <input
+    bind:this={fileInputEl}
+    type="file"
+    accept="image/*"
+    multiple
+    class="hidden-input"
+    onchange={handleFileInput}
+  />
 </div>
 
 <style>
   .chat-input {
     display: flex;
+    flex-direction: column;
     gap: 8px;
-    align-items: flex-end;
   }
 
   .chat-input.disabled {
     opacity: 0.6;
+  }
+
+  .image-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 4px 0;
+  }
+
+  .thumb {
+    position: relative;
+    width: 52px;
+    height: 52px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    flex-shrink: 0;
+  }
+
+  .thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .remove-btn {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--bg-panel-3);
+    color: var(--text-primary);
+    border: none;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    opacity: 0;
+    transition: opacity 0.1s;
+  }
+
+  .thumb:hover .remove-btn {
+    opacity: 1;
+  }
+
+  .input-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+  }
+
+  .attach-btn {
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 9px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: color 0.15s, border-color 0.15s;
+    min-height: 40px;
+  }
+
+  .attach-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    border-color: var(--accent);
+  }
+
+  .attach-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 
   textarea {
@@ -113,5 +303,9 @@
     background: var(--bg-panel-3);
     color: var(--text-muted);
     cursor: not-allowed;
+  }
+
+  .hidden-input {
+    display: none;
   }
 </style>

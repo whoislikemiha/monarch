@@ -3,7 +3,7 @@
   import { invoke, listen, type UnlistenFn } from "$lib/api";
   import { commands } from "$lib/bindings";
   import MessageList from "./MessageList.svelte";
-  import ChatInput from "./ChatInput.svelte";
+  import ChatInput, { type PendingImage } from "./ChatInput.svelte";
   import AgentControls from "./AgentControls.svelte";
   import AgentHeader from "./AgentHeader.svelte";
   import ExtensionDialog from "./ExtensionDialog.svelte";
@@ -50,7 +50,8 @@
   let unlistenExit: UnlistenFn | undefined;
   let unlistenStderr: UnlistenFn | undefined;
   let scrollContainer: HTMLDivElement | undefined = $state(undefined);
-  let chatInputRef: { focus: () => void } | undefined = $state(undefined);
+  let chatInputRef: { focus: () => void; addImageFile: (file: File) => void } | undefined = $state(undefined);
+  let isDragging = $state(false);
   let boundAgentId = $state("");
   let sessionReadyResolve: (() => void) | null = null;
   let boundSessionId: string | undefined = $state(undefined);
@@ -258,13 +259,48 @@
     await invoke("send_command", { id: agent.id, commandJson: JSON.stringify(cmd) });
   }
 
-  async function sendPrompt(message: string) {
+  async function sendPrompt(message: string, images: PendingImage[] = []) {
     if (agent.status === "stopped") {
       const sessionReady = new Promise<void>((resolve) => { sessionReadyResolve = resolve; });
       await agentStore.spawnStoppedAgent(agent.id);
       await sessionReady;
     }
-    await sendPiCommand({ type: "prompt", message });
+    if (images.length === 0) {
+      await sendPiCommand({ type: "prompt", message });
+    } else {
+      const parts = [
+        ...(message ? [{ type: "text", text: message }] : []),
+        ...images.map((img) => ({ type: "image", data: img.data, mimeType: img.mimeType })),
+      ];
+      await sendPiCommand({ type: "prompt", message: parts });
+    }
+  }
+
+  function handleDragOver(e: DragEvent) {
+    if (e.dataTransfer?.types.includes("Files")) {
+      e.preventDefault();
+      isDragging = true;
+    }
+  }
+
+  function handleDragLeave(e: DragEvent) {
+    // Only clear when leaving the wrapper itself, not a child element.
+    const wrapper = (e.currentTarget as HTMLElement);
+    if (!wrapper.contains(e.relatedTarget as Node)) {
+      isDragging = false;
+    }
+  }
+
+  function handleDrop(e: DragEvent) {
+    e.preventDefault();
+    isDragging = false;
+    const files = e.dataTransfer?.files;
+    if (!files) return;
+    for (const file of files) {
+      if (file.type.startsWith("image/")) {
+        chatInputRef?.addImageFile(file);
+      }
+    }
   }
 
   // Convenience accessors used by the template — thin wrappers around `live`.
@@ -542,7 +578,16 @@
   });
 </script>
 
-<div class="agent-view-wrapper">
+<div
+  class="agent-view-wrapper"
+  class:dragging={isDragging}
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleDrop}
+>
+{#if isDragging}
+  <div class="drop-overlay">Drop image to attach</div>
+{/if}
 <div class="agent-view">
   {#if showCompactError}
     <!-- Compact error view — no chat, just the error and actions -->
@@ -1048,5 +1093,26 @@
   @keyframes pulse {
     0%, 100% { opacity: 0.4; }
     50% { opacity: 1; }
+  }
+
+  .agent-view-wrapper {
+    position: relative;
+  }
+
+  .drop-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 100;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 2px dashed var(--accent);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    font-size: 14px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    font-weight: 600;
+    pointer-events: none;
   }
 </style>
