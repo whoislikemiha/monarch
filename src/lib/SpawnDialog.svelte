@@ -5,9 +5,9 @@
   import { matchBinding } from "$lib/keybindings.svelte";
   import type { AgentConfig, DetectedProject, ShadowGrade } from "./types";
   import { SHADOW_GRADES } from "./types";
-  import type { AgentTemplateRow, ModelInfo, ProviderAuthStatus } from "./bindings";
-  import { PROVIDERS, REFRESHABLE_PROVIDERS, THINKING_LEVELS } from "./providers";
+  import type { AgentTemplateRow } from "./bindings";
   import { agentStore } from "./stores/agentStore.svelte";
+  import ModelSelector from "./ModelSelector.svelte";
 
   let {
     onspawn,
@@ -17,81 +17,23 @@
     oncancel: () => void;
   } = $props();
 
+  // ModelSelector-bound state
+  let selectedProvider = $state("openrouter");
   let modelInput = $state("");
   let thinkingLevel = $state("off");
+  let contextWindow: number | undefined = $state(undefined);
+
   let cwd = $state("/home/miha");
-  function formatCtxTokens(n: number): string {
-    if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + "M";
-    if (n >= 1024) return (n / 1024).toFixed(n % 1024 === 0 ? 0 : 1) + "k";
-    return String(n);
-  }
+  let detectedProject: DetectedProject | null = $state(null);
 
   // Shadow identity
   let shadowName = $state("");
   let shadowTitle = $state("");
   let shadowGrade: ShadowGrade = $state("Knight");
 
-  let selectedProvider = $state("openrouter");
-
   // Agent templates
   let templates: AgentTemplateRow[] = $state([]);
   let saveAsTemplate = $state(false);
-
-  let allModels: ModelInfo[] = $state([]);
-  let modelsLoading = $state(false);
-  let modelsError: string | null = $state(null);
-  let modelFetchToken = 0;
-  let authLoading = $state(false);
-  let authStatus: ProviderAuthStatus | null = $state(null);
-  let detectedProject: DetectedProject | null = $state(null);
-  let showDropdown = $state(false);
-  let highlightedIndex = $state(-1);
-  let modelInputEl: HTMLInputElement | undefined = $state(undefined);
-  let fixedModelId = $derived(selectedProvider === "openai-codex" ? "gpt-5.4" : "");
-
-  // Fuzzy filtered models — each space-separated term must match somewhere
-  let filteredModels = $derived(() => {
-    const query = modelInput.toLowerCase().trim();
-    if (!query) return allModels.slice(0, 50);
-    const terms = query.split(/\s+/).filter(Boolean);
-    return allModels
-      .filter((m) => {
-        const haystack = (m.id + " " + m.name).toLowerCase();
-        return terms.every((t) => haystack.includes(t));
-      })
-      .slice(0, 50);
-  });
-
-
-  async function fetchModels(provider: string) {
-    const token = ++modelFetchToken;
-    modelsLoading = true;
-    modelsError = null;
-    try {
-      const fetched = await invoke<ModelInfo[]>("get_models", { provider });
-      if (token !== modelFetchToken) return; // stale — provider changed
-      allModels = fetched;
-    } catch (err) {
-      if (token !== modelFetchToken) return;
-      const message = err instanceof Error ? err.message : String(err);
-      modelsError = message;
-      allModels = [];
-    } finally {
-      if (token === modelFetchToken) {
-        modelsLoading = false;
-      }
-    }
-  }
-
-  async function fetchAuthStatus(provider: string) {
-    authLoading = true;
-    try {
-      authStatus = await invoke<ProviderAuthStatus>("get_provider_auth_status", { provider });
-    } catch {
-      authStatus = null;
-    }
-    authLoading = false;
-  }
 
   async function loadTemplates() {
     try {
@@ -107,8 +49,9 @@
 
   function applyTemplate(t: AgentTemplateRow) {
     if (t.provider) selectedProvider = t.provider;
-    // The provider $effect resets modelInput, so defer model + other fields
-    // until after the current microtask so they stick.
+    // The provider $effect inside ModelSelector resets `modelInput`, so
+    // defer the model assignment (and the rest) to the next microtask so
+    // the template's model survives.
     queueMicrotask(() => {
       if (t.model) modelInput = t.model;
       if (t.thinkingLevel) thinkingLevel = t.thinkingLevel;
@@ -127,7 +70,7 @@
       id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       name,
       provider: selectedProvider,
-      model: (fixedModelId || modelInput.trim()) || null,
+      model: modelInput.trim() || null,
       thinkingLevel,
       cwd: cwd || null,
       shadowName: name,
@@ -159,33 +102,6 @@
     }
   }
 
-  // Fetch models when provider changes
-  $effect(() => {
-    const provider = selectedProvider;
-    // Reset UI state first so no stale list/highlight bleeds in from the
-    // previous provider before the new fetch resolves.
-    allModels = [];
-    modelsError = null;
-    modelInput = fixedModelId || "";
-    showDropdown = false;
-    highlightedIndex = -1;
-    fetchModels(provider);
-    fetchAuthStatus(provider);
-  });
-
-  // The LM Studio ModelInfo currently matching the typed id, if any. Drives
-  // the read-only context display and the value sent on spawn.
-  let selectedLmStudioModel = $derived.by(() => {
-    if (selectedProvider !== "lmstudio") return undefined;
-    const id = modelInput.trim();
-    if (!id) return undefined;
-    return allModels.find((m) => m.id === id);
-  });
-
-  function refreshModels() {
-    fetchModels(selectedProvider);
-  }
-
   // Detect project when cwd changes
   $effect(() => {
     if (cwd.trim()) {
@@ -195,73 +111,17 @@
     }
   });
 
-  function selectModel(model: ModelInfo) {
-    modelInput = model.id;
-    showDropdown = false;
-    highlightedIndex = -1;
-  }
-
-  function handleModelKeydown(e: KeyboardEvent) {
-    if (fixedModelId) {
-      return;
-    }
-
-    const models = filteredModels();
-    if (!showDropdown || models.length === 0) {
-      if (e.key === "ArrowDown" && allModels.length > 0) {
-        showDropdown = true;
-        highlightedIndex = 0;
-        e.preventDefault();
-      }
-      return;
-    }
-
-    switch (e.key) {
-      case "ArrowDown":
-        e.preventDefault();
-        highlightedIndex = Math.min(highlightedIndex + 1, models.length - 1);
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        highlightedIndex = Math.max(highlightedIndex - 1, 0);
-        break;
-      case "Enter":
-        if (highlightedIndex >= 0 && highlightedIndex < models.length) {
-          e.preventDefault();
-          e.stopPropagation();
-          selectModel(models[highlightedIndex]);
-        }
-        break;
-      case "Escape":
-        showDropdown = false;
-        highlightedIndex = -1;
-        break;
-    }
-  }
-
   async function handleSpawn() {
     if (saveAsTemplate && shadowName.trim()) {
       await persistCurrentAsTemplate();
     }
 
-    const trimmed = modelInput.trim();
-    const provider = selectedProvider;
-    const model = fixedModelId || trimmed || undefined;
-
-    // LM Studio: take the auto-detected value straight from the discovered
-    // model entry. No user override path — if discovery didn't populate a
-    // value (older LM Studio, model not in list), send nothing and let the
-    // sidecar apply its default context window.
-    const detectedCtx = selectedLmStudioModel?.contextWindow;
     const config: AgentConfig = {
-      provider,
-      model,
+      provider: selectedProvider,
+      model: modelInput.trim() || undefined,
       thinkingLevel: thinkingLevel !== "off" ? thinkingLevel : undefined,
       cwd: cwd || undefined,
-      contextWindow:
-        provider === "lmstudio" && typeof detectedCtx === "number" && detectedCtx > 0
-          ? Math.floor(detectedCtx)
-          : undefined,
+      contextWindow,
     };
 
     // Attach shadow identity if a name is provided
@@ -290,7 +150,9 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape" && !showDropdown) oncancel();
+    // ModelSelector stops Escape propagation when its dropdown is open,
+    // so here Escape is unconditionally a "close dialog" request.
+    if (e.key === "Escape") oncancel();
     if (matchBinding(e, "dialog.confirm-spawn")) handleSpawn();
   }
 </script>
@@ -334,138 +196,12 @@
       </div>
     {/if}
 
-    <div class="section">
-      <span class="label">Provider</span>
-      <div class="preset-grid">
-        {#each PROVIDERS as p}
-          <button
-            class="preset-btn"
-            class:active={selectedProvider === p.value}
-            onclick={() => (selectedProvider = p.value)}
-          >
-            {p.label}
-          </button>
-        {/each}
-      </div>
-    </div>
-
-    {#if authLoading || authStatus}
-      <div
-        class="auth-status"
-        class:ok={!!authStatus?.checked && !!authStatus?.configured}
-        class:warn={!!authStatus?.checked && !authStatus?.configured}
-        class:neutral={!authStatus?.checked}
-      >
-        <span class="auth-status-label">
-          {#if authLoading}
-            Checking auth...
-          {:else if authStatus?.checked && authStatus?.configured}
-            Auth ready
-          {:else if authStatus?.checked}
-            Auth missing
-          {:else}
-            Auth not checked
-          {/if}
-        </span>
-        {#if !authLoading && authStatus}
-          <span class="auth-status-text">{authStatus.message}</span>
-        {/if}
-      </div>
-    {/if}
-
-    <div class="field model-field">
-      <label class="label" for="model-input">Model</label>
-      <div class="model-input-wrap">
-        <input
-          id="model-input"
-          type="text"
-          bind:this={modelInputEl}
-          bind:value={modelInput}
-          placeholder={fixedModelId
-            ? "Uses your Pi Codex login"
-            : modelsLoading
-              ? "Loading models..."
-              : modelsError
-                ? "Provider unreachable — see hint below"
-                : allModels.length === 0
-                  ? "No models available"
-                  : "Search models..."}
-          readonly={!!fixedModelId}
-          onfocus={() => { if (!fixedModelId) showDropdown = true; }}
-          onblur={() => setTimeout(() => (showDropdown = false), 200)}
-          onkeydown={handleModelKeydown}
-          oninput={() => { if (!fixedModelId) { showDropdown = true; highlightedIndex = 0; } }}
-          autocomplete="off"
-        />
-        {#if modelsLoading}
-          <span class="loading-indicator"></span>
-        {:else if !fixedModelId && REFRESHABLE_PROVIDERS.has(selectedProvider)}
-          <button
-            class="refresh-btn"
-            onmousedown={(e: MouseEvent) => { e.preventDefault(); refreshModels(); }}
-            title="Refresh model list"
-            type="button"
-          >
-            ↻
-          </button>
-        {/if}
-        {#if !fixedModelId && showDropdown && filteredModels().length > 0}
-          <div class="model-dropdown">
-            {#each filteredModels() as model, i (model.id)}
-              <button
-                class="model-option"
-                class:highlighted={i === highlightedIndex}
-                class:selected={modelInput === model.id}
-                onmousedown={(e: MouseEvent) => { e.preventDefault(); selectModel(model); }}
-                onmouseenter={() => (highlightedIndex = i)}
-              >
-                <span class="model-id">{model.id}</span>
-                <span class="model-name">{model.name}</span>
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </div>
-      {#if fixedModelId}
-        <div class="field-hint">
-          Uses Pi's existing `openai-codex` auth and locks this provider to GPT-5.4.
-        </div>
-      {/if}
-      {#if !fixedModelId && modelsError}
-        <div class="model-error">
-          <span class="model-error-label">Can't reach provider</span>
-          <span class="model-error-text">{modelsError}</span>
-          <button class="model-error-retry" onclick={refreshModels} type="button">
-            Retry
-          </button>
-        </div>
-      {:else if !fixedModelId && !modelsLoading && allModels.length === 0}
-        <div class="field-hint">
-          No models found for this provider.
-        </div>
-      {/if}
-      {#if selectedProvider === "lmstudio"}
-        <div class="lmstudio-context">
-          <span class="label">
-            Context window
-            {#if selectedLmStudioModel?.contextWindow}
-              <span class="lmstudio-ctx-value">
-                {formatCtxTokens(selectedLmStudioModel.contextWindow)}
-              </span>
-            {/if}
-          </span>
-          <div class="field-hint">
-            {#if selectedLmStudioModel?.contextWindow}
-              Auto-detected from LM Studio.
-            {:else if modelInput.trim()}
-              No context length reported for this model. Sidecar default will be used.
-            {:else}
-              Pick a loaded model above to see its context window.
-            {/if}
-          </div>
-        </div>
-      {/if}
-    </div>
+    <ModelSelector
+      bind:provider={selectedProvider}
+      bind:model={modelInput}
+      bind:thinkingLevel
+      bind:contextWindow
+    />
 
     {#if agentStore.projects.length > 0}
       <div class="section">
@@ -484,28 +220,18 @@
       </div>
     {/if}
 
-    <div class="row">
-      <div class="field">
-        <label class="label" for="thinking">Thinking</label>
-        <select id="thinking" bind:value={thinkingLevel}>
-          {#each THINKING_LEVELS as level}
-            <option value={level}>{level}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="field flex-grow">
-        <label class="label" for="cwd">Working Directory</label>
-        <div class="cwd-row">
-          <input
-            id="cwd"
-            type="text"
-            bind:value={cwd}
-            placeholder="/home/miha/project"
-          />
-          <button class="browse-btn" onclick={browseFolder} title="Browse">
-            ...
-          </button>
-        </div>
+    <div class="field">
+      <label class="label" for="cwd">Working Directory</label>
+      <div class="cwd-row">
+        <input
+          id="cwd"
+          type="text"
+          bind:value={cwd}
+          placeholder="/home/miha/project"
+        />
+        <button class="browse-btn" onclick={browseFolder} title="Browse">
+          ...
+        </button>
       </div>
     </div>
 
@@ -704,55 +430,6 @@
     color: var(--text-muted);
   }
 
-  .lmstudio-context {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-top: 10px;
-  }
-
-  .lmstudio-context > .label {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    justify-content: space-between;
-    text-transform: uppercase;
-  }
-
-  .lmstudio-ctx-value {
-    color: var(--accent);
-    font-size: 12px;
-    text-transform: none;
-    letter-spacing: 0;
-  }
-
-  .preset-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 6px;
-  }
-
-  .preset-btn {
-    padding: 6px 8px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    background: var(--bg-panel-2);
-    color: var(--text-secondary);
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-
-  .preset-btn:hover {
-    background: var(--bg-panel-3);
-  }
-
-  .preset-btn.active {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
   .project-chips {
     display: flex;
     gap: 8px;
@@ -829,194 +506,6 @@
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
-  .field-hint {
-    margin-top: 6px;
-    font-size: 11px;
-    color: var(--text-muted);
-    line-height: 1.5;
-  }
-
-  .auth-status {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border-subtle);
-    background: var(--bg-panel-2);
-  }
-
-  .auth-status.ok {
-    border-color: var(--auth-ok-border);
-    background: var(--auth-ok-bg);
-  }
-
-  .auth-status.warn {
-    border-color: var(--auth-warn-border);
-    background: var(--auth-warn-bg);
-  }
-
-  .auth-status.neutral {
-    border-color: var(--border-subtle);
-  }
-
-  .auth-status-label {
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-primary);
-  }
-
-  .auth-status-text {
-    font-size: 12px;
-    line-height: 1.45;
-    color: var(--text-secondary);
-  }
-
-  .model-field {
-    position: relative;
-  }
-
-  .model-input-wrap {
-    position: relative;
-  }
-
-  .loading-indicator {
-    position: absolute;
-    right: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 12px;
-    height: 12px;
-    border: 2px solid var(--border-subtle);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: translateY(-50%) rotate(360deg); }
-  }
-
-  .refresh-btn {
-    position: absolute;
-    right: 6px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 22px;
-    height: 22px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    background: var(--bg-panel-2);
-    color: var(--text-secondary);
-    font-size: 13px;
-    line-height: 1;
-    cursor: pointer;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .refresh-btn:hover {
-    background: var(--bg-panel-3);
-    color: var(--accent);
-  }
-
-  .model-error {
-    margin-top: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--model-error-border);
-    background: var(--model-error-bg);
-  }
-
-  .model-error-label {
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--model-error-text);
-  }
-
-  .model-error-text {
-    font-size: 11px;
-    line-height: 1.45;
-    color: var(--text-secondary);
-    overflow-wrap: anywhere;
-  }
-
-  .model-error-retry {
-    align-self: flex-start;
-    margin-top: 4px;
-    padding: 4px 10px;
-    border: 1px solid var(--model-error-retry-border);
-    border-radius: 4px;
-    background: transparent;
-    color: var(--model-error-text);
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    cursor: pointer;
-  }
-
-  .model-error-retry:hover {
-    background: var(--error-bg-subtle);
-  }
-
-  .model-dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    z-index: 200;
-    max-height: 240px;
-    overflow-y: auto;
-    background: var(--bg-panel-2);
-    border: 1px solid var(--border-subtle);
-    border-top: none;
-    border-radius: 0 0 6px 6px;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .model-option {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    padding: 6px 10px;
-    border: none;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    cursor: pointer;
-    text-align: left;
-    transition: background 0.1s;
-  }
-
-  .model-option:hover,
-  .model-option.highlighted {
-    background: var(--bg-panel-3);
-  }
-
-  .model-option.selected {
-    border-left: 2px solid var(--accent);
-  }
-
-  .model-id {
-    color: var(--text-primary);
-    font-size: 12px;
-  }
-
-  .model-name {
-    color: var(--text-muted);
-    font-size: 10px;
-  }
-
   .cwd-row {
     display: flex;
     gap: 6px;
@@ -1055,10 +544,6 @@
     gap: 4px;
     flex: 1;
     min-width: 0;
-  }
-
-  .flex-grow {
-    flex: 2;
   }
 
   input,
@@ -1147,10 +632,6 @@
       padding: 20px;
       max-width: calc(100vw - 32px);
       max-height: calc(100vh - 32px);
-    }
-
-    .preset-grid {
-      grid-template-columns: 1fr;
     }
 
     .actions {
