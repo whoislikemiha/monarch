@@ -128,6 +128,36 @@
     usedRatio >= 0.9 ? "critical" : usedRatio >= 0.7 ? "warning" : "healthy"
   );
 
+  // Rolling sparkline of context occupancy over the last N samples.
+  // Only push when the value actually changes so we don't stack duplicates
+  // on every snapshot bump.
+  const SPARK_SAMPLES = 24;
+  const SPARK_W = 160;
+  const SPARK_H = 22;
+  let ctxHistory = $state<number[]>([]);
+  let lastPushedCtx = $state<number | null>(null);
+
+  $effect(() => {
+    const v = liveContextTokens;
+    if (v === lastPushedCtx) return;
+    lastPushedCtx = v;
+    ctxHistory = [...ctxHistory, v].slice(-SPARK_SAMPLES);
+  });
+
+  let sparkPath = $derived.by(() => {
+    if (ctxHistory.length < 2) return "";
+    const max = Math.max(resolvedContextWindow, ...ctxHistory, 1);
+    const stepX = SPARK_W / (SPARK_SAMPLES - 1);
+    const startIdx = SPARK_SAMPLES - ctxHistory.length;
+    return ctxHistory
+      .map((v, i) => {
+        const x = (startIdx + i) * stepX;
+        const y = SPARK_H - (v / max) * SPARK_H;
+        return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+      })
+      .join(" ");
+  });
+
   function shortenPath(path: string): string {
     return path.replace(/^\/home\/[^/]+/, "~");
   }
@@ -160,6 +190,11 @@
       <div class="context-track">
         <div class="context-fill" style:width={`${contextFill}%`}></div>
       </div>
+      {#if sparkPath}
+        <svg class="context-spark" viewBox="0 0 {SPARK_W} {SPARK_H}" preserveAspectRatio="none" aria-hidden="true">
+          <path d={sparkPath} fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" />
+        </svg>
+      {/if}
       <div class="context-row context-row-sub">
         <span class="context-tokens">{formatTokens(liveContextTokens)}/{formatTokens(resolvedContextWindow)}</span>
         <span class="context-free">{freePct}% free</span>
@@ -472,6 +507,21 @@
 
   .context-meter.critical .context-fill {
     background: var(--error);
+  }
+
+  .context-spark {
+    width: 100%;
+    height: 22px;
+    color: color-mix(in srgb, var(--success) 70%, transparent);
+    opacity: 0.85;
+  }
+
+  .context-meter.warning .context-spark {
+    color: color-mix(in srgb, var(--warning) 75%, transparent);
+  }
+
+  .context-meter.critical .context-spark {
+    color: color-mix(in srgb, var(--error) 80%, transparent);
   }
 
   .billing-tag {
