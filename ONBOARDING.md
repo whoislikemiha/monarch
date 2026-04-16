@@ -379,6 +379,7 @@ App.svelte                       — root: agents[], activeId, session restore, 
 │   │   ├── ToolGroup.svelte         — groups of tool executions
 │   │   └── ToolCallCard.svelte      — individual tool call + result
 │   ├── ChatInput.svelte         — textarea, auto-resize, Enter to send
+│   ├── MentionAutocomplete.svelte — @-mention file/folder dropdown (sibling to a textarea)
 │   ├── PromptEditor.svelte      — modal to edit system prompt override
 │   └── ExtensionDialog.svelte   — handles Pi extension UI requests
 ├── toolbox/ToolPanelStack.svelte — vertically stacked tool panels (resizable)
@@ -567,6 +568,7 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `agent.rs` | Sidecar lifecycle, `spawn_agent`, `send_command`, event handler, crash recovery. |
 | `db.rs` | SQLite schema, CRUD, ancestry walk. |
 | `models.rs` | Provider discovery, model listing, auth status. |
+| `mention.rs` | `list_paths` command — walks cwd for the @-mention file/folder autocomplete (ignore-crate + nucleo-matcher). |
 | `persistence.rs` | Prompt file I/O under `~/.config/monarch/prompts/`. |
 | `toolbox/mod.rs` | Toolbox `ToolDescriptor` list, `toolbox_list_tools` command. |
 | `toolbox/placeholder.rs` | Placeholder tool's `toolbox_placeholder_ping` command. |
@@ -604,6 +606,7 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `lib/ToolGroup.svelte` | Groups of tool calls. |
 | `lib/ToolCallCard.svelte` | Single tool call + result. |
 | `lib/ChatInput.svelte` | Message composer. |
+| `lib/MentionAutocomplete.svelte` | `@`-triggered file/folder suggestion dropdown attached to a textarea (MON-76). |
 | `lib/PromptEditor.svelte` | System prompt override dialog. |
 | `lib/ExtensionDialog.svelte` | Handles Pi extension UI requests. |
 | `lib/api.ts` | Unified `invoke` / `listen` wrapper — Tauri or WebSocket. |
