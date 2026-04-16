@@ -452,17 +452,30 @@ impl AgentManager {
             return Ok(());
         }
 
+        // MON-75: user messages can carry attachments (image bytes on
+        // disk). Before replaying history into the sidecar we need to
+        // splice those bytes back into the content array as image blocks
+        // so the LLM sees the same multimodal context it did originally.
+        let mut load_messages: Vec<LoadSessionMessage> = Vec::with_capacity(messages.len());
+        for m in &messages {
+            if m.role != "user" && m.role != "assistant" && m.role != "toolResult" {
+                continue;
+            }
+            let content = if m.role == "user" && !m.attachments.is_empty() {
+                rehydrate_user_content(&m.content, &m.attachments).await
+            } else {
+                m.content.clone()
+            };
+            load_messages.push(LoadSessionMessage {
+                role: m.role.clone(),
+                content,
+                model: m.model.clone(),
+            });
+        }
+
         let cmd = SidecarCommand::LoadSession {
             agent_id,
-            messages: messages
-                .iter()
-                .filter(|m| m.role == "user" || m.role == "assistant" || m.role == "toolResult")
-                .map(|m| LoadSessionMessage {
-                    role: m.role.clone(),
-                    content: m.content.clone(),
-                    model: m.model.clone(),
-                })
-                .collect(),
+            messages: load_messages,
         };
 
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
@@ -611,6 +624,58 @@ impl AgentManager {
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
             .await
     }
+}
+
+/// MON-75: reassemble a user message's content JSON with its persisted
+/// image attachments spliced back in as `{type:"image"}` blocks, so the
+/// sidecar (and the LLM behind it) see the same multimodal payload they
+/// saw when the message was first sent. The `content` argument is the
+/// raw JSON string stored in `messages.content` — after MON-75 persist,
+/// this is always text-only (image blocks were stripped and written to
+/// disk). If a block fails to read from disk we drop it silently and
+/// keep going, rather than aborting the whole replay over one missing
+/// file; a gap is better than a broken restore.
+async fn rehydrate_user_content(
+    content: &str,
+    attachments: &[crate::db::MessageAttachmentRow],
+) -> String {
+    // Parse the stored content as JSON. Strings and arrays are both
+    // valid shapes depending on how the turn was captured; treat
+    // anything else defensively as empty text.
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap_or_else(|_| {
+        serde_json::Value::Array(Vec::new())
+    });
+    let mut blocks: Vec<serde_json::Value> = match parsed {
+        serde_json::Value::Array(arr) => arr,
+        serde_json::Value::String(s) => {
+            if s.is_empty() {
+                Vec::new()
+            } else {
+                vec![serde_json::json!({ "type": "text", "text": s })]
+            }
+        }
+        other => vec![other],
+    };
+
+    for att in attachments {
+        let bytes_b64 = match crate::persistence::read_attachment_bytes_base64(&att.path).await {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "[monarch] skipping attachment {} during replay: {}",
+                    att.path, e
+                );
+                continue;
+            }
+        };
+        blocks.push(serde_json::json!({
+            "type": "image",
+            "data": bytes_b64,
+            "mimeType": att.mime_type,
+        }));
+    }
+
+    serde_json::to_string(&serde_json::Value::Array(blocks)).unwrap_or_else(|_| String::new())
 }
 
 #[cfg(test)]
