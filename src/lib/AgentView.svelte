@@ -877,7 +877,7 @@
 
   .portrait-anchor {
     position: absolute;
-    top: 12px;
+    bottom: 12px;
     right: 12px;
     z-index: 5;
     pointer-events: none;
