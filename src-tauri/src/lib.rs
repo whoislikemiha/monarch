@@ -2,6 +2,7 @@ mod agent;
 mod agent_state;
 mod db;
 mod error;
+mod mention;
 mod models;
 mod persistence;
 mod project;
@@ -93,6 +94,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         // Project detection
         project::commands::detect_project,
         project::commands::read_project_instructions,
+        // Mention autocomplete (MON-76)
+        mention::list_paths,
         // UI state
         db::db_get_ui_state,
         db::db_set_ui_state,
@@ -232,6 +235,7 @@ pub fn run() {
             db::db_delete_project,
             project::commands::detect_project,
             project::commands::read_project_instructions,
+            mention::list_paths,
             db::db_get_ui_state,
             db::db_set_ui_state,
             db::db_get_agent_stats,

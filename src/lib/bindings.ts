@@ -141,6 +141,12 @@ export const commands = {
 	dbDeleteProject: (projectId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_delete_project", { projectId })),
 	detectProject: (cwd: string) => typedError<"Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: ("Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Vec<Value> }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never })[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: Map<string, Value> }) & { Array?: never; Bool?: never; Number?: never; String?: never } } }) & { Array?: never; Bool?: never; Number?: never; String?: never } | null, ErrorDto>(__TAURI_INVOKE("detect_project", { cwd })),
 	readProjectInstructions: (cwd: string) => typedError<string | null, ErrorDto>(__TAURI_INVOKE("read_project_instructions", { cwd })),
+	/**
+	 *  Tauri command wrapper. Walking is synchronous under the hood but the entry
+	 *  count is bounded by `MAX_WALKED`, so running it on a blocking thread via
+	 *  `spawn_blocking` keeps the async runtime unclogged on huge trees.
+	 */
+	listPaths: (cwd: string, query: string) => typedError<PathSuggestion[], ErrorDto>(__TAURI_INVOKE("list_paths", { cwd, query })),
 	dbGetUiState: (key: string) => typedError<string | null, ErrorDto>(__TAURI_INVOKE("db_get_ui_state", { key })),
 	dbSetUiState: (key: string, value: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_set_ui_state", { key, value })),
 	dbGetAgentStats: (agentId: string) => typedError<AgentStats, ErrorDto>(__TAURI_INVOKE("db_get_agent_stats", { agentId })),
@@ -369,6 +375,16 @@ export type ModelInfo = {
 };
 
 export type NotificationLevel = "info" | "warning" | "error";
+
+export type PathSuggestion = {
+	/**
+	 *  Path relative to the original `cwd`, always using forward slashes so
+	 *  the inserted token looks the same on every platform.
+	 */
+	path: string,
+	// True if the entry is a directory, false if it's a file.
+	isDir: boolean,
+};
 
 export type ProjectRow = {
 	id: string,
