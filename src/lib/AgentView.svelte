@@ -871,21 +871,23 @@
   .messages-scroll {
     flex: 1;
     overflow-y: auto;
-    padding: 16px 20px 16px 176px;
+    padding: 16px 20px;
     scroll-behavior: smooth;
   }
 
   .portrait-anchor {
     position: absolute;
-    left: 12px;
-    bottom: 12px;
+    top: 12px;
+    right: 12px;
     z-index: 5;
+    pointer-events: none;
+  }
+
+  .portrait-anchor > :global(.portrait) {
+    pointer-events: auto;
   }
 
   @media (max-width: 720px) {
-    .messages-scroll {
-      padding-left: 20px;
-    }
     .portrait-anchor {
       display: none;
     }
