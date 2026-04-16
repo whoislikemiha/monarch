@@ -153,7 +153,7 @@
         shadowGrade: sName ? shadowGrade : undefined,
         provider: selectedProvider || undefined,
         model: (fixedModelId || modelInput.trim()) || undefined,
-        thinkingLevel: thinkingLevel !== "off" ? thinkingLevel : undefined,
+        thinkingLevel,
         cwd: cwd.trim() || undefined,
         avatarType,
         avatarPath,

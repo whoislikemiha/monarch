@@ -147,6 +147,8 @@ export const commands = {
 	toolboxListTools: () => __TAURI_INVOKE<ToolDescriptor[]>("toolbox_list_tools"),
 	toolboxPlaceholderPing: () => typedError<string, ErrorDto>(__TAURI_INVOKE("toolbox_placeholder_ping")),
 	setZoom: (level: number) => typedError<number, ErrorDto>(__TAURI_INVOKE("set_zoom", { level })),
+	getThinkingDefault: (provider: string, model: string) => typedError<string, ErrorDto>(__TAURI_INVOKE("get_thinking_default", { provider, model })),
+	getThinkingConfigPath: () => typedError<string, ErrorDto>(__TAURI_INVOKE("get_thinking_config_path")),
 };
 
 /* Types */

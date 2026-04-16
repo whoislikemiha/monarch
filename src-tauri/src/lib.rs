@@ -6,6 +6,7 @@ mod models;
 mod persistence;
 mod project;
 mod sidecar_protocol;
+mod thinking_config;
 mod toolbox;
 mod util;
 mod ws;
@@ -102,6 +103,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         toolbox::placeholder::toolbox_placeholder_ping,
         // Zoom
         zoom::set_zoom,
+        // Thinking defaults (MON-78)
+        thinking_config::get_thinking_default,
+        thinking_config::get_thinking_config_path,
     ])
 }
 
