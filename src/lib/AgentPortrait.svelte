@@ -121,6 +121,7 @@
   const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
   let showThinkingPicker = $state(false);
   let showCommandMenu = $state(false);
+  let isMinified = $state(false);
 
   function runCommand(fn?: () => void) {
     showCommandMenu = false;
@@ -273,22 +274,34 @@
   class="portrait"
   class:streaming={isStreaming}
   class:dragging={isDragging}
+  class:minified={isMinified}
   data-corner={corner}
   bind:this={portraitEl}
 >
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="drag-handle"
-    title="Drag to reposition"
-    onpointerdown={handleHandleDown}
-    onpointermove={handleHandleMove}
-    onpointerup={handleHandleUp}
-    onpointercancel={handleHandleUp}
-  >
-    <span class="drag-dots">&bull; &bull; &bull;</span>
+  <div class="top-strip">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="drag-handle"
+      title="Drag to reposition"
+      onpointerdown={handleHandleDown}
+      onpointermove={handleHandleMove}
+      onpointerup={handleHandleUp}
+      onpointercancel={handleHandleUp}
+    >
+      <span class="drag-dots">&bull; &bull; &bull;</span>
+    </div>
+    <button
+      class="minify-btn"
+      onclick={(e: MouseEvent) => { e.stopPropagation(); isMinified = !isMinified; showCommandMenu = false; showThinkingPicker = false; }}
+      title={isMinified ? "Expand portrait" : "Minify portrait"}
+      aria-label={isMinified ? "Expand" : "Minify"}
+      aria-pressed={isMinified}
+    >
+      {isMinified ? "▢" : "–"}
+    </button>
   </div>
 
-  {#if hasContextMeter}
+  {#if !isMinified && hasContextMeter}
     <div
       class="context-meter"
       class:warning={contextState === "warning"}
@@ -325,14 +338,27 @@
     >
       <ShadowAvatar
         agentId={agent.id}
-        size={180}
+        size={isMinified ? 84 : 180}
         avatarType={agent.avatarType}
         avatarPath={agent.avatarPath}
       />
     </button>
+
+    {#if isMinified && hasContextMeter}
+      <div
+        class="mini-ctx"
+        class:warning={contextState === "warning"}
+        class:critical={contextState === "critical"}
+        title={`Context: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens (${usedPct}% used, ${freePct}% free)`}
+      >
+        <div class="mini-ctx-fill" style:width={`${usedPct}%`}></div>
+        <span class="mini-ctx-number">{usedPct}%</span>
+      </div>
+    {/if}
+
     <div class="avatar-caption">
       <span class="caption-name">{agent.shadow?.shadowName || agent.name}</span>
-      {#if agent.shadow?.shadowTitle}
+      {#if agent.shadow?.shadowTitle && !isMinified}
         <span class="caption-title">{agent.shadow.shadowTitle}</span>
       {/if}
     </div>
@@ -376,6 +402,7 @@
     {/if}
   </div>
 
+  {#if !isMinified}
   <div class="stack">
     {#if model}
       <span class="model" title={model}>{model}</span>
@@ -419,6 +446,7 @@
     {/if}
 
   </div>
+  {/if}
 </div>
 
 <style>
@@ -451,9 +479,17 @@
     animation: none;
   }
 
-  .drag-handle {
-    height: 8px;
+  .top-strip {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 12px;
     margin: -4px -4px 0;
+  }
+
+  .drag-handle {
+    flex: 1;
+    height: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -477,6 +513,92 @@
     font-size: 9px;
     line-height: 1;
     letter-spacing: 1px;
+  }
+
+  .minify-btn {
+    width: 14px;
+    height: 100%;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 3px;
+    opacity: 0.55;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.12s, background 0.12s, color 0.12s;
+  }
+
+  .minify-btn:hover {
+    opacity: 1;
+    color: var(--accent);
+    background: var(--bg-panel-2);
+  }
+
+  /* --- Minified portrait --- */
+  .portrait.minified {
+    width: auto;
+    padding: 6px;
+    gap: 4px;
+  }
+
+  .portrait.minified .avatar-frame {
+    width: 84px;
+    height: 84px;
+  }
+
+  .mini-ctx {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 16px;
+    background: var(--context-track-bg, #000);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    overflow: hidden;
+    pointer-events: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+
+  .mini-ctx-fill {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--accent);
+    transition: width 0.25s ease, background 0.2s ease;
+  }
+
+  .mini-ctx.warning .mini-ctx-fill {
+    background: var(--warning);
+  }
+
+  .mini-ctx.critical .mini-ctx-fill {
+    background: var(--error);
+  }
+
+  .mini-ctx-number {
+    position: relative;
+    z-index: 1;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  }
+
+  .portrait.minified .avatar-caption {
+    padding: 10px 6px 4px;
+  }
+
+  .portrait.minified .caption-name {
+    font-size: 10px;
   }
 
   .portrait.streaming {
