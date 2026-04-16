@@ -406,21 +406,30 @@
   input[type="text"],
   select {
     width: 100%;
-    padding: 7px 10px;
-    background: var(--bg-input);
+    padding: 8px 10px;
+    background: var(--bg-panel-2);
     border: 1px solid var(--border-subtle);
     border-radius: 6px;
     color: var(--text-primary);
-    font-size: 13px;
+    font-size: 12px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     box-sizing: border-box;
-    transition: border-color 0.15s;
+    outline: none;
+  }
+
+  input[type="text"]::placeholder {
+    color: var(--text-muted);
+    opacity: 0.6;
   }
 
   input[type="text"]:focus,
   select:focus {
     border-color: var(--accent);
-    outline: none;
+  }
+
+  select {
+    cursor: pointer;
+    appearance: none;
   }
 
   .preset-grid {
@@ -463,6 +472,7 @@
   .model-input-wrap input {
     flex: 1;
     padding-right: 32px;
+    width: auto;
   }
 
   .loading-indicator {
