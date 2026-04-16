@@ -480,16 +480,15 @@
       </svg>
     {/if}
 
-    {#if tokPerSec != null}
-      <span
-        class="rate-tag"
-        class:streaming-rate={isStreaming}
-        title={isStreaming ? "Live output rate" : "Last turn's output rate"}
-      >
-        <span class="rate-label">rate</span>
-        <span>{formatRate(tokPerSec)}</span>
-      </span>
-    {/if}
+    <span
+      class="rate-tag"
+      class:streaming-rate={isStreaming}
+      class:idle-rate={tokPerSec == null}
+      title={tokPerSec == null ? "No output recorded yet" : isStreaming ? "Live output rate" : "Last turn's output rate"}
+    >
+      <span class="rate-label">rate</span>
+      <span>{tokPerSec != null ? formatRate(tokPerSec) : "— tok/s"}</span>
+    </span>
 
     {#if hasContextMeter && (displayCost || (sessionStats && sessionStats.totalTokens > 0))}
       <span
@@ -1006,6 +1005,11 @@
 
   .rate-tag.streaming-rate {
     color: var(--accent);
+  }
+
+  .rate-tag.idle-rate {
+    color: var(--text-muted);
+    opacity: 0.75;
   }
 
   .rate-label {
