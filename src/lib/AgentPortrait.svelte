@@ -356,6 +356,24 @@
     </button>
   </div>
 
+  {#if hasContextMeter}
+    <div
+      class="ctx-bar"
+      class:warning={contextState === "warning"}
+      class:critical={contextState === "critical"}
+      title={`Context: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens (${usedPct}% used, ${freePct}% free)`}
+    >
+      <div class="ctx-fill" style:width={`${usedPct}%`}></div>
+      {#if isStreaming}
+        <div class="ctx-shimmer" style:width={`${usedPct}%`} aria-hidden="true"></div>
+      {/if}
+      {#if tokPerSec != null}
+        <span class="ctx-rate">{formatRate(tokPerSec)}</span>
+      {/if}
+      <span class="ctx-number">{formatTokens(liveContextTokens)}/{formatTokens(resolvedContextWindow)}</span>
+    </div>
+  {/if}
+
   <div class="avatar-frame" title={avatarTooltip}>
     <button
       class="avatar-btn"
@@ -372,24 +390,6 @@
         avatarPath={agent.avatarPath}
       />
     </button>
-
-    {#if hasContextMeter}
-      <div
-        class="mini-ctx"
-        class:warning={contextState === "warning"}
-        class:critical={contextState === "critical"}
-        title={`Context: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens (${usedPct}% used, ${freePct}% free)`}
-      >
-        <div class="mini-ctx-fill" style:width={`${usedPct}%`}></div>
-        {#if isStreaming}
-          <div class="mini-ctx-shimmer" style:width={`${usedPct}%`} aria-hidden="true"></div>
-        {/if}
-        {#if tokPerSec != null}
-          <span class="mini-ctx-rate">{formatRate(tokPerSec)}</span>
-        {/if}
-        <span class="mini-ctx-number">{formatTokens(liveContextTokens)}/{formatTokens(resolvedContextWindow)}</span>
-      </div>
-    {/if}
 
     <div class="avatar-caption">
       <span class="caption-name">{agent.shadow?.shadowName || agent.name}</span>
@@ -609,11 +609,8 @@
     height: 128px;
   }
 
-  .mini-ctx {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
+  .ctx-bar {
+    position: relative;
     height: 16px;
     padding: 0 6px;
     background: var(--context-track-bg, #000);
@@ -626,11 +623,11 @@
     font-weight: 600;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     overflow: hidden;
-    pointer-events: none;
-    border-bottom: 1px solid color-mix(in srgb, var(--accent-blue) 45%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
+    border-radius: 0;
   }
 
-  .mini-ctx-rate {
+  .ctx-rate {
     position: relative;
     z-index: 1;
     font-size: 9px;
@@ -640,7 +637,7 @@
     white-space: nowrap;
   }
 
-  .mini-ctx-fill {
+  .ctx-fill {
     position: absolute;
     top: 0;
     right: 0;
@@ -650,7 +647,7 @@
     transition: width 0.3s cubic-bezier(0.22, 1, 0.36, 1), background 0.2s ease;
   }
 
-  .mini-ctx-shimmer {
+  .ctx-shimmer {
     position: absolute;
     top: 0;
     right: 0;
@@ -666,21 +663,21 @@
     pointer-events: none;
   }
 
-  .mini-ctx.warning .mini-ctx-fill {
+  .ctx-bar.warning .ctx-fill {
     background: var(--warning);
     box-shadow: 0 0 8px color-mix(in srgb, var(--warning) 55%, transparent);
   }
 
-  .mini-ctx.critical .mini-ctx-fill {
+  .ctx-bar.critical .ctx-fill {
     background: var(--error);
     box-shadow: 0 0 8px color-mix(in srgb, var(--error) 60%, transparent);
   }
 
-  .mini-ctx.critical {
+  .ctx-bar.critical {
     animation: ctx-critical-breath 2.2s ease-in-out infinite;
   }
 
-  .mini-ctx-number {
+  .ctx-number {
     position: relative;
     z-index: 1;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
@@ -937,10 +934,6 @@
   @keyframes ctx-critical-breath {
     0%, 100% { filter: drop-shadow(0 0 0 color-mix(in srgb, var(--error) 0%, transparent)); }
     50% { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--error) 45%, transparent)); }
-  }
-
-  .mini-ctx.critical {
-    animation: ctx-critical-breath 2.2s ease-in-out infinite;
   }
 
   .ctx-spark {
