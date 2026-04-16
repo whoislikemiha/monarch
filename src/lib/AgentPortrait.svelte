@@ -356,35 +356,6 @@
     </button>
   </div>
 
-  {#if !minified && hasContextMeter}
-    <div
-      class="context-meter"
-      class:warning={contextState === "warning"}
-      class:critical={contextState === "critical"}
-      title={`Context snapshot: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens in context, ${freeTokens.toLocaleString()} free (${freePct}% headroom)${isEstimatedOccupancy ? " — occupancy estimated from restored content" : ""}${isEstimatedContextWindow ? " — window is estimated" : ""}`}
-    >
-      <div class="context-row">
-        <span class="context-label">ctx</span>
-        <span class="context-value">{usedPct}%</span>
-      </div>
-      <div class="context-track">
-        <div class="context-fill" style:width={`${usedPct}%`}></div>
-        {#if isStreaming}
-          <div class="context-shimmer" style:width={`${usedPct}%`} aria-hidden="true"></div>
-        {/if}
-      </div>
-      {#if sparkPath}
-        <svg class="context-spark" viewBox="0 0 {SPARK_W} {SPARK_H}" preserveAspectRatio="none" aria-hidden="true">
-          <path d={sparkPath} fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" />
-        </svg>
-      {/if}
-      <div class="context-row context-row-sub">
-        <span class="context-tokens">{formatTokens(liveContextTokens)}/{formatTokens(resolvedContextWindow)}</span>
-        <span class="context-free">{freePct}% free</span>
-      </div>
-    </div>
-  {/if}
-
   <div class="avatar-frame" title={avatarTooltip}>
     <button
       class="avatar-btn"
@@ -402,7 +373,7 @@
       />
     </button>
 
-    {#if minified && hasContextMeter}
+    {#if hasContextMeter}
       <div
         class="mini-ctx"
         class:warning={contextState === "warning"}
@@ -495,6 +466,19 @@
         </div>
       {/if}
     </div>
+
+    {#if sparkPath}
+      <svg
+        class="ctx-spark"
+        class:warning={contextState === "warning"}
+        class:critical={contextState === "critical"}
+        viewBox="0 0 {SPARK_W} {SPARK_H}"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <path d={sparkPath} fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round" stroke-linecap="round" />
+      </svg>
+    {/if}
 
     {#if tokPerSec != null}
       <span
@@ -950,121 +934,33 @@
     color: var(--accent);
   }
 
-  .context-meter {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 0 2px;
-    background: transparent;
-    border: none;
-  }
-
   @keyframes ctx-critical-breath {
     0%, 100% { filter: drop-shadow(0 0 0 color-mix(in srgb, var(--error) 0%, transparent)); }
     50% { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--error) 45%, transparent)); }
   }
 
-  .context-meter.critical .context-track {
+  .mini-ctx.critical {
     animation: ctx-critical-breath 2.2s ease-in-out infinite;
   }
 
-  .context-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    font-size: 10px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    line-height: 1;
-  }
-
-  .context-row-sub {
-    font-size: 9px;
-  }
-
-  .context-label {
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-
-  .context-value {
-    color: var(--text-secondary);
-  }
-
-  .context-tokens {
-    color: var(--text-muted);
-  }
-
-  .context-free {
-    color: var(--text-muted);
-  }
-
-  .context-track {
-    position: relative;
+  .ctx-spark {
     width: 100%;
-    height: 8px;
-    overflow: hidden;
-    border-radius: 999px;
-    background: var(--context-track-bg);
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+    height: 18px;
+    color: color-mix(in srgb, var(--accent-blue) 75%, transparent);
+    opacity: 0.9;
   }
 
-  .context-fill {
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    border-radius: inherit;
-    background: var(--accent-blue);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--accent-blue) 55%, transparent);
-    transition: width 0.3s cubic-bezier(0.22, 1, 0.36, 1), background 0.2s ease;
+  .ctx-spark.warning {
+    color: color-mix(in srgb, var(--warning) 80%, transparent);
   }
 
-  .context-shimmer {
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    border-radius: inherit;
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      color-mix(in srgb, #fff 22%, transparent) 50%,
-      transparent 100%
-    );
-    mix-blend-mode: overlay;
-    animation: ctx-shimmer 1.6s linear infinite;
-    pointer-events: none;
+  .ctx-spark.critical {
+    color: color-mix(in srgb, var(--error) 85%, transparent);
   }
 
   @keyframes ctx-shimmer {
     0% { transform: translateX(-100%); }
     100% { transform: translateX(100%); }
-  }
-
-  .context-meter.warning .context-fill {
-    background: var(--warning);
-    box-shadow: 0 0 6px color-mix(in srgb, var(--warning) 50%, transparent);
-  }
-
-  .context-meter.critical .context-fill {
-    background: var(--error);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--error) 60%, transparent);
-  }
-
-  .context-spark {
-    width: 100%;
-    height: 22px;
-    color: color-mix(in srgb, var(--success) 70%, transparent);
-    opacity: 0.85;
-  }
-
-  .context-meter.warning .context-spark {
-    color: color-mix(in srgb, var(--warning) 75%, transparent);
-  }
-
-  .context-meter.critical .context-spark {
-    color: color-mix(in srgb, var(--error) 80%, transparent);
   }
 
   .billing-tag {
