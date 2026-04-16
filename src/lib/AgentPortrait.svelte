@@ -356,24 +356,6 @@
     </button>
   </div>
 
-  {#if hasContextMeter}
-    <div
-      class="ctx-bar"
-      class:warning={contextState === "warning"}
-      class:critical={contextState === "critical"}
-      title={`Context: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens (${usedPct}% used, ${freePct}% free)`}
-    >
-      <div class="ctx-fill" style:width={`${usedPct}%`}></div>
-      {#if isStreaming}
-        <div class="ctx-shimmer" style:width={`${usedPct}%`} aria-hidden="true"></div>
-      {/if}
-      {#if tokPerSec != null}
-        <span class="ctx-rate">{formatRate(tokPerSec)}</span>
-      {/if}
-      <span class="ctx-number">{formatTokens(liveContextTokens)}/{formatTokens(resolvedContextWindow)}</span>
-    </div>
-  {/if}
-
   <div class="avatar-frame" title={avatarTooltip}>
     <button
       class="avatar-btn"
@@ -390,6 +372,24 @@
         avatarPath={agent.avatarPath}
       />
     </button>
+
+    {#if hasContextMeter}
+      <div
+        class="ctx-bar"
+        class:warning={contextState === "warning"}
+        class:critical={contextState === "critical"}
+        title={`Context: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens (${usedPct}% used, ${freePct}% free)`}
+      >
+        <div class="ctx-fill" style:width={`${usedPct}%`}></div>
+        {#if isStreaming}
+          <div class="ctx-shimmer" style:width={`${usedPct}%`} aria-hidden="true"></div>
+        {/if}
+        {#if tokPerSec != null}
+          <span class="ctx-rate">{formatRate(tokPerSec)}</span>
+        {/if}
+        <span class="ctx-number">{formatTokens(liveContextTokens)}/{formatTokens(resolvedContextWindow)}</span>
+      </div>
+    {/if}
 
     <div class="avatar-caption">
       <span class="caption-name">{agent.shadow?.shadowName || agent.name}</span>
@@ -610,7 +610,10 @@
   }
 
   .ctx-bar {
-    position: relative;
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    right: 8px;
     height: 16px;
     padding: 0 6px;
     background: var(--context-track-bg, #000);
@@ -625,6 +628,8 @@
     overflow: hidden;
     border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
     border-radius: 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    pointer-events: none;
   }
 
   .ctx-rate {
