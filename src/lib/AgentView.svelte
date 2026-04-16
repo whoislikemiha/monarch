@@ -871,7 +871,7 @@
   .messages-scroll {
     flex: 1;
     overflow-y: auto;
-    padding: 16px 20px 280px 20px;
+    padding: 16px 20px 16px 176px;
     scroll-behavior: smooth;
   }
 
@@ -884,7 +884,7 @@
 
   @media (max-width: 720px) {
     .messages-scroll {
-      padding-bottom: 16px;
+      padding-left: 20px;
     }
     .portrait-anchor {
       display: none;
