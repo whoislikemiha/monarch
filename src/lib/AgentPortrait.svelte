@@ -146,6 +146,27 @@
 <svelte:window onclick={() => (showThinkingPicker = false)} />
 
 <div class="portrait" class:streaming={isStreaming}>
+  {#if hasContextMeter}
+    <div
+      class="context-meter"
+      class:warning={contextState === "warning"}
+      class:critical={contextState === "critical"}
+      title={`Context snapshot: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens in context, ${freeTokens.toLocaleString()} free (${freePct}% headroom)${isEstimatedOccupancy ? " — occupancy estimated from restored content" : ""}${isEstimatedContextWindow ? " — window is estimated" : ""}`}
+    >
+      <div class="context-row">
+        <span class="context-label">ctx</span>
+        <span class="context-value">{usedPct}%</span>
+      </div>
+      <div class="context-track">
+        <div class="context-fill" style:width={`${contextFill}%`}></div>
+      </div>
+      <div class="context-row context-row-sub">
+        <span class="context-tokens">{formatTokens(liveContextTokens)}/{formatTokens(resolvedContextWindow)}</span>
+        <span class="context-free">{freePct}% free</span>
+      </div>
+    </div>
+  {/if}
+
   <div class="avatar-frame" title={avatarTooltip}>
     <ShadowAvatar
       agentId={agent.id}
@@ -185,25 +206,6 @@
     </div>
 
     {#if hasContextMeter}
-      <div
-        class="context-meter"
-        class:warning={contextState === "warning"}
-        class:critical={contextState === "critical"}
-        title={`Context snapshot: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens in context, ${freeTokens.toLocaleString()} free (${freePct}% headroom)${isEstimatedOccupancy ? " — occupancy estimated from restored content" : ""}${isEstimatedContextWindow ? " — window is estimated" : ""}`}
-      >
-        <div class="context-row">
-          <span class="context-label">ctx</span>
-          <span class="context-value">{usedPct}%</span>
-        </div>
-        <div class="context-track">
-          <div class="context-fill" style:width={`${contextFill}%`}></div>
-        </div>
-        <div class="context-row context-row-sub">
-          <span class="context-tokens">{formatTokens(liveContextTokens)}/{formatTokens(resolvedContextWindow)}</span>
-          <span class="context-free">{freePct}% free</span>
-        </div>
-      </div>
-
       {#if sessionStats && sessionStats.totalTokens > 0}
         <span
           class="billing-tag"
