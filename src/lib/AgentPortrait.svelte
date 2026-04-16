@@ -632,7 +632,11 @@
     right: 0;
     height: 16px;
     padding: 0 6px;
-    background: var(--context-track-bg, #000);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--accent) 18%, var(--bg-panel)) 0%,
+      color-mix(in srgb, var(--accent) 34%, var(--bg-panel)) 100%
+    );
     color: #fff;
     display: flex;
     align-items: center;
@@ -643,7 +647,7 @@
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     overflow: hidden;
     pointer-events: none;
-    border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   }
 
   .mini-ctx-rate {
@@ -663,10 +667,13 @@
     bottom: 0;
     background: linear-gradient(
       90deg,
-      color-mix(in srgb, var(--accent) 70%, transparent) 0%,
-      var(--accent) 100%
+      color-mix(in srgb, var(--accent) 55%, var(--bg-panel)) 0%,
+      var(--accent) 60%,
+      color-mix(in srgb, var(--accent) 115%, #fff) 100%
     );
-    box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+    box-shadow:
+      0 0 10px color-mix(in srgb, var(--accent) 65%, transparent),
+      inset 0 1px 0 color-mix(in srgb, #fff 18%, transparent);
     transition: width 0.3s cubic-bezier(0.22, 1, 0.36, 1), background 0.2s ease;
   }
 
@@ -1028,8 +1035,12 @@
     height: 8px;
     overflow: hidden;
     border-radius: 999px;
-    background: var(--context-track-bg);
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--accent) 14%, var(--bg-panel)) 0%,
+      color-mix(in srgb, var(--accent) 28%, var(--bg-panel)) 100%
+    );
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.28);
   }
 
   .context-fill {
@@ -1040,10 +1051,13 @@
     border-radius: inherit;
     background: linear-gradient(
       90deg,
-      color-mix(in srgb, var(--accent) 70%, transparent) 0%,
-      var(--accent) 100%
+      color-mix(in srgb, var(--accent) 55%, var(--bg-panel)) 0%,
+      var(--accent) 60%,
+      color-mix(in srgb, var(--accent) 115%, #fff) 100%
     );
-    box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 45%, transparent);
+    box-shadow:
+      0 0 8px color-mix(in srgb, var(--accent) 55%, transparent),
+      inset 0 1px 0 color-mix(in srgb, #fff 18%, transparent);
     transition: width 0.3s cubic-bezier(0.22, 1, 0.36, 1), background 0.2s ease;
   }
 
