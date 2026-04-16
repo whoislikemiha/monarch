@@ -18,6 +18,9 @@
   --text-muted: #8f7aa8;
   --text-on-accent: #140d22;
 
+  /* Shadow (agent) name — intentionally fixed purple across all themes */
+  --shadow-name: #be95ff;
+
   /* Accent */
   --accent: #be95ff;
   --accent-hover: #d5bbff;
@@ -32,6 +35,7 @@
   --accent-blue-hover: #78a9ff;
   --accent-blue-bg-subtle: rgba(51, 177, 255, 0.06);
   --accent-blue-border-subtle: rgba(51, 177, 255, 0.15);
+  --accent-blue-border: rgba(51, 177, 255, 0.4);
 
   /* Cyan */
   --accent-cyan: #3ddbd9;

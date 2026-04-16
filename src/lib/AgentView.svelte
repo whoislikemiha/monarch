@@ -597,7 +597,7 @@
     />
 
     <div class="messages-scroll" bind:this={scrollContainer} onscroll={updateIsAtBottom}>
-      <MessageList {items} {streamingMessage} {nowMs} />
+      <MessageList {items} {streamingMessage} {nowMs} agentName={agent.name} />
 
       {#if agent.status === "stopped" && !isStandby}
         <div class="exit-banner">
