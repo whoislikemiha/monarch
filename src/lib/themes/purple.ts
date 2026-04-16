@@ -37,6 +37,7 @@ export const purple: Theme = {
   accentBlueHover: "#78a9ff",
   accentBlueBgSubtle: "rgba(51, 177, 255, 0.06)",
   accentBlueBorderSubtle: "rgba(51, 177, 255, 0.15)",
+  accentBlueBorder: "rgba(51, 177, 255, 0.4)",
 
   // Cyan
   accentCyan: "#3ddbd9",

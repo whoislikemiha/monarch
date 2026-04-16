@@ -37,6 +37,7 @@ export const obsidian: Theme = {
   accentBlueHover: "#8ac4ff",
   accentBlueBgSubtle: "rgba(102, 179, 255, 0.06)",
   accentBlueBorderSubtle: "rgba(102, 179, 255, 0.15)",
+  accentBlueBorder: "rgba(102, 179, 255, 0.4)",
 
   // Cyan
   accentCyan: "#4ecdc4",

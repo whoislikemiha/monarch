@@ -39,6 +39,7 @@ export interface Theme {
   accentBlueHover: string;
   accentBlueBgSubtle: string;
   accentBlueBorderSubtle: string;
+  accentBlueBorder: string;
 
   // ── Accent cyan ───────────────────────────────────────────
   accentCyan: string;

@@ -37,6 +37,7 @@ export const midnight: Theme = {
   accentBlueHover: "#82beff",
   accentBlueBgSubtle: "rgba(93, 170, 255, 0.06)",
   accentBlueBorderSubtle: "rgba(93, 170, 255, 0.15)",
+  accentBlueBorder: "rgba(93, 170, 255, 0.4)",
 
   // Cyan
   accentCyan: "#40c4c0",

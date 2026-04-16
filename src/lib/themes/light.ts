@@ -37,6 +37,7 @@ export const light: Theme = {
   accentBlueHover: "#1d4ed8",
   accentBlueBgSubtle: "rgba(37, 99, 235, 0.06)",
   accentBlueBorderSubtle: "rgba(37, 99, 235, 0.15)",
+  accentBlueBorder: "rgba(37, 99, 235, 0.4)",
 
   // Cyan
   accentCyan: "#0891b2",
