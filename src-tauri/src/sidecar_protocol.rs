@@ -503,6 +503,11 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                     state.items.push(DisplayItem::User {
                         content,
                         timestamp: message.timestamp,
+                        // Live-stream path — attachments only surface on
+                        // the follow-up DB-driven snapshot. The frontend
+                        // bridges the gap with its ephemeral `sentImages`
+                        // map until the rebuild catches up.
+                        attachments: Vec::new(),
                     });
                     ApplyOutcome::EmitNow
                 }
@@ -1010,7 +1015,7 @@ mod tests {
         assert_eq!(outcome, ApplyOutcome::EmitNow);
         assert_eq!(count_items(&s, "user"), 1);
         match &s.items[0] {
-            DisplayItem::User { content, timestamp } => {
+            DisplayItem::User { content, timestamp, .. } => {
                 assert_eq!(content, "hello world");
                 assert_eq!(*timestamp, Some(1000));
             }
