@@ -1,8 +1,11 @@
 <script lang="ts">
   import type { Agent, Project, ShadowIdentity } from "./types";
-  import { ShadowAvatar } from "./avatar";
   import { agentStore } from "./stores/agentStore.svelte";
   import { formatCost } from "./format";
+
+  function shortenPath(path: string): string {
+    return path.replace(/^\/home\/[^/]+/, "~");
+  }
 
   interface ProjectGroup {
     project?: Project;
@@ -189,6 +192,8 @@
         {/if}
         {#each group.agents as agent (agent.id)}
           {@const isArchived = !!agent.archivedAt}
+          {@const subtitle = agent.shadow?.shadowTitle || agent.shadow?.shadowGrade || agent.model || ""}
+          {@const cwdLabel = agent.cwd ? shortenPath(agent.cwd) : ""}
           <div
             class="agent-item"
             class:active={agent.id === agentStore.activeTabId}
@@ -200,18 +205,22 @@
             role="button"
             tabindex="0"
           >
-            <div class="avatar-wrap">
-              <ShadowAvatar agentId={agent.id} size={200} avatarType={agent.avatarType} avatarPath={agent.avatarPath} />
-            </div>
             <div class="agent-info">
-              <span class="agent-name">{agent.name}</span>
-              {#if agent.shadow}
-                <span class="agent-grade">{agent.shadow.shadowGrade}</span>
-              {:else if agent.model}
-                <span class="agent-model">{agent.model}</span>
-              {/if}
-              {#if formatCost(agent.lifetimeCost)}
-                <span class="agent-cost">{formatCost(agent.lifetimeCost)}</span>
+              <div class="agent-top-row">
+                <span class="agent-name" title={agent.name}>{agent.name}</span>
+                {#if formatCost(agent.lifetimeCost)}
+                  <span class="agent-cost">{formatCost(agent.lifetimeCost)}</span>
+                {/if}
+              </div>
+              {#if subtitle || cwdLabel}
+                <div class="agent-sub-row">
+                  {#if subtitle}
+                    <span class="agent-subtitle" title={subtitle}>{subtitle}</span>
+                  {/if}
+                  {#if cwdLabel}
+                    <span class="agent-cwd" title={agent.cwd}>{cwdLabel}</span>
+                  {/if}
+                </div>
               {/if}
             </div>
             {#if isArchived}
@@ -472,19 +481,13 @@
 
   .agent-item {
     width: 100%;
-    display: grid;
-    grid-template-columns: 1fr auto;
-    grid-template-rows: auto auto;
-    grid-template-areas:
-      "avatar avatar"
-      "info kill";
+    display: flex;
     align-items: center;
-    column-gap: 8px;
-    row-gap: 6px;
-    padding: 10px;
-    margin-bottom: 8px;
+    gap: 8px;
+    padding: 8px 10px;
+    margin-bottom: 2px;
     border: none;
-    border-radius: 8px;
+    border-radius: 6px;
     background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
@@ -516,65 +519,67 @@
     opacity: 0.8;
   }
 
-  .avatar-wrap {
-    grid-area: avatar;
-    width: 100%;
-    aspect-ratio: 1 / 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
-  .avatar-wrap :global(canvas),
-  .avatar-wrap :global(img) {
-    width: 100% !important;
-    height: 100% !important;
-    object-fit: cover;
-  }
-
   .agent-info {
-    grid-area: info;
+    flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 1px;
   }
 
+  .agent-top-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .agent-sub-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+  }
+
   .agent-name {
+    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .agent-model {
-    font-size: 10px;
-    color: var(--text-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .agent-grade {
+  .agent-subtitle {
     font-size: 10px;
     color: var(--accent);
+    flex-shrink: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .agent-cwd {
+    font-size: 10px;
+    color: var(--text-muted);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
   }
 
   .agent-cost {
     font-size: 10px;
     color: var(--text-muted);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    flex-shrink: 0;
     white-space: nowrap;
   }
 
   .btn-icon {
-    grid-area: kill;
+    flex-shrink: 0;
     border: none;
     background: none;
     color: var(--text-muted);
