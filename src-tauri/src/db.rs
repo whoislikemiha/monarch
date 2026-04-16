@@ -284,6 +284,10 @@ impl Database {
                     "ALTER TABLE messages ADD COLUMN duration_ms INTEGER;",
                 );
 
+                // MON-73: agent avatar type ("rive" | "image") and path.
+                let _ = conn.execute_batch("ALTER TABLE agents ADD COLUMN avatar_type TEXT;");
+                let _ = conn.execute_batch("ALTER TABLE agents ADD COLUMN avatar_path TEXT;");
+
                 // MON-49: the events table is forensic, not operational.
                 // Prune rows older than 30 days on startup so the table does
                 // not grow unbounded. Errors are swallowed — a failed prune
@@ -335,6 +339,28 @@ pub struct AgentRow {
     /// Archive preserves the DB row (history, sessions, stats) but removes
     /// the shadow from the default active roster. See `archive_agent_internal`.
     pub archived_at: Option<String>,
+    /// MON-73: "rive" | "image" | null (null = default rive preset).
+    pub avatar_type: Option<String>,
+    /// MON-73: For "rive": path to .riv file (null = default). For "image":
+    /// built-in web path ("/avatars/foo.png") or absolute filesystem path.
+    pub avatar_path: Option<String>,
+}
+
+/// MON-73: Payload for updating editable agent fields post-creation.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentUpdatePayload {
+    pub id: String,
+    pub name: String,
+    pub shadow_name: Option<String>,
+    pub shadow_title: Option<String>,
+    pub shadow_grade: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub thinking_level: Option<String>,
+    pub cwd: Option<String>,
+    pub avatar_type: Option<String>,
+    pub avatar_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -519,13 +545,14 @@ impl Database {
         self.conn
             .call(move |conn| {
                 conn.execute(
-                    "INSERT INTO agents (id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                    "INSERT INTO agents (id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, avatar_type, avatar_path, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
                      ON CONFLICT(id) DO NOTHING",
                     params![
                         agent.id, agent.name, agent.project_id, agent.shadow_name, agent.shadow_title,
                         agent.shadow_grade, agent.provider, agent.model, agent.thinking_level,
-                        agent.cwd, agent.custom_prompt, agent.context_window, agent.created_at, agent.updated_at,
+                        agent.cwd, agent.custom_prompt, agent.context_window, agent.avatar_type, agent.avatar_path,
+                        agent.created_at, agent.updated_at,
                     ],
                 )?;
                 Ok(())
@@ -560,19 +587,45 @@ impl Database {
         self.conn
             .call(move |conn| {
                 conn.execute(
-                    "INSERT INTO agents (id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                    "INSERT INTO agents (id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, avatar_type, avatar_path, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
                      ON CONFLICT(id) DO UPDATE SET
                        name=excluded.name, project_id=excluded.project_id,
                        shadow_name=excluded.shadow_name, shadow_title=excluded.shadow_title,
                        shadow_grade=excluded.shadow_grade, provider=excluded.provider, model=excluded.model,
                        thinking_level=excluded.thinking_level, cwd=excluded.cwd, custom_prompt=excluded.custom_prompt,
-                       context_window=excluded.context_window,
+                       context_window=excluded.context_window, avatar_type=excluded.avatar_type,
+                       avatar_path=excluded.avatar_path,
                        updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')",
                     params![
                         agent.id, agent.name, agent.project_id, agent.shadow_name, agent.shadow_title,
                         agent.shadow_grade, agent.provider, agent.model, agent.thinking_level,
-                        agent.cwd, agent.custom_prompt, agent.context_window, agent.created_at, agent.updated_at,
+                        agent.cwd, agent.custom_prompt, agent.context_window, agent.avatar_type, agent.avatar_path,
+                        agent.created_at, agent.updated_at,
+                    ],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// MON-73: Update all user-editable agent fields post-creation.
+    pub async fn update_agent_internal(&self, payload: &AgentUpdatePayload) -> Result<(), MonarchError> {
+        let payload = payload.clone();
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE agents SET
+                       name=?2, shadow_name=?3, shadow_title=?4, shadow_grade=?5,
+                       provider=?6, model=?7, thinking_level=?8, cwd=?9,
+                       avatar_type=?10, avatar_path=?11,
+                       updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                     WHERE id=?1",
+                    params![
+                        payload.id, payload.name, payload.shadow_name, payload.shadow_title,
+                        payload.shadow_grade, payload.provider, payload.model, payload.thinking_level,
+                        payload.cwd, payload.avatar_type, payload.avatar_path,
                     ],
                 )?;
                 Ok(())
@@ -773,9 +826,9 @@ impl Database {
             .conn
             .call(move |conn| {
                 let sql = if include_archived {
-                    "SELECT id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at, archived_at FROM agents ORDER BY (archived_at IS NOT NULL) ASC, archived_at DESC, updated_at DESC"
+                    "SELECT id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at, archived_at, avatar_type, avatar_path FROM agents ORDER BY (archived_at IS NOT NULL) ASC, archived_at DESC, updated_at DESC"
                 } else {
-                    "SELECT id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at, archived_at FROM agents WHERE archived_at IS NULL ORDER BY updated_at DESC"
+                    "SELECT id, name, project_id, shadow_name, shadow_title, shadow_grade, provider, model, thinking_level, cwd, custom_prompt, context_window, created_at, updated_at, archived_at, avatar_type, avatar_path FROM agents WHERE archived_at IS NULL ORDER BY updated_at DESC"
                 };
                 let mut stmt = conn.prepare(sql)?;
                 let rows = stmt.query_map([], map_agent)?;
@@ -1353,6 +1406,8 @@ fn map_agent(row: &Row<'_>) -> rusqlite::Result<AgentRow> {
         created_at: row.get(12)?,
         updated_at: row.get(13)?,
         archived_at: row.get(14)?,
+        avatar_type: row.get(15)?,
+        avatar_path: row.get(16)?,
     })
 }
 
@@ -1425,6 +1480,16 @@ pub async fn db_upsert_agent(
     agent: AgentRow,
 ) -> Result<(), MonarchError> {
     db.upsert_agent_internal(&agent).await
+}
+
+#[tauri::command]
+#[specta::specta]
+/// MON-73: Update user-editable agent fields without touching spawn-time fields.
+pub async fn db_update_agent(
+    db: tauri::State<'_, Arc<Database>>,
+    payload: AgentUpdatePayload,
+) -> Result<(), MonarchError> {
+    db.update_agent_internal(&payload).await
 }
 
 #[tauri::command]

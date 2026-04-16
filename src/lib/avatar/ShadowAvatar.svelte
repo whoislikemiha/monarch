@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { Rive, EventType, StateMachineInputType, Layout, Fit, Alignment } from "@rive-app/canvas";
   import type { StateMachineInput } from "@rive-app/canvas";
+  import { invoke } from "$lib/api";
   import { liveAgentStore, detachedLiveState } from "../toolbox/liveAgentStore.svelte";
   import {
     deriveAnimationState,
@@ -17,12 +18,51 @@
     size = 64,
     stateMachine = DEFAULT_STATE_MACHINE,
     riveFile = DEFAULT_RIV,
+    avatarType,
+    avatarPath,
   }: {
     agentId: string;
     size?: number;
     stateMachine?: string;
     riveFile?: string;
+    /** MON-73: "rive" | "image" | undefined (undefined = default rive preset). */
+    avatarType?: "rive" | "image";
+    /**
+     * MON-73: For "rive" — path to .riv file; for "image" — built-in web path
+     * ("/avatars/foo.svg") or absolute filesystem path (loaded via convertFileSrc).
+     */
+    avatarPath?: string;
   } = $props();
+
+  // Resolved flags
+  const isImage = $derived(avatarType === "image");
+  const effectiveRivFile = $derived(
+    !isImage && avatarPath ? avatarPath : riveFile
+  );
+
+  /**
+   * Resolved image src. Built-in paths start with "/avatars/" and are served
+   * from the static dir directly. Absolute filesystem paths (user uploads)
+   * are loaded via a Rust command that returns a base64 data URL — the Tauri
+   * asset protocol requires explicit scope config that we don't carry.
+   */
+  let resolvedImageSrc = $state("");
+
+  $effect(() => {
+    if (!isImage || !avatarPath) {
+      resolvedImageSrc = "";
+      return;
+    }
+    // Built-in bundled paths served from the frontend static dir.
+    if (avatarPath.startsWith("/avatars/") || avatarPath.startsWith("data:")) {
+      resolvedImageSrc = avatarPath;
+      return;
+    }
+    // Filesystem path — read via Rust and return as data URL.
+    invoke<string>("read_avatar_data_url", { path: avatarPath })
+      .then((url) => { resolvedImageSrc = url; })
+      .catch(() => { resolvedImageSrc = ""; });
+  });
 
   let canvasEl: HTMLCanvasElement;
   let riveInstance: Rive | null = null;
@@ -104,12 +144,14 @@
   }
 
   onMount(() => {
+    if (isImage) return; // No Rive init needed for static images
+
     const dpr = window.devicePixelRatio || 1;
     canvasEl.width = size * dpr;
     canvasEl.height = size * dpr;
 
     riveInstance = new Rive({
-      src: riveFile,
+      src: effectiveRivFile,
       canvas: canvasEl,
       stateMachines: stateMachine,
       layout: new Layout({ fit: Fit.Contain, alignment: Alignment.Center }),
@@ -167,15 +209,29 @@
   }
 </script>
 
-<canvas
-  bind:this={canvasEl}
-  style="width: {size}px; height: {size}px;"
-  class="shadow-avatar"
-></canvas>
+{#if isImage}
+  <img
+    src={resolvedImageSrc}
+    alt="Agent avatar"
+    class="shadow-avatar shadow-avatar--image"
+    style="width: {size}px; height: {size}px;"
+    draggable="false"
+  />
+{:else}
+  <canvas
+    bind:this={canvasEl}
+    style="width: {size}px; height: {size}px;"
+    class="shadow-avatar"
+  ></canvas>
+{/if}
 
 <style>
   .shadow-avatar {
     display: block;
     image-rendering: auto;
+  }
+
+  .shadow-avatar--image {
+    object-fit: cover;
   }
 </style>

@@ -32,6 +32,7 @@
     ondelete,
     oneditproject,
     onsavetemplate,
+    oneditAgent,
   }: {
     oncreate: () => void;
     /** X button on a row — opens the dismiss confirm in App. */
@@ -40,6 +41,8 @@
     ondelete: (id: string) => void;
     oneditproject?: (project: Project) => void;
     onsavetemplate?: (source: TemplateSource) => void;
+    /** Context-menu "Edit agent" — opens the edit dialog in App. */
+    oneditAgent?: (agentId: string) => void;
   } = $props();
 
   // Custom themed context menu — native right-click menu is suppressed so
@@ -89,6 +92,12 @@
   function handleDeletePermanent() {
     if (!contextMenu) return;
     ondelete(contextMenu.agentId);
+    closeContextMenu();
+  }
+
+  function handleEditAgent() {
+    if (!contextMenu) return;
+    oneditAgent?.(contextMenu.agentId);
     closeContextMenu();
   }
 
@@ -192,7 +201,7 @@
             tabindex="0"
           >
             <div class="avatar-wrap">
-              <ShadowAvatar agentId={agent.id} size={200} />
+              <ShadowAvatar agentId={agent.id} size={200} avatarType={agent.avatarType} avatarPath={agent.avatarPath} />
             </div>
             <div class="agent-info">
               <span class="agent-name">{agent.name}</span>
@@ -258,6 +267,13 @@
             Summon back
           </button>
         {/if}
+        <button
+          class="context-menu-item"
+          onclick={handleEditAgent}
+          role="menuitem"
+        >
+          Edit agent
+        </button>
         <button
           class="context-menu-item"
           onclick={handleSaveTemplate}
@@ -485,10 +501,7 @@
     color: var(--text-primary);
   }
   .agent-item.standby {
-    opacity: 0.5;
-  }
-  .agent-item.standby:hover {
-    opacity: 1;
+    opacity: 0.65;
   }
   /* MON-66: visually distinct from standby — stopped-but-active vs. dismissed.
      Italic name + lower contrast signals "not currently on the roster". */
@@ -514,9 +527,11 @@
     overflow: hidden;
   }
 
-  .avatar-wrap :global(canvas) {
+  .avatar-wrap :global(canvas),
+  .avatar-wrap :global(img) {
     width: 100% !important;
     height: 100% !important;
+    object-fit: cover;
   }
 
   .agent-info {

@@ -37,7 +37,7 @@
 <div class="agent-header">
   <div class="header-left">
     <div class="header-avatar">
-      <ShadowAvatar agentId={agent.id} size={40} />
+      <ShadowAvatar agentId={agent.id} size={40} avatarType={agent.avatarType} avatarPath={agent.avatarPath} />
     </div>
     <span class="agent-name">{agent.shadow?.shadowName || agent.name}</span>
     {#if agent.shadow?.shadowTitle}

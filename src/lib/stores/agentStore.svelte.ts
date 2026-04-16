@@ -66,6 +66,9 @@ interface AgentDbRow {
   archivedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  /** MON-73 */
+  avatarType?: string | null;
+  avatarPath?: string | null;
 }
 
 interface SessionDbRow {
@@ -245,6 +248,8 @@ class AgentStore {
           sourceSessionId: latestSession?.id,
           archivedAt: row.archivedAt || undefined,
           lifetimeCost,
+          avatarType: (row.avatarType as "rive" | "image") || undefined,
+          avatarPath: row.avatarPath || undefined,
         };
         loaded.push(agent);
       }
@@ -634,6 +639,59 @@ class AgentStore {
 
   updateAgent(id: string, updater: (agent: Agent) => Agent): void {
     this.agents = this.agents.map((agent) => (agent.id === id ? updater(agent) : agent));
+  }
+
+  /**
+   * MON-73: Persist user edits to an agent (name, shadow identity, model,
+   * provider, thinking level, cwd, avatar) and reflect them in the in-memory
+   * roster immediately.
+   */
+  async saveAgentEdits(payload: {
+    id: string;
+    name: string;
+    shadowName?: string;
+    shadowTitle?: string;
+    shadowGrade?: string;
+    provider?: string;
+    model?: string;
+    thinkingLevel?: string;
+    cwd?: string;
+    avatarType?: "rive" | "image";
+    avatarPath?: string;
+  }): Promise<void> {
+    await invoke("db_update_agent", { payload: {
+      id: payload.id,
+      name: payload.name,
+      shadowName: payload.shadowName ?? null,
+      shadowTitle: payload.shadowTitle ?? null,
+      shadowGrade: payload.shadowGrade ?? null,
+      provider: payload.provider ?? null,
+      model: payload.model ?? null,
+      thinkingLevel: payload.thinkingLevel ?? null,
+      cwd: payload.cwd ?? null,
+      avatarType: payload.avatarType ?? null,
+      avatarPath: payload.avatarPath ?? null,
+    }});
+    this.agents = this.agents.map((a) => {
+      if (a.id !== payload.id) return a;
+      return {
+        ...a,
+        name: payload.shadowName || payload.name,
+        provider: payload.provider || undefined,
+        model: payload.model || undefined,
+        thinkingLevel: payload.thinkingLevel || undefined,
+        cwd: payload.cwd || undefined,
+        shadow: payload.shadowName
+          ? {
+              shadowName: payload.shadowName,
+              shadowTitle: payload.shadowTitle || payload.shadowName,
+              shadowGrade: (payload.shadowGrade as any) || "Knight",
+            }
+          : undefined,
+        avatarType: payload.avatarType,
+        avatarPath: payload.avatarPath,
+      };
+    });
   }
 
   /**

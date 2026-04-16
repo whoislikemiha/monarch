@@ -10,6 +10,7 @@
   import ToolRail from "./lib/toolbox/ToolRail.svelte";
   import SettingsDialog from "./lib/SettingsDialog.svelte";
   import ToolPanelStack from "./lib/toolbox/ToolPanelStack.svelte";
+  import EditAgentDialog from "./lib/EditAgentDialog.svelte";
   import { liveAgentStore } from "./lib/toolbox/liveAgentStore.svelte";
   import {
     persistOpenIds,
@@ -61,6 +62,9 @@
 
   // Editing project instructions — App-local UI state.
   let editingProject: Project | null = $state(null);
+
+  // MON-73: agent being edited in the EditAgentDialog.
+  let editingAgent: Agent | null = $state(null);
 
   // --- Zoom (App-local; per MON-47 scope the keyboard/zoom layer stays here) ---
   const ZOOM_STEP = 0.05;
@@ -299,6 +303,10 @@
         await invoke("db_save_agent_template", { template });
       } catch {}
     }}
+    oneditAgent={(agentId) => {
+      const a = agentStore.getAgent(agentId);
+      if (a) editingAgent = a;
+    }}
   />
   <div class="main-panel">
     <TabBar />
@@ -353,6 +361,13 @@
   />
 {/if}
 
+{#if editingAgent}
+  <EditAgentDialog
+    agent={editingAgent}
+    onclose={() => (editingAgent = null)}
+  />
+{/if}
+
 {#if showSettings}
   <SettingsDialog
     onclose={() => (showSettings = false)}
@@ -385,6 +400,7 @@
 <style>
   .app {
     display: flex;
+    flex-direction: row;
     width: 100vw;
     height: 100vh;
     min-width: 0;

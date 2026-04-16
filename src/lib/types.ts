@@ -64,6 +64,14 @@ export interface Agent {
    * counter stays in sync.
    */
   lifetimeCost?: number;
+  /** MON-73: "rive" | "image" | undefined (undefined = default rive preset). */
+  avatarType?: "rive" | "image";
+  /**
+   * MON-73: For "rive" = path to .riv file (undefined = default).
+   * For "image" = built-in web path ("/avatars/foo.svg") or absolute
+   * filesystem path (loaded via convertFileSrc).
+   */
+  avatarPath?: string;
 }
 
 // A session record — one conversation
