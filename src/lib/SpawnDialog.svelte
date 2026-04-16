@@ -335,7 +335,7 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="overlay" onclick={oncancel} role="presentation">
+<div class="overlay" role="presentation">
   <div
     class="dialog"
     onclick={(e: MouseEvent) => e.stopPropagation()}
