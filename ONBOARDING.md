@@ -303,7 +303,7 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 | `prompt`                  | Send a user message. If already streaming, becomes a `followUp`. |
 | `abort`                   | Cancel the in-flight turn. |
 | `set_model`               | Switch model/provider at runtime. |
-| `set_thinking_level`      | `off` / `minimal` / `low` / `medium` / `high` / `xhigh`. |
+| `set_thinking_level`      | Pi-canonical `off` / `minimal` / `low` / `medium` / `high` / `xhigh`. The UI surfaces only the subset the current model supports and maps the wire value to the provider-native label (e.g. `xhigh` → "max" on Opus 4.6, uppercase on Gemini). See `src/lib/thinking.ts` and `~/.config/monarch/thinking.toml` for the per-model default table. |
 | `new_session`             | Clear the conversation in-memory but keep the sidecar session alive. |
 | `compact`                 | Ask Pi to compress the context. |
 | `load_session`            | Inject an array of messages into the session (used on restore and recovery). |

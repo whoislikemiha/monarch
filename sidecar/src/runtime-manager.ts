@@ -10,7 +10,8 @@ import {
 	type AgentSession,
 	type AgentSessionEventListener,
 } from "@mariozechner/pi-coding-agent";
-import type { Api, ImageContent, Model, TextContent, ThinkingLevel } from "@mariozechner/pi-ai";
+import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+import type { Api, ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
 import { buildSystemPrompt } from "./shadow-oath.js";
 import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
 import type { CreateSessionCommand, LoadSessionCommand, PromptContentPart } from "./protocol.js";
@@ -136,6 +137,19 @@ function lmstudioBaseUrl(): string {
 	return process.env.LMSTUDIO_BASE_URL || LMSTUDIO_DEFAULT_BASE_URL;
 }
 
+const VALID_THINKING_LEVELS: ReadonlySet<string> = new Set([
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+]);
+
+function isValidThinkingLevel(level: string): level is ThinkingLevel {
+	return VALID_THINKING_LEVELS.has(level);
+}
+
 /**
  * LM Studio's OpenAI-compatible server ignores the API key, but pi-ai's
  * openai-completions adapter requires one to be non-empty. Register the
@@ -208,9 +222,13 @@ export class RuntimeManager {
 
 		// Create session without model first, then set model via registry
 		// This handles arbitrary provider/model combos (including OpenRouter)
+		const initialLevel: ThinkingLevel =
+			cmd.thinkingLevel && isValidThinkingLevel(cmd.thinkingLevel)
+				? cmd.thinkingLevel
+				: "off";
 		const { session } = await createAgentSession({
 			cwd: cmd.cwd,
-			thinkingLevel: (cmd.thinkingLevel || "medium") as ThinkingLevel,
+			thinkingLevel: initialLevel,
 			sessionManager: SessionManager.inMemory(cmd.cwd),
 			resourceLoader,
 		});
@@ -388,7 +406,15 @@ export class RuntimeManager {
 	setThinkingLevel(agentId: string, level: string): void {
 		const managed = this.getSession(agentId);
 		if (!managed) return;
-		managed.session.setThinkingLevel(level as ThinkingLevel);
+		if (!isValidThinkingLevel(level)) {
+			this.emit({
+				type: "error",
+				agentId,
+				error: `Unknown thinking level: ${level}`,
+			});
+			return;
+		}
+		managed.session.setThinkingLevel(level);
 	}
 
 	newSession(agentId: string): void {

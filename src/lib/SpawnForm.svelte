@@ -8,6 +8,8 @@
   import { agentStore } from "./stores/agentStore.svelte";
   import ModelSelector from "./ModelSelector.svelte";
   import TemplateSelector from "./TemplateSelector.svelte";
+  import { commands } from "$lib/bindings";
+  import { clampLevel } from "./thinking";
 
   let {
     onspawn,
@@ -22,6 +24,25 @@
   let model = $state("");
   let thinkingLevel = $state("off");
   let contextWindow: number | undefined = $state(undefined);
+  // On every distinct (provider, model) we apply the config default once.
+  // The user can override in the picker afterwards; if they later switch
+  // model, the new model's default wins (thinking is model-specific anyway).
+  let lastAppliedKey = $state("");
+
+  $effect(() => {
+    const key = `${provider}|${model}`;
+    if (!provider || !model || key === lastAppliedKey) return;
+    lastAppliedKey = key;
+    commands
+      .getThinkingDefault(provider, model)
+      .then((result) => {
+        if (result.status !== "ok") return;
+        // Guard against stale resolves after the user has switched again.
+        if (`${provider}|${model}` !== lastAppliedKey) return;
+        thinkingLevel = clampLevel(provider, model, result.data);
+      })
+      .catch(() => {});
+  });
 
   let cwd = $state("/home/miha");
   let detectedProject: DetectedProject | null = $state(null);
@@ -97,7 +118,7 @@
     const config: AgentConfig = {
       provider,
       model: model.trim() || undefined,
-      thinkingLevel: thinkingLevel !== "off" ? thinkingLevel : undefined,
+      thinkingLevel,
       cwd: cwd || undefined,
       contextWindow,
     };

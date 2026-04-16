@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { DisplayItem, SessionStats, Usage } from "./types";
+  import ThinkingPicker from "./ThinkingPicker.svelte";
 
   let {
     isStreaming,
@@ -7,6 +8,7 @@
     lastUsage,
     contextWindow,
     thinkingLevel,
+    provider,
     model,
     sessionStats,
     onabort,
@@ -17,6 +19,7 @@
     lastUsage?: Usage;
     contextWindow?: number;
     thinkingLevel?: string;
+    provider?: string;
     model?: string;
     sessionStats?: SessionStats;
     onabort: () => void;
@@ -25,8 +28,6 @@
 
   const DEFAULT_CONTEXT_WINDOW = 128000;
   const CHARS_PER_TOKEN = 4;
-  const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
-  let showThinkingPicker = $state(false);
 
   function formatTokens(n: number): string {
     if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
@@ -139,28 +140,13 @@
       <span class="control-tag model" title={model}>{model}</span>
     {/if}
 
-    <div class="thinking-wrap">
-      <button
-        class="control-btn"
-        onclick={() => (showThinkingPicker = !showThinkingPicker)}
-        title="Set thinking level"
-      >
-        thinking: {thinkingLevel || "off"}
-      </button>
-      {#if showThinkingPicker}
-        <div class="thinking-dropdown">
-          {#each thinkingLevels as level}
-            <button
-              class="thinking-option"
-              class:active={level === (thinkingLevel || "off")}
-              onclick={() => { onthinking(level); showThinkingPicker = false; }}
-            >
-              {level}
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
+    <ThinkingPicker
+      provider={provider ?? ""}
+      model={model ?? ""}
+      value={thinkingLevel ?? "off"}
+      direction="up"
+      onchange={onthinking}
+    />
 
     {#if hasContextMeter}
       <div
@@ -297,63 +283,6 @@
 
   .context-meter.critical .context-fill {
     background: var(--error);
-  }
-
-  .control-btn {
-    font-size: 10px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    padding: 3px 8px;
-    border-radius: 4px;
-    background: var(--bg-panel-2);
-    border: 1px solid var(--border-subtle);
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-
-  .control-btn:hover {
-    background: var(--bg-panel-3);
-    border-color: var(--border-strong);
-  }
-
-  .thinking-wrap {
-    position: relative;
-  }
-
-  .thinking-dropdown {
-    position: absolute;
-    bottom: 100%;
-    left: 0;
-    margin-bottom: 4px;
-    background: var(--bg-panel-2);
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    padding: 4px;
-    z-index: 50;
-    display: flex;
-    flex-direction: column;
-    min-width: 100px;
-  }
-
-  .thinking-option {
-    padding: 5px 10px;
-    border: none;
-    border-radius: 4px;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    cursor: pointer;
-    text-align: left;
-    transition: background 0.1s;
-  }
-
-  .thinking-option:hover {
-    background: var(--bg-panel-3);
-  }
-
-  .thinking-option.active {
-    color: var(--accent);
   }
 
   .control-tag.model {
