@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Agent, AssistantMessage, DisplayItem, SessionStats, Usage } from "./types";
   import { ShadowAvatar } from "./avatar";
+  import ThinkingPicker from "./ThinkingPicker.svelte";
 
   export type PortraitCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
@@ -12,6 +13,7 @@
     lastUsage,
     contextWindow,
     thinkingLevel,
+    provider,
     model,
     sessionStats,
     streamingMessage,
@@ -35,6 +37,7 @@
     lastUsage?: Usage;
     contextWindow?: number;
     thinkingLevel?: string;
+    provider?: string;
     model?: string;
     sessionStats?: SessionStats;
     streamingMessage?: AssistantMessage | null;
@@ -87,7 +90,6 @@
     };
     isDragging = true;
     showCommandMenu = false;
-    showThinkingPicker = false;
   }
 
   function handleHandleMove(e: PointerEvent) {
@@ -126,8 +128,6 @@
 
   const DEFAULT_CONTEXT_WINDOW = 128000;
   const CHARS_PER_TOKEN = 4;
-  const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
-  let showThinkingPicker = $state(false);
   let showCommandMenu = $state(false);
 
   function runCommand(fn?: () => void) {
@@ -323,7 +323,7 @@
   });
 </script>
 
-<svelte:window onclick={() => { showThinkingPicker = false; showCommandMenu = false; }} />
+<svelte:window onclick={() => { showCommandMenu = false; }} />
 
 <div
   class="portrait"
@@ -347,7 +347,7 @@
     </div>
     <button
       class="minify-btn"
-      onclick={(e: MouseEvent) => { e.stopPropagation(); onminify?.(!minified); showCommandMenu = false; showThinkingPicker = false; }}
+      onclick={(e: MouseEvent) => { e.stopPropagation(); onminify?.(!minified); showCommandMenu = false; }}
       title={minified ? "Expand portrait" : "Minify portrait"}
       aria-label={minified ? "Expand" : "Minify"}
       aria-pressed={minified}
@@ -359,7 +359,7 @@
   <div class="avatar-frame" title={avatarTooltip}>
     <button
       class="avatar-btn"
-      onclick={(e: MouseEvent) => { e.stopPropagation(); showCommandMenu = !showCommandMenu; showThinkingPicker = false; }}
+      onclick={(e: MouseEvent) => { e.stopPropagation(); showCommandMenu = !showCommandMenu; }}
       title="Agent actions"
       aria-label="Agent actions"
       aria-haspopup="menu"
@@ -443,29 +443,17 @@
       <span class="model" title={model}>{model}</span>
     {/if}
 
-    <div class="thinking-wrap">
-      <button
-        class="thinking-btn"
-        onclick={(e: MouseEvent) => { e.stopPropagation(); showThinkingPicker = !showThinkingPicker; }}
-        title="Set thinking level"
-      >
-        thinking: {thinkingLevel || "off"}
-      </button>
-      {#if showThinkingPicker}
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <div class="thinking-dropdown" onclick={(e: MouseEvent) => e.stopPropagation()} role="menu" tabindex="-1">
-          {#each thinkingLevels as level}
-            <button
-              class="thinking-option"
-              class:active={level === (thinkingLevel || "off")}
-              onclick={() => { onthinking(level); showThinkingPicker = false; }}
-            >
-              {level}
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
+    {#if provider && model}
+      <div class="thinking-slot">
+        <ThinkingPicker
+          {provider}
+          {model}
+          value={thinkingLevel || "off"}
+          onchange={(level) => onthinking(level)}
+          direction="up"
+        />
+      </div>
+    {/if}
 
     {#if sparkPath}
       <svg
@@ -881,62 +869,17 @@
     white-space: nowrap;
   }
 
-  .thinking-wrap {
-    position: relative;
-  }
-
-  .thinking-btn {
-    width: 100%;
-    font-size: 10px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    padding: 3px 6px;
-    border-radius: 2px;
-    background: var(--bg-panel-2);
-    border: 1px solid var(--border-subtle);
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-
-  .thinking-btn:hover {
-    background: var(--bg-panel-3);
-    border-color: var(--border-strong);
-  }
-
-  .thinking-dropdown {
-    position: absolute;
-    bottom: 100%;
-    left: 0;
-    right: 0;
-    margin-bottom: 4px;
-    background: var(--bg-panel-2);
-    border: 1px solid var(--border-subtle);
-    border-radius: 2px;
-    padding: 3px;
-    z-index: 60;
+  .thinking-slot {
     display: flex;
-    flex-direction: column;
+    min-width: 0;
   }
 
-  .thinking-option {
-    padding: 5px 8px;
-    border: none;
-    border-radius: 2px;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    cursor: pointer;
-    text-align: left;
-    transition: background 0.1s;
+  .thinking-slot :global(.picker) {
+    width: 100%;
   }
 
-  .thinking-option:hover {
-    background: var(--bg-panel-3);
-  }
-
-  .thinking-option.active {
-    color: var(--accent);
+  .thinking-slot :global(.trigger) {
+    width: 100%;
   }
 
   @keyframes ctx-critical-breath {

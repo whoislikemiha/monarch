@@ -4,6 +4,8 @@
   import { SHADOW_GRADES, type Agent, type ShadowGrade } from "./types";
   import { agentStore } from "./stores/agentStore.svelte";
   import AvatarPicker from "./avatar/AvatarPicker.svelte";
+  import { supportsThinking } from "./thinking";
+  import ThinkingPicker from "./ThinkingPicker.svelte";
 
   let {
     agent,
@@ -26,7 +28,6 @@
     { label: "LM Studio", value: "lmstudio" },
   ];
   const REFRESHABLE_PROVIDERS = new Set(["openrouter", "lmstudio"]);
-  const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
   let selectedProvider = $state(agent.provider ?? "openrouter");
   let modelInput = $state(agent.model ?? "");
@@ -153,7 +154,7 @@
         shadowGrade: sName ? shadowGrade : undefined,
         provider: selectedProvider || undefined,
         model: (fixedModelId || modelInput.trim()) || undefined,
-        thinkingLevel: thinkingLevel !== "off" ? thinkingLevel : undefined,
+        thinkingLevel,
         cwd: cwd.trim() || undefined,
         avatarType,
         avatarPath,
@@ -294,14 +295,12 @@
 
     <!-- Thinking + CWD -->
     <div class="row">
-      <div class="field">
-        <label class="label" for="edit-thinking">Thinking</label>
-        <select id="edit-thinking" bind:value={thinkingLevel}>
-          {#each thinkingLevels as level}
-            <option value={level}>{level}</option>
-          {/each}
-        </select>
-      </div>
+      {#if supportsThinking(selectedProvider, modelInput)}
+        <div class="field">
+          <span class="label">Thinking</span>
+          <ThinkingPicker provider={selectedProvider} model={modelInput} bind:value={thinkingLevel} />
+        </div>
+      {/if}
       <div class="field flex-grow">
         <label class="label" for="edit-cwd">Working Directory</label>
         <div class="cwd-row">

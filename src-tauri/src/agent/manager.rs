@@ -378,12 +378,21 @@ impl AgentManager {
             .await?
             .filter(|p| !p.trim().is_empty());
 
+        let effective_provider = provider.clone().unwrap_or_else(|| "anthropic".to_string());
+        let effective_model = model
+            .clone()
+            .unwrap_or_else(|| "claude-sonnet-4-5".to_string());
+        let effective_thinking = match thinking_level.clone() {
+            Some(v) => v,
+            None => crate::thinking_config::default_for(&effective_provider, &effective_model).await,
+        };
+
         let cmd = SidecarCommand::CreateSession {
             agent_id: id.clone(),
             cwd: effective_cwd,
-            provider: provider.clone().unwrap_or_else(|| "anthropic".to_string()),
-            model: model.clone().unwrap_or_else(|| "claude-sonnet-4-5".to_string()),
-            thinking_level: thinking_level.clone().unwrap_or_else(|| "medium".to_string()),
+            provider: effective_provider,
+            model: effective_model,
+            thinking_level: effective_thinking,
             shadow,
             custom_prompt,
             project_instructions,

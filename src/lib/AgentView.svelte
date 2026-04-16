@@ -720,6 +720,7 @@
           {lastUsage}
           contextWindow={agent.contextWindow}
           thinkingLevel={agent.thinkingLevel}
+          provider={agent.provider}
           model={agent.model}
           sessionStats={agent.sessionStats}
           onabort={abort}

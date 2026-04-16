@@ -114,6 +114,7 @@ Full file reference: [ONBOARDING.md](./ONBOARDING.md) section 12.
 - **Sidecar is singleton** — one Node process hosts many agents, keyed by `agentId`. Not one process per agent.
 - **Legacy columns** — `sessions.pi_session_file` and `agents.custom_prompt` exist in the schema but are inert. Don't build on them.
 - **Prompt overrides are files** — stored at `~/.config/monarch/prompts/{agent_id}.md`, not in the DB. Editable externally.
+- **Thinking levels are Pi-canonical on the wire** — `off` / `minimal` / `low` / `medium` / `high` / `xhigh`. `off` is a first-class value (pi-agent-core maps it to `undefined` reasoning). Per-provider display labels and per-model supported subsets live in `src/lib/thinking.ts`. Per-model defaults come from `~/.config/monarch/thinking.toml` (see `src-tauri/src/thinking_config.rs`); absence of a matching entry falls back to a conservative built-in table.
 - **Toolbox tools stay mounted across agent switches** — if your tool keeps per-agent state, key it by `agentContext.agentId`.
 
 ## Adding a Toolbox Tool

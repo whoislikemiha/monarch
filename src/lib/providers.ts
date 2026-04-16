@@ -21,11 +21,3 @@ export const REFRESHABLE_PROVIDERS: ReadonlySet<string> = new Set([
   "lmstudio",
 ]);
 
-export const THINKING_LEVELS: readonly string[] = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-] as const;
