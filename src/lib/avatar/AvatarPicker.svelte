@@ -24,31 +24,48 @@
   } = $props();
 
   let uploading = $state(false);
-  /** Cached data URL for the custom uploaded image — avoids re-loading on every render. */
-  let customDataUrl = $state<string | undefined>(undefined);
 
-  // When the dialog opens for an agent that already has a custom image, load it.
+  /**
+   * Uploaded image stored independently of the current selection so clicking
+   * another preset doesn't lose track of the uploaded file. Initialized from
+   * the agent's existing custom avatar (if any) when the dialog opens.
+   */
+  let uploadedPath = $state<string | undefined>(
+    avatarType === "image" && avatarPath && !avatarPath.startsWith("/avatars/")
+      ? avatarPath
+      : undefined
+  );
+  let uploadedDataUrl = $state<string | undefined>(undefined);
+
+  // Load the data URL for the uploaded image on mount (or when uploadedPath changes).
   $effect(() => {
-    if (avatarType === "image" && avatarPath && !avatarPath.startsWith("/avatars/")) {
-      invoke<string>("read_avatar_data_url", { path: avatarPath })
-        .then((url) => { customDataUrl = url; })
-        .catch(() => { customDataUrl = undefined; });
-    } else {
-      customDataUrl = undefined;
-    }
+    const path = uploadedPath;
+    if (!path) { uploadedDataUrl = undefined; return; }
+    invoke<string>("read_avatar_data_url", { path })
+      .then((url) => { uploadedDataUrl = url; })
+      .catch(() => { uploadedDataUrl = undefined; });
   });
 
   function isSelected(preset: AvatarPreset): boolean {
-    // Default state: no avatarType means the default rive preset
     if (!avatarType && preset.type === "rive" && preset.path === "/avatars/shadow_animations.riv") {
       return true;
     }
     return avatarType === preset.type && avatarPath === preset.path;
   }
 
+  const isCustomSelected = $derived(
+    avatarType === "image" && !!avatarPath && !avatarPath.startsWith("/avatars/")
+  );
+
   function selectPreset(preset: AvatarPreset): void {
     avatarType = preset.type;
     avatarPath = preset.path;
+  }
+
+  function selectCustom(): void {
+    if (!uploadedPath) return;
+    avatarType = "image";
+    avatarPath = uploadedPath;
   }
 
   async function uploadImage(): Promise<void> {
@@ -64,9 +81,9 @@
         agentId,
         srcPath: selected,
       });
-      // Load data URL immediately so the preview renders without an extra round-trip.
       const dataUrl = await invoke<string>("read_avatar_data_url", { path: storedPath });
-      customDataUrl = dataUrl;
+      uploadedPath = storedPath;
+      uploadedDataUrl = dataUrl;
       avatarType = "image";
       avatarPath = storedPath;
     } catch (e) {
@@ -103,15 +120,16 @@
       </button>
     {/each}
 
-    {#if avatarType === "image" && avatarPath && !avatarPath.startsWith("/avatars/") && customDataUrl}
-      <!-- Custom uploaded image currently selected -->
+    {#if uploadedPath && uploadedDataUrl}
+      <!-- Custom uploaded image — always visible; clicking re-selects it -->
       <button
-        class="preset-card selected"
+        class="preset-card"
+        class:selected={isCustomSelected}
         type="button"
         title="Custom upload"
-        onclick={() => {}}
+        onclick={selectCustom}
       >
-        <img src={customDataUrl} alt="Custom" class="preset-thumb" />
+        <img src={uploadedDataUrl} alt="Custom" class="preset-thumb" />
         <span class="preset-label">Custom</span>
       </button>
     {/if}
