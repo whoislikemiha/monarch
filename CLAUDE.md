@@ -4,7 +4,7 @@ Multi-agent desktop command center built on Tauri v2, Svelte 5, Rust, SQLite, an
 
 Monarch manages a fleet of AI coding agents called shadows. SQLite is the canonical source of truth. A long-lived Node sidecar hosts in-memory Pi SDK sessions and streams runtime events back to Rust. Pi is the execution engine, not the session authority.
 
-**Mental model:** Rust owns state, the frontend displays it, the sidecar operates on it. When in doubt, read `src-tauri/src/agent.rs` and `sidecar/src/runtime-manager.ts` side by side — they're the contract.
+**Mental model:** Rust owns state, the frontend displays it, the sidecar operates on it. When in doubt, read `src-tauri/src/agent/` and `sidecar/src/runtime-manager.ts` side by side — they're the contract.
 
 For the product vision, see [VISION.md](./VISION.md). For the full architecture walkthrough, data model, lifecycle details, and protocol reference, see [ONBOARDING.md](./ONBOARDING.md).
 
@@ -79,20 +79,35 @@ If you add a new table, command, event channel, or convention — it belongs in 
 
 | Layer | File | Role |
 |-------|------|------|
-| Rust | `src-tauri/src/agent.rs` | Sidecar lifecycle, spawn, commands, crash recovery |
+| Rust | `src-tauri/src/agent/mod.rs` | Module facade; re-exports + `DEBOUNCE_MILLIS`, `WsBroadcast` |
+| Rust | `src-tauri/src/agent/manager.rs` | `AgentManager`, live-state types, high-level lifecycle |
+| Rust | `src-tauri/src/agent/sidecar.rs` | Sidecar spawn, stdin/stdout I/O, crash recovery |
+| Rust | `src-tauri/src/agent/event_handler.rs` | Inbound sidecar event dispatch + snapshot emission |
+| Rust | `src-tauri/src/agent/persist.rs` | Single-consumer persistence pipeline (MON-37) |
+| Rust | `src-tauri/src/agent/commands.rs` | Tauri command wrappers + request DTOs |
 | Rust | `src-tauri/src/agent_state.rs` | Event-to-state assembly (`LiveAgentState`) |
-| Rust | `src-tauri/src/db.rs` | SQLite schema and persistence |
+| Rust | `src-tauri/src/db.rs` | SQLite schema and persistence (`tokio-rusqlite`) |
 | Rust | `src-tauri/src/sidecar_protocol.rs` | JSONL wire protocol types |
 | Rust | `src-tauri/src/models.rs` | Provider auth, model cache |
+| Rust | `src-tauri/src/persistence.rs` | Prompt/avatar/attachment file I/O |
+| Rust | `src-tauri/src/project/` | Project detection + instruction file commands |
+| Rust | `src-tauri/src/thinking_config.rs` | Per-model thinking-level defaults (`thinking.toml`) |
 | Rust | `src-tauri/src/ws.rs` | WebSocket bridge (mirrors Tauri commands) |
+| Rust | `src-tauri/src/error.rs` | `MonarchError` unified error type |
+| Rust | `src-tauri/src/zoom.rs` | Window zoom command |
 | Sidecar | `sidecar/src/runtime-manager.ts` | Pi SDK session host |
 | Sidecar | `sidecar/src/protocol.ts` | Command + event type definitions |
 | Sidecar | `sidecar/src/shadow-oath.ts` | Shadow identity + system prompt builder |
+| Sidecar | `sidecar/src/ui-bridge.ts` | Pi extension UI request/response routing |
 | Frontend | `src/App.svelte` | App shell, restore flow, agent creation |
 | Frontend | `src/lib/AgentView.svelte` | Live agent UI, event handling, session continuation |
+| Frontend | `src/lib/AgentRoster.svelte` | Left-rail agent list (portraits + status) |
+| Frontend | `src/lib/ChatInput.svelte` | Composer: textarea, attachments, @-mention autocomplete |
 | Frontend | `src/lib/api.ts` | Unified IPC (Tauri webview or WebSocket fallback) |
 | Frontend | `src/lib/bindings.ts` | Auto-generated Tauri command types (**do not edit**) |
-| Frontend | `src/lib/liveAgentStore.svelte.ts` | Per-agent reactive state (SvelteMap + `$state`) |
+| Frontend | `src/lib/toolbox/liveAgentStore.svelte.ts` | Per-agent reactive state (SvelteMap + `$state`) |
+| Frontend | `src/lib/stores/agentStore.svelte.ts` | Active/saved agent list + selection state |
+| Frontend | `src/lib/thinking.ts` | Thinking-level UI catalogue + per-provider labels |
 
 Full file reference: [ONBOARDING.md](./ONBOARDING.md) section 12.
 
@@ -113,7 +128,12 @@ Full file reference: [ONBOARDING.md](./ONBOARDING.md) section 12.
 - **Session ancestry is canonical** — continuing a conversation creates a new session row with `parent_session_id`. `get_messages_with_ancestry` is the only correct way to load history.
 - **Sidecar is singleton** — one Node process hosts many agents, keyed by `agentId`. Not one process per agent.
 - **Legacy columns** — `sessions.pi_session_file` and `agents.custom_prompt` exist in the schema but are inert. Don't build on them.
+- **Schema evolves via `ALTER TABLE` migrations** — `db::init_schema` applies idempotent `ALTER TABLE` / `CREATE TABLE IF NOT EXISTS` blocks at the end of init. Never rewrite the base `CREATE TABLE` for columns added post-launch — add a new migration block. Current post-launch columns: `sessions.parent_session_id`, `agents.project_id`, `agents.context_window`, `agents.archived_at`, `agents.avatar_type`, `agents.avatar_path`, `messages.duration_ms`. Post-launch tables: `projects`, `agent_templates`, `ui_state`, `agent_stats`, `agent_tool_usage`, `message_attachments`.
+- **Archive lifecycle** — `agents.archived_at IS NULL` means active; non-null means archived. Use `db_archive_agent` / `db_unarchive_agent`, not hard delete, unless the user explicitly asks.
+- **Attachments live on disk** — `message_attachments` is just an ordered reference; bytes go under `~/.config/monarch/attachments/{uuid}.{ext}`. Same pattern as prompts and avatars.
 - **Prompt overrides are files** — stored at `~/.config/monarch/prompts/{agent_id}.md`, not in the DB. Editable externally.
+- **Avatars are files** — rive / image uploads live under `~/.config/monarch/avatars/`; the DB holds `avatar_type` + `avatar_path` only.
+- **Projects are the grouping unit** — `projects` table + `agents.project_id` FK, keyed by git-root path (`find_project_root` walks up to `.git`). Project instructions come from `projects.instructions` (DB, editable in UI) and fall back to reading `AGENTS.md` / `CLAUDE.md` at the project root; the DB value takes precedence, the file value seeds the DB on first detect. The resolved string is sent to the sidecar as `projectInstructions` in `create_session` and appended to the system prompt by `buildSystemPrompt`.
 - **Thinking levels are Pi-canonical on the wire** — `off` / `minimal` / `low` / `medium` / `high` / `xhigh`. `off` is a first-class value (pi-agent-core maps it to `undefined` reasoning). Per-provider display labels and per-model supported subsets live in `src/lib/thinking.ts`. Per-model defaults come from `~/.config/monarch/thinking.toml` (see `src-tauri/src/thinking_config.rs`); absence of a matching entry falls back to a conservative built-in table.
 - **Toolbox tools stay mounted across agent switches** — if your tool keeps per-agent state, key it by `agentContext.agentId`.
 
@@ -122,5 +142,7 @@ Full file reference: [ONBOARDING.md](./ONBOARDING.md) section 12.
 1. Create component at `src/lib/toolbox/tools/YourTool.svelte` — must accept `{ agentContext }: ToolProps`.
 2. Register it in `src/lib/toolbox/registry.ts` with a stable `id`, `title`, SVG `icon`, and optional `order`.
 3. (Optional) Add backend: Tauri command in `src-tauri/src/toolbox/`, register in `lib.rs` handler + `ws.rs` dispatch.
+
+Existing tools to crib from: `PlaceholderTool.svelte` (full store + backend path), `ContextInspectorTool.svelte` (reads `agentContext.live`), `ShadowStatsTool.svelte` (pulls from `db_get_agent_stats`).
 
 Full guide: [ONBOARDING.md](./ONBOARDING.md) section 7.
