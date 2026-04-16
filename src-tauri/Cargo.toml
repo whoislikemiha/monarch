@@ -33,7 +33,12 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tokio-rusqlite = { version = "0.7.0", features = ["bundled"] }
 base64 = "0.22"
+<<<<<<< HEAD
 toml = "0.8"
+=======
+ignore = "0.4"
+nucleo-matcher = "0.3"
+>>>>>>> 420c3e3 (feat(mon-76): add list_paths backend command for @-mention autocomplete)
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

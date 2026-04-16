@@ -252,6 +252,16 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             let result = crate::project::read_project_instructions(&cwd);
             Ok(result.map(Value::String).unwrap_or(Value::Null))
         }
+        "list_paths" => {
+            let cwd = str_field(&args, "cwd")?;
+            let query = str_field(&args, "query")?;
+            let result = tokio::task::spawn_blocking(move || {
+                crate::mention::list_paths_inner(&cwd, &query)
+            })
+            .await
+            .map_err(|e| MonarchError::persistence(format!("list_paths join error: {e}")))??;
+            serde_json::to_value(result).map_err(MonarchError::from)
+        }
 
         // ---- Models ----
         "get_models" => {
