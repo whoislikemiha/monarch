@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Agent, DisplayItem, SessionStats, Usage } from "./types";
+  import type { Agent, AssistantMessage, DisplayItem, SessionStats, Usage } from "./types";
   import { ShadowAvatar } from "./avatar";
 
   export type PortraitCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -14,6 +14,8 @@
     thinkingLevel,
     model,
     sessionStats,
+    streamingMessage,
+    nowMs,
     onabort,
     onthinking,
     onprompt,
@@ -23,6 +25,8 @@
     onprojectedit,
     onmove,
     corner = "bottom-right",
+    minified = false,
+    onminify,
   }: {
     agent: Agent;
     projectName?: string;
@@ -33,6 +37,8 @@
     thinkingLevel?: string;
     model?: string;
     sessionStats?: SessionStats;
+    streamingMessage?: AssistantMessage | null;
+    nowMs?: number;
     onabort: () => void;
     onthinking: (level: string) => void;
     onprompt?: () => void;
@@ -42,6 +48,8 @@
     onprojectedit?: () => void;
     onmove?: (corner: PortraitCorner) => void;
     corner?: PortraitCorner;
+    minified?: boolean;
+    onminify?: (next: boolean) => void;
   } = $props();
 
   // --- Drag to reposition ---
@@ -121,7 +129,6 @@
   const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
   let showThinkingPicker = $state(false);
   let showCommandMenu = $state(false);
-  let isMinified = $state(false);
 
   function runCommand(fn?: () => void) {
     showCommandMenu = false;
@@ -223,6 +230,54 @@
     usedRatio >= 0.9 ? "critical" : usedRatio >= 0.7 ? "warning" : "healthy"
   );
 
+  // Tokens-per-second. Prefer live estimate while streaming (output text
+  // length / wall-clock elapsed from turnStartedAtMs), otherwise fall back
+  // to the last completed turn's usage.output over its turn duration.
+  let streamingOutputTokens = $derived.by(() => {
+    if (!streamingMessage?.content) return 0;
+    return streamingMessage.content.reduce((acc, block) => {
+      if (block.type === "text") return acc + estimateTokens(block.text);
+      if (block.type === "thinking") return acc + estimateTokens(block.thinking);
+      return acc;
+    }, 0);
+  });
+
+  let lastCompletedTokPerSec = $state<number | null>(null);
+  let lastStreamStartMs = $state<number | null>(null);
+
+  $effect(() => {
+    if (isStreaming) {
+      if (lastStreamStartMs === null && streamingMessage?.turnStartedAtMs != null) {
+        lastStreamStartMs = streamingMessage.turnStartedAtMs;
+      }
+    } else if (lastStreamStartMs !== null) {
+      const elapsedMs = Date.now() - lastStreamStartMs;
+      const out = streamingOutputTokens || lastUsage?.output || 0;
+      if (elapsedMs > 250 && out > 0) {
+        lastCompletedTokPerSec = (out / elapsedMs) * 1000;
+      }
+      lastStreamStartMs = null;
+    }
+  });
+
+  let tokPerSec = $derived.by<number | null>(() => {
+    if (isStreaming && streamingMessage?.turnStartedAtMs != null) {
+      const start = streamingMessage.turnStartedAtMs;
+      const now = nowMs ?? Date.now();
+      const elapsed = (now - start) / 1000;
+      if (elapsed < 0.3 || streamingOutputTokens <= 0) return null;
+      return streamingOutputTokens / elapsed;
+    }
+    return lastCompletedTokPerSec;
+  });
+
+  function formatRate(n: number | null): string {
+    if (n == null) return "";
+    if (n >= 100) return `${Math.round(n)} tok/s`;
+    if (n >= 10) return `${n.toFixed(1)} tok/s`;
+    return `${n.toFixed(2)} tok/s`;
+  }
+
   // Rolling sparkline of context occupancy over the last N samples.
   // Only push when the value actually changes so we don't stack duplicates
   // on every snapshot bump.
@@ -274,7 +329,7 @@
   class="portrait"
   class:streaming={isStreaming}
   class:dragging={isDragging}
-  class:minified={isMinified}
+  class:minified={minified}
   data-corner={corner}
   bind:this={portraitEl}
 >
@@ -292,16 +347,16 @@
     </div>
     <button
       class="minify-btn"
-      onclick={(e: MouseEvent) => { e.stopPropagation(); isMinified = !isMinified; showCommandMenu = false; showThinkingPicker = false; }}
-      title={isMinified ? "Expand portrait" : "Minify portrait"}
-      aria-label={isMinified ? "Expand" : "Minify"}
-      aria-pressed={isMinified}
+      onclick={(e: MouseEvent) => { e.stopPropagation(); onminify?.(!minified); showCommandMenu = false; showThinkingPicker = false; }}
+      title={minified ? "Expand portrait" : "Minify portrait"}
+      aria-label={minified ? "Expand" : "Minify"}
+      aria-pressed={minified}
     >
-      {isMinified ? "▢" : "–"}
+      {minified ? "▢" : "–"}
     </button>
   </div>
 
-  {#if !isMinified && hasContextMeter}
+  {#if !minified && hasContextMeter}
     <div
       class="context-meter"
       class:warning={contextState === "warning"}
@@ -338,13 +393,13 @@
     >
       <ShadowAvatar
         agentId={agent.id}
-        size={isMinified ? 112 : 180}
+        size={minified ? 128 : 180}
         avatarType={agent.avatarType}
         avatarPath={agent.avatarPath}
       />
     </button>
 
-    {#if isMinified && hasContextMeter}
+    {#if minified && hasContextMeter}
       <div
         class="mini-ctx"
         class:warning={contextState === "warning"}
@@ -352,13 +407,16 @@
         title={`Context: ${liveContextTokens.toLocaleString()} / ${resolvedContextWindow.toLocaleString()} tokens (${usedPct}% used, ${freePct}% free)`}
       >
         <div class="mini-ctx-fill" style:width={`${usedPct}%`}></div>
+        {#if tokPerSec != null}
+          <span class="mini-ctx-rate">{formatRate(tokPerSec)}</span>
+        {/if}
         <span class="mini-ctx-number">{formatTokens(liveContextTokens)}/{formatTokens(resolvedContextWindow)}</span>
       </div>
     {/if}
 
     <div class="avatar-caption">
       <span class="caption-name">{agent.shadow?.shadowName || agent.name}</span>
-      {#if agent.shadow?.shadowTitle && !isMinified}
+      {#if agent.shadow?.shadowTitle && !minified}
         <span class="caption-title">{agent.shadow.shadowTitle}</span>
       {/if}
     </div>
@@ -402,7 +460,7 @@
     {/if}
   </div>
 
-  {#if !isMinified}
+  {#if !minified}
   <div class="stack">
     {#if model}
       <span class="model" title={model}>{model}</span>
@@ -431,6 +489,16 @@
         </div>
       {/if}
     </div>
+
+    {#if tokPerSec != null}
+      <span
+        class="rate-tag"
+        class:streaming-rate={isStreaming}
+        title={isStreaming ? "Live output rate" : "Last turn's output rate"}
+      >
+        {formatRate(tokPerSec)}
+      </span>
+    {/if}
 
     {#if hasContextMeter}
       {#if sessionStats && sessionStats.totalTokens > 0}
@@ -547,8 +615,8 @@
   }
 
   .portrait.minified .avatar-frame {
-    width: 112px;
-    height: 112px;
+    width: 128px;
+    height: 128px;
   }
 
   .mini-ctx {
@@ -562,13 +630,24 @@
     color: #fff;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: space-between;
+    gap: 6px;
     font-size: 10px;
     font-weight: 600;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     overflow: hidden;
     pointer-events: none;
     border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+
+  .mini-ctx-rate {
+    position: relative;
+    z-index: 1;
+    font-size: 9px;
+    font-weight: 500;
+    opacity: 0.85;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+    white-space: nowrap;
   }
 
   .mini-ctx-fill {
@@ -933,6 +1012,21 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .rate-tag {
+    font-size: 10px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    color: var(--text-secondary);
+    padding: 3px 6px;
+    border-radius: 4px;
+    background: var(--bg-panel-2);
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .rate-tag.streaming-rate {
+    color: var(--accent);
   }
 
 </style>

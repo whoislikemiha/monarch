@@ -45,15 +45,19 @@
   let showPromptEditor = $state(false);
   let showHistory = $state(false);
 
-  // MON-77: portrait-corner preference (persisted via ui_state).
+  // MON-77: portrait placement + minified preference (persisted via ui_state).
   let portraitCorner = $state<PortraitCorner>("bottom-right");
+  let portraitMinified = $state<boolean>(false);
 
   onMount(async () => {
     try {
-      const saved = await invoke<string | null>("db_get_ui_state", { key: "portraitCorner" });
-      if (saved === "top-left" || saved === "top-right" || saved === "bottom-left" || saved === "bottom-right") {
-        portraitCorner = saved;
+      const savedCorner = await invoke<string | null>("db_get_ui_state", { key: "portraitCorner" });
+      if (savedCorner === "top-left" || savedCorner === "top-right" || savedCorner === "bottom-left" || savedCorner === "bottom-right") {
+        portraitCorner = savedCorner;
       }
+      const savedMinified = await invoke<string | null>("db_get_ui_state", { key: "portraitMinified" });
+      if (savedMinified === "true") portraitMinified = true;
+      else if (savedMinified === "false") portraitMinified = false;
     } catch {}
   });
 
@@ -61,6 +65,13 @@
     portraitCorner = c;
     try {
       await invoke("db_set_ui_state", { key: "portraitCorner", value: c });
+    } catch {}
+  }
+
+  async function setPortraitMinified(next: boolean) {
+    portraitMinified = next;
+    try {
+      await invoke("db_set_ui_state", { key: "portraitMinified", value: next ? "true" : "false" });
     } catch {}
   }
 
@@ -720,6 +731,10 @@
           {onprojectedit}
           onmove={setPortraitCorner}
           corner={portraitCorner}
+          minified={portraitMinified}
+          onminify={setPortraitMinified}
+          {streamingMessage}
+          {nowMs}
         />
       </div>
     </div>
