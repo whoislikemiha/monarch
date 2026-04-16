@@ -3,8 +3,10 @@
   import { invoke } from "$lib/api";
   import { open } from "@tauri-apps/plugin-dialog";
   import { matchBinding } from "$lib/keybindings.svelte";
-  import type { AgentConfig, AgentTemplate, ShadowGrade } from "./types";
+  import type { AgentConfig, DetectedProject, ShadowGrade } from "./types";
   import { SHADOW_GRADES } from "./types";
+  import type { AgentTemplateRow, ModelInfo, ProviderAuthStatus } from "./bindings";
+  import { PROVIDERS, REFRESHABLE_PROVIDERS, THINKING_LEVELS } from "./providers";
   import { agentStore } from "./stores/agentStore.svelte";
 
   let {
@@ -29,50 +31,11 @@
   let shadowTitle = $state("");
   let shadowGrade: ShadowGrade = $state("Knight");
 
-  const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
-
-  const providers = [
-    { label: "Anthropic", value: "anthropic" },
-    { label: "OpenAI Codex", value: "openai-codex" },
-    { label: "OpenRouter", value: "openrouter" },
-    { label: "LM Studio", value: "lmstudio" },
-  ];
-
-  // Providers whose model lists are fetched over the network and benefit
-  // from an explicit refresh action.
-  const REFRESHABLE_PROVIDERS = new Set(["openrouter", "lmstudio"]);
-
   let selectedProvider = $state("openrouter");
 
   // Agent templates
-  let templates: AgentTemplate[] = $state([]);
+  let templates: AgentTemplateRow[] = $state([]);
   let saveAsTemplate = $state(false);
-
-  // Model list from backend
-  interface ModelInfo {
-    id: string;
-    name: string;
-    provider: string;
-    // LM Studio only — live `loaded_context_length` as reported by the
-    // native `/api/v0/models` endpoint. Absent on the `/v1/models` fallback
-    // path and for non-LM-Studio providers.
-    contextWindow?: number;
-  }
-
-  interface ProviderAuthStatus {
-    provider: string;
-    checked: boolean;
-    configured: boolean;
-    source?: string | null;
-    message: string;
-  }
-
-  interface DetectedProject {
-    rootPath: string;
-    name: string;
-    projectId?: string | null;
-    hasInstructions: boolean;
-  }
 
   let allModels: ModelInfo[] = $state([]);
   let modelsLoading = $state(false);
@@ -132,7 +95,7 @@
 
   async function loadTemplates() {
     try {
-      templates = await invoke<AgentTemplate[]>("db_list_agent_templates");
+      templates = await invoke<AgentTemplateRow[]>("db_list_agent_templates");
     } catch {
       templates = [];
     }
@@ -142,7 +105,7 @@
     loadTemplates();
   });
 
-  function applyTemplate(t: AgentTemplate) {
+  function applyTemplate(t: AgentTemplateRow) {
     if (t.provider) selectedProvider = t.provider;
     // The provider $effect resets modelInput, so defer model + other fields
     // until after the current microtask so they stick.
@@ -160,7 +123,7 @@
     const name = shadowName.trim();
     if (!name) return;
     const now = new Date().toISOString();
-    const template: AgentTemplate = {
+    const template: AgentTemplateRow = {
       id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       name,
       provider: selectedProvider,
@@ -374,7 +337,7 @@
     <div class="section">
       <span class="label">Provider</span>
       <div class="preset-grid">
-        {#each providers as p}
+        {#each PROVIDERS as p}
           <button
             class="preset-btn"
             class:active={selectedProvider === p.value}
@@ -525,7 +488,7 @@
       <div class="field">
         <label class="label" for="thinking">Thinking</label>
         <select id="thinking" bind:value={thinkingLevel}>
-          {#each thinkingLevels as level}
+          {#each THINKING_LEVELS as level}
             <option value={level}>{level}</option>
           {/each}
         </select>
