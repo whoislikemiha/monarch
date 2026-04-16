@@ -160,3 +160,21 @@ export function clampLevel(
   if (level && isThinkingLevel(level) && levels.includes(level)) return level;
   return levels[0] ?? "off";
 }
+
+// ── Visual intensity ──────────────────────────────────────────────────────
+//
+// Drives the meter rendered in AgentControls and anywhere else the UI wants
+// to hint at "how hard is the model thinking". 0 = off (cold), 5 = xhigh (hot).
+
+const LEVEL_INTENSITY: Record<ThinkingLevel, number> = {
+  off: 0,
+  minimal: 1,
+  low: 2,
+  medium: 3,
+  high: 4,
+  xhigh: 5,
+};
+
+export function levelIntensity(level: ThinkingLevel): number {
+  return LEVEL_INTENSITY[level] ?? 0;
+}
