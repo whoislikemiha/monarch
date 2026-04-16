@@ -90,7 +90,14 @@ export const commands = {
 	getAgentPrompt: (agentId: string) => typedError<string | null, ErrorDto>(__TAURI_INVOKE("get_agent_prompt", { agentId })),
 	saveAgentPrompt: (agentId: string, prompt: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("save_agent_prompt", { agentId, prompt })),
 	getPromptsDir: () => typedError<string, ErrorDto>(__TAURI_INVOKE("get_prompts_dir")),
+	/**
+	 *  MON-73: Copy a user-selected image file into the Monarch avatars directory,
+	 *  naming it after the agent. Returns the stored absolute path.
+	 */
+	saveAvatarImage: (agentId: string, srcPath: string) => typedError<string, ErrorDto>(__TAURI_INVOKE("save_avatar_image", { agentId, srcPath })),
 	dbUpsertAgent: (agent: AgentRow) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_upsert_agent", { agent })),
+	// MON-73: Update user-editable agent fields without touching spawn-time fields.
+	dbUpdateAgent: (payload: AgentUpdatePayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_agent", { payload })),
 	dbGetAgents: (includeArchived: boolean | null) => typedError<AgentRow[], ErrorDto>(__TAURI_INVOKE("db_get_agents", { includeArchived })),
 	dbArchiveAgent: (agentId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_archive_agent", { agentId })),
 	dbUnarchiveAgent: (agentId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_unarchive_agent", { agentId })),
@@ -153,6 +160,13 @@ export type AgentRow = {
 	 *  the shadow from the default active roster. See `archive_agent_internal`.
 	 */
 	archivedAt: string | null,
+	// MON-73: "rive" | "image" | null (null = default rive preset).
+	avatarType: string | null,
+	/**
+	 *  MON-73: For "rive": path to .riv file (null = default). For "image":
+	 *  built-in web path ("/avatars/foo.png") or absolute filesystem path.
+	 */
+	avatarPath: string | null,
 };
 
 export type AgentStats = {
@@ -182,6 +196,21 @@ export type AgentTemplateRow = {
 	shadowGrade: string | null,
 	createdAt: string,
 	updatedAt: string,
+};
+
+// MON-73: Payload for updating editable agent fields post-creation.
+export type AgentUpdatePayload = {
+	id: string,
+	name: string,
+	shadowName: string | null,
+	shadowTitle: string | null,
+	shadowGrade: string | null,
+	provider: string | null,
+	model: string | null,
+	thinkingLevel: string | null,
+	cwd: string | null,
+	avatarType: string | null,
+	avatarPath: string | null,
 };
 
 export type Cost = {

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { Rive, EventType, StateMachineInputType, Layout, Fit, Alignment } from "@rive-app/canvas";
   import type { StateMachineInput } from "@rive-app/canvas";
+  import { convertFileSrc } from "@tauri-apps/api/core";
   import { liveAgentStore, detachedLiveState } from "../toolbox/liveAgentStore.svelte";
   import {
     deriveAnimationState,
@@ -17,12 +18,42 @@
     size = 64,
     stateMachine = DEFAULT_STATE_MACHINE,
     riveFile = DEFAULT_RIV,
+    avatarType,
+    avatarPath,
   }: {
     agentId: string;
     size?: number;
     stateMachine?: string;
     riveFile?: string;
+    /** MON-73: "rive" | "image" | undefined (undefined = default rive preset). */
+    avatarType?: "rive" | "image";
+    /**
+     * MON-73: For "rive" — path to .riv file; for "image" — built-in web path
+     * ("/avatars/foo.svg") or absolute filesystem path (loaded via convertFileSrc).
+     */
+    avatarPath?: string;
   } = $props();
+
+  // Resolved flags
+  const isImage = $derived(avatarType === "image");
+  const effectiveRivFile = $derived(
+    !isImage && avatarPath ? avatarPath : riveFile
+  );
+
+  /**
+   * Resolve image src: built-in paths start with "/" (served from static),
+   * absolute filesystem paths are wrapped in Tauri's asset protocol.
+   */
+  const imageSrc = $derived.by(() => {
+    if (!avatarPath) return "";
+    if (avatarPath.startsWith("/")) return avatarPath;
+    // Absolute filesystem path — use Tauri's asset protocol.
+    try {
+      return convertFileSrc(avatarPath);
+    } catch {
+      return avatarPath;
+    }
+  });
 
   let canvasEl: HTMLCanvasElement;
   let riveInstance: Rive | null = null;
@@ -104,12 +135,14 @@
   }
 
   onMount(() => {
+    if (isImage) return; // No Rive init needed for static images
+
     const dpr = window.devicePixelRatio || 1;
     canvasEl.width = size * dpr;
     canvasEl.height = size * dpr;
 
     riveInstance = new Rive({
-      src: riveFile,
+      src: effectiveRivFile,
       canvas: canvasEl,
       stateMachines: stateMachine,
       layout: new Layout({ fit: Fit.Contain, alignment: Alignment.Center }),
@@ -167,15 +200,30 @@
   }
 </script>
 
-<canvas
-  bind:this={canvasEl}
-  style="width: {size}px; height: {size}px;"
-  class="shadow-avatar"
-></canvas>
+{#if isImage}
+  <img
+    src={imageSrc}
+    alt="Agent avatar"
+    class="shadow-avatar shadow-avatar--image"
+    style="width: {size}px; height: {size}px;"
+    draggable="false"
+  />
+{:else}
+  <canvas
+    bind:this={canvasEl}
+    style="width: {size}px; height: {size}px;"
+    class="shadow-avatar"
+  ></canvas>
+{/if}
 
 <style>
   .shadow-avatar {
     display: block;
     image-rendering: auto;
+  }
+
+  .shadow-avatar--image {
+    object-fit: cover;
+    border-radius: 50%;
   }
 </style>

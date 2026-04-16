@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <rect width="200" height="200" rx="100" fill="#1a1a2e"/>
+  <!-- Body silhouette -->
+  <ellipse cx="100" cy="130" rx="40" ry="30" fill="#6b21a8" opacity="0.7"/>
+  <rect x="75" y="120" width="50" height="55" rx="8" fill="#6b21a8" opacity="0.7"/>
+  <!-- Head -->
+  <circle cx="100" cy="85" r="28" fill="#7c3aed" opacity="0.85"/>
+  <!-- Crown / horns -->
+  <path d="M78 70 L82 50 L92 65 L100 45 L108 65 L118 50 L122 70" stroke="#a855f7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Eyes -->
+  <ellipse cx="91" cy="86" rx="5" ry="6" fill="#c084fc"/>
+  <ellipse cx="109" cy="86" rx="5" ry="6" fill="#c084fc"/>
+  <ellipse cx="91" cy="87" rx="2.5" ry="3" fill="#1a1a2e"/>
+  <ellipse cx="109" cy="87" rx="2.5" ry="3" fill="#1a1a2e"/>
+  <!-- Glow pupils -->
+  <circle cx="91" cy="86" r="1" fill="#e9d5ff"/>
+  <circle cx="109" cy="86" r="1" fill="#e9d5ff"/>
+  <!-- Shadow / aura ring -->
+  <circle cx="100" cy="100" r="96" stroke="#7c3aed" stroke-width="1.5" opacity="0.3"/>
+  <circle cx="100" cy="100" r="88" stroke="#a855f7" stroke-width="0.5" opacity="0.15"/>
+</svg>
