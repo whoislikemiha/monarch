@@ -658,8 +658,6 @@
   {:else}
     <!-- Normal chat view -->
     <AgentHeader
-      {agent}
-      {projectName}
       onprompt={() => (showPromptEditor = true)}
       onhistory={() => (showHistory = true)}
       oncompact={compact}
