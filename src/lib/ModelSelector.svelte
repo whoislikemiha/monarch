@@ -1,7 +1,8 @@
 <script lang="ts">
   import { invoke } from "$lib/api";
   import type { ModelInfo, ProviderAuthStatus } from "./bindings";
-  import { PROVIDERS, REFRESHABLE_PROVIDERS, THINKING_LEVELS } from "./providers";
+  import { PROVIDERS, REFRESHABLE_PROVIDERS } from "./providers";
+  import { availableLevels, displayLabel, supportsThinking } from "./thinking";
 
   // Bindable surface. These four values are the entire user-visible output of
   // the selector — the spawn form reads them on submit, the future runtime
@@ -304,14 +305,16 @@
   {/if}
 </div>
 
-<div class="field">
-  <label class="label" for="thinking">Thinking</label>
-  <select id="thinking" bind:value={thinkingLevel}>
-    {#each THINKING_LEVELS as level}
-      <option value={level}>{level}</option>
-    {/each}
-  </select>
-</div>
+{#if supportsThinking(provider, model)}
+  <div class="field">
+    <label class="label" for="thinking">Thinking</label>
+    <select id="thinking" bind:value={thinkingLevel}>
+      {#each availableLevels(provider, model) as level}
+        <option value={level}>{displayLabel(provider, model, level)}</option>
+      {/each}
+    </select>
+  </div>
+{/if}
 
 <style>
   .section {

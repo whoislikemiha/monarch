@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { DisplayItem, SessionStats, Usage } from "./types";
+  import { availableLevels, displayLabel, supportsThinking } from "./thinking";
 
   let {
     isStreaming,
@@ -7,6 +8,7 @@
     lastUsage,
     contextWindow,
     thinkingLevel,
+    provider,
     model,
     sessionStats,
     onabort,
@@ -17,6 +19,7 @@
     lastUsage?: Usage;
     contextWindow?: number;
     thinkingLevel?: string;
+    provider?: string;
     model?: string;
     sessionStats?: SessionStats;
     onabort: () => void;
@@ -25,8 +28,13 @@
 
   const DEFAULT_CONTEXT_WINDOW = 128000;
   const CHARS_PER_TOKEN = 4;
-  const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
   let showThinkingPicker = $state(false);
+  let levels = $derived(availableLevels(provider ?? "", model ?? ""));
+  let modelSupportsThinking = $derived(supportsThinking(provider ?? "", model ?? ""));
+  let currentLevel = $derived(thinkingLevel || "off");
+  let currentLevelLabel = $derived(
+    displayLabel(provider ?? "", model ?? "", currentLevel as any),
+  );
 
   function formatTokens(n: number): string {
     if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
@@ -139,28 +147,30 @@
       <span class="control-tag model" title={model}>{model}</span>
     {/if}
 
-    <div class="thinking-wrap">
-      <button
-        class="control-btn"
-        onclick={() => (showThinkingPicker = !showThinkingPicker)}
-        title="Set thinking level"
-      >
-        thinking: {thinkingLevel || "off"}
-      </button>
-      {#if showThinkingPicker}
-        <div class="thinking-dropdown">
-          {#each thinkingLevels as level}
-            <button
-              class="thinking-option"
-              class:active={level === (thinkingLevel || "off")}
-              onclick={() => { onthinking(level); showThinkingPicker = false; }}
-            >
-              {level}
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
+    {#if modelSupportsThinking}
+      <div class="thinking-wrap">
+        <button
+          class="control-btn"
+          onclick={() => (showThinkingPicker = !showThinkingPicker)}
+          title="Set thinking level"
+        >
+          thinking: {currentLevelLabel}
+        </button>
+        {#if showThinkingPicker}
+          <div class="thinking-dropdown">
+            {#each levels as level}
+              <button
+                class="thinking-option"
+                class:active={level === currentLevel}
+                onclick={() => { onthinking(level); showThinkingPicker = false; }}
+              >
+                {displayLabel(provider ?? "", model ?? "", level)}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
 
     {#if hasContextMeter}
       <div
