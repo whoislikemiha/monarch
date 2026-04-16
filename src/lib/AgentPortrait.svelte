@@ -248,6 +248,34 @@
 
   .portrait.streaming {
     border-color: var(--accent);
+    animation: portrait-breath 1.8s ease-in-out infinite;
+  }
+
+  .portrait.streaming .avatar-frame {
+    border-color: var(--accent);
+    animation: avatar-glow 1.8s ease-in-out infinite;
+  }
+
+  @keyframes portrait-breath {
+    0%, 100% {
+      box-shadow:
+        0 8px 24px var(--shadow-dark, rgba(0, 0, 0, 0.35)),
+        0 0 0 0 color-mix(in srgb, var(--accent) 35%, transparent);
+    }
+    50% {
+      box-shadow:
+        0 8px 24px var(--shadow-dark, rgba(0, 0, 0, 0.35)),
+        0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent);
+    }
+  }
+
+  @keyframes avatar-glow {
+    0%, 100% {
+      box-shadow: inset 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
+    }
+    50% {
+      box-shadow: inset 0 0 24px color-mix(in srgb, var(--accent) 55%, transparent);
+    }
   }
 
   .avatar-frame {
