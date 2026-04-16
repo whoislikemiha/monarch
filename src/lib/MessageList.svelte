@@ -169,7 +169,7 @@
     padding: 10px 14px;
     background: var(--bg-panel-2);
     border-radius: 8px;
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--accent-blue-border-subtle);
   }
 
   .streaming-indicator {
