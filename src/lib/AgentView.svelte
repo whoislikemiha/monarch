@@ -9,6 +9,7 @@
   import ExtensionDialog from "./ExtensionDialog.svelte";
   import PromptEditor from "./PromptEditor.svelte";
   import HistoryPanel from "./HistoryPanel.svelte";
+  import ImageLightbox from "./ImageLightbox.svelte";
   import type { Agent, DisplayItem, ExtensionUIRequest } from "./types";
   import type { LiveAgentState as WireLiveAgentState } from "./bindings";
   import {
@@ -56,6 +57,13 @@
   let sessionReadyResolve: (() => void) | null = null;
   let boundSessionId: string | undefined = $state(undefined);
   let activationVersion = 0;
+  let lightboxSrc = $state<string | null>(null);
+
+  // Ephemeral map of sent-with-message images, keyed by the user message's
+  // 0-based index among user messages in `items`. Cleared whenever we bind a
+  // different agent/session or start a new one — image data is not persisted
+  // alongside history, so reloaded sessions will show text only.
+  let sentImages = $state(new Map<number, PendingImage[]>());
 
   // Live state — read from liveAgentStore keyed by the bound agent id.
   // The store is a passive receiver of Rust-assembled snapshots from
@@ -265,6 +273,14 @@
       await agentStore.spawnStoppedAgent(agent.id);
       await sessionReady;
     }
+    // Record images against the upcoming user message *before* dispatching
+    // so the MessageList lookup works the moment Rust emits the new state.
+    if (images.length > 0) {
+      const userIndex = live.items.filter((i) => i.kind === "user").length;
+      const next = new Map(sentImages);
+      next.set(userIndex, images);
+      sentImages = next;
+    }
     if (images.length === 0) {
       await sendPiCommand({ type: "prompt", message });
     } else {
@@ -386,6 +402,7 @@
       sessions: nextSessions,
     }));
     boundSessionId = newSessionId;
+    sentImages = new Map();
 
     // Clear Rust-owned live state and emit a fresh snapshot. Passing
     // sessionId=null resets to an empty state with a single status item.
@@ -494,6 +511,8 @@
     boundSessionId = target.sessionId;
     clearListeners();
     resetUiLocalState();
+    sentImages = new Map();
+    lightboxSrc = null;
 
     const sessionsPromise = refreshSessionsFromDb(target.id);
     const promptPromise = invoke<string | null>("get_agent_prompt", { agentId: target.id })
@@ -581,6 +600,8 @@
 <div
   class="agent-view-wrapper"
   class:dragging={isDragging}
+  role="region"
+  aria-label="Agent view"
   ondragover={handleDragOver}
   ondragleave={handleDragLeave}
   ondrop={handleDrop}
@@ -642,7 +663,14 @@
     />
 
     <div class="messages-scroll" bind:this={scrollContainer} onscroll={updateIsAtBottom}>
-      <MessageList {items} {streamingMessage} {nowMs} agentName={agent.name} />
+      <MessageList
+        {items}
+        {streamingMessage}
+        {nowMs}
+        agentName={agent.name}
+        {sentImages}
+        onimageclick={(src) => (lightboxSrc = src)}
+      />
 
       {#if agent.status === "stopped" && !isStandby}
         <div class="exit-banner">
@@ -701,6 +729,7 @@
       />
       <ChatInput
         onsend={sendPrompt}
+        onthumbclick={(src) => (lightboxSrc = src)}
         disabled={isStreaming}
         bind:this={chatInputRef}
       />
@@ -758,6 +787,7 @@
         sessions: nextSessions,
       }));
       boundSessionId = session.sessionId;
+      sentImages = new Map();
       await refreshSessionsFromDb();
 
       // Replay old messages into the sidecar's LLM context
@@ -796,6 +826,10 @@
     shadowGrade={agent.shadow?.shadowGrade}
     onclose={() => (showPromptEditor = false)}
   />
+{/if}
+
+{#if lightboxSrc}
+  <ImageLightbox src={lightboxSrc} onclose={() => (lightboxSrc = null)} />
 {/if}
 
 <style>
