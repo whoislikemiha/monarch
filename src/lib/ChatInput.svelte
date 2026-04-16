@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { readImage } from "@tauri-apps/plugin-clipboard-manager";
+
   export interface PendingImage {
     id: string;
     dataUrl: string;
@@ -11,10 +13,12 @@
 
   let {
     onsend,
+    onthumbclick,
     disabled = false,
     placeholder: customPlaceholder,
   }: {
     onsend: (message: string, images: PendingImage[]) => void;
+    onthumbclick?: (src: string) => void;
     disabled?: boolean;
     placeholder?: string;
   } = $props();
@@ -59,17 +63,64 @@
     images = images.filter((img) => img.id !== id);
   }
 
-  function handlePaste(e: ClipboardEvent) {
+  /**
+   * WebKitGTK on Linux does not expose images through
+   * ClipboardEvent.clipboardData.items. Try that path first for portability,
+   * then fall back to the Tauri clipboard plugin which reads the image
+   * through the native clipboard service. The fallback returns RGBA bytes,
+   * so we draw them onto a canvas to produce a PNG data URL.
+   */
+  async function handlePaste(e: ClipboardEvent) {
     const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (item.type.startsWith("image/")) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (file) void addFile(file);
-        break;
+    if (items) {
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (file) await addFile(file);
+          return;
+        }
       }
     }
+
+    // Linux fallback — ask Tauri for the clipboard image directly.
+    try {
+      const img = await readImage();
+      const { width, height } = await img.size();
+      const rgba = await img.rgba();
+      const dataUrl = rgbaToDataUrl(
+        rgba instanceof Uint8Array ? rgba : new Uint8Array(rgba),
+        width,
+        height,
+      );
+      if (!dataUrl) return;
+      e.preventDefault();
+      if (images.length >= MAX_IMAGES) return;
+      const commaIdx = dataUrl.indexOf(",");
+      const data = dataUrl.slice(commaIdx + 1);
+      // Rough size guard — PNGs compress well but a giant RGBA buffer could
+      // still produce a too-large image. Check the encoded string length.
+      if (data.length * 0.75 > MAX_BYTES) return;
+      images = [
+        ...images,
+        { id: crypto.randomUUID(), dataUrl, data, mimeType: "image/png" },
+      ];
+    } catch {
+      // No image on the clipboard (just text) — let the default paste happen.
+    }
+  }
+
+  function rgbaToDataUrl(rgba: Uint8Array, width: number, height: number): string | null {
+    if (!width || !height) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    const imageData = ctx.createImageData(width, height);
+    imageData.data.set(rgba);
+    ctx.putImageData(imageData, 0, 0);
+    return canvas.toDataURL("image/png");
   }
 
   function handleFileInput(e: Event) {
@@ -111,7 +162,14 @@
     <div class="image-strip">
       {#each images as img (img.id)}
         <div class="thumb">
-          <img src={img.dataUrl} alt="attachment" />
+          <button
+            type="button"
+            class="thumb-btn"
+            onclick={() => onthumbclick?.(img.dataUrl)}
+            aria-label="View image"
+          >
+            <img src={img.dataUrl} alt="attachment" />
+          </button>
           <button
             class="remove-btn"
             onclick={() => removeImage(img.id)}
@@ -193,7 +251,17 @@
     flex-shrink: 0;
   }
 
-  .thumb img {
+  .thumb-btn {
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: zoom-in;
+  }
+
+  .thumb-btn img {
     width: 100%;
     height: 100%;
     object-fit: cover;
