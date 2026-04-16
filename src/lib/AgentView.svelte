@@ -4,7 +4,7 @@
   import { commands } from "$lib/bindings";
   import MessageList from "./MessageList.svelte";
   import ChatInput, { type PendingImage } from "./ChatInput.svelte";
-  import AgentControls from "./AgentControls.svelte";
+  import AgentPortrait from "./AgentPortrait.svelte";
   import AgentHeader from "./AgentHeader.svelte";
   import ExtensionDialog from "./ExtensionDialog.svelte";
   import PromptEditor from "./PromptEditor.svelte";
@@ -667,27 +667,45 @@
       {onprojectedit}
     />
 
-    <div class="messages-scroll" bind:this={scrollContainer} onscroll={updateIsAtBottom}>
-      <MessageList
-        {items}
-        {streamingMessage}
-        {nowMs}
-        agentName={agent.name}
-        {sentImages}
-        onimageclick={(src) => (lightboxSrc = src)}
-      />
+    <div class="messages-area">
+      <div class="messages-scroll" bind:this={scrollContainer} onscroll={updateIsAtBottom}>
+        <MessageList
+          {items}
+          {streamingMessage}
+          {nowMs}
+          agentName={agent.name}
+          {sentImages}
+          onimageclick={(src) => (lightboxSrc = src)}
+        />
 
-      {#if agent.status === "stopped" && !isStandby}
-        <div class="exit-banner">
-          <span>Agent stopped</span>
-          <button class="restart-btn" onclick={() => agentStore.restartAgent(agent.id)}>Restart</button>
-        </div>
-      {/if}
-      {#if isStandby}
-        <div class="standby-banner">
-          <span>Session paused — send a message to wake</span>
-        </div>
-      {/if}
+        {#if agent.status === "stopped" && !isStandby}
+          <div class="exit-banner">
+            <span>Agent stopped</span>
+            <button class="restart-btn" onclick={() => agentStore.restartAgent(agent.id)}>Restart</button>
+          </div>
+        {/if}
+        {#if isStandby}
+          <div class="standby-banner">
+            <span>Session paused — send a message to wake</span>
+          </div>
+        {/if}
+      </div>
+
+      <div class="portrait-anchor">
+        <AgentPortrait
+          {agent}
+          {projectName}
+          {isStreaming}
+          {items}
+          {lastUsage}
+          contextWindow={agent.contextWindow}
+          thinkingLevel={agent.thinkingLevel}
+          model={agent.model}
+          sessionStats={agent.sessionStats}
+          onabort={abort}
+          onthinking={setThinkingLevel}
+        />
+      </div>
     </div>
 
     {#if agent.stderrLines?.length}
@@ -721,17 +739,6 @@
     {/if}
 
     <div class="input-area">
-      <AgentControls
-        {isStreaming}
-        {items}
-        {lastUsage}
-        contextWindow={agent.contextWindow}
-        thinkingLevel={agent.thinkingLevel}
-        model={agent.model}
-        sessionStats={agent.sessionStats}
-        onabort={abort}
-        onthinking={setThinkingLevel}
-      />
       <ChatInput
         onsend={sendPrompt}
         onthumbclick={(src) => (lightboxSrc = src)}
@@ -855,11 +862,35 @@
     height: 100%;
   }
 
+  .messages-area {
+    flex: 1;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
   .messages-scroll {
     flex: 1;
     overflow-y: auto;
-    padding: 16px 20px;
+    padding: 16px 20px 16px 180px;
     scroll-behavior: smooth;
+  }
+
+  .portrait-anchor {
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    z-index: 5;
+  }
+
+  @media (max-width: 720px) {
+    .messages-scroll {
+      padding-left: 20px;
+    }
+    .portrait-anchor {
+      display: none;
+    }
   }
 
   .input-area {
