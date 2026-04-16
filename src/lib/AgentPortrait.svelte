@@ -45,21 +45,38 @@
   } = $props();
 
   // --- Drag to reposition ---
+  // Transform is written straight to DOM via rAF during drag — going through
+  // $state on every pointermove punishes reactivity and makes the drag feel
+  // choppy. isDragging stays reactive because it only flips twice per drag.
   let portraitEl: HTMLDivElement | undefined = $state(undefined);
   let dragState: {
     startX: number;
     startY: number;
     pointerId: number;
+    lastDX: number;
+    lastDY: number;
+    rafQueued: boolean;
   } | null = null;
-  let dragOffsetX = $state(0);
-  let dragOffsetY = $state(0);
   let isDragging = $state(false);
+
+  function flushTransform() {
+    if (!dragState || !portraitEl) return;
+    dragState.rafQueued = false;
+    portraitEl.style.transform = `translate3d(${dragState.lastDX}px, ${dragState.lastDY}px, 0)`;
+  }
 
   function handleHandleDown(e: PointerEvent) {
     if (e.button !== 0) return;
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    dragState = { startX: e.clientX, startY: e.clientY, pointerId: e.pointerId };
+    dragState = {
+      startX: e.clientX,
+      startY: e.clientY,
+      pointerId: e.pointerId,
+      lastDX: 0,
+      lastDY: 0,
+      rafQueued: false,
+    };
     isDragging = true;
     showCommandMenu = false;
     showThinkingPicker = false;
@@ -67,31 +84,35 @@
 
   function handleHandleMove(e: PointerEvent) {
     if (!dragState || e.pointerId !== dragState.pointerId) return;
-    dragOffsetX = e.clientX - dragState.startX;
-    dragOffsetY = e.clientY - dragState.startY;
+    dragState.lastDX = e.clientX - dragState.startX;
+    dragState.lastDY = e.clientY - dragState.startY;
+    if (!dragState.rafQueued) {
+      dragState.rafQueued = true;
+      requestAnimationFrame(flushTransform);
+    }
   }
 
   function handleHandleUp(e: PointerEvent) {
     if (!dragState || e.pointerId !== dragState.pointerId) return;
     (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
 
-    const anchor = portraitEl?.closest(".messages-area") as HTMLElement | null;
-    if (anchor && portraitEl) {
-      const bounds = anchor.getBoundingClientRect();
-      const pr = portraitEl.getBoundingClientRect();
-      const cx = pr.left + pr.width / 2;
-      const cy = pr.top + pr.height / 2;
-      const midX = bounds.left + bounds.width / 2;
-      const midY = bounds.top + bounds.height / 2;
-      const horiz: "left" | "right" = cx < midX ? "left" : "right";
-      const vert: "top" | "bottom" = cy < midY ? "top" : "bottom";
-      const next: PortraitCorner = `${vert}-${horiz}` as PortraitCorner;
-      onmove?.(next);
+    if (portraitEl) {
+      const anchor = portraitEl.closest(".messages-area") as HTMLElement | null;
+      if (anchor) {
+        const bounds = anchor.getBoundingClientRect();
+        const pr = portraitEl.getBoundingClientRect();
+        const cx = pr.left + pr.width / 2;
+        const cy = pr.top + pr.height / 2;
+        const midX = bounds.left + bounds.width / 2;
+        const midY = bounds.top + bounds.height / 2;
+        const horiz: "left" | "right" = cx < midX ? "left" : "right";
+        const vert: "top" | "bottom" = cy < midY ? "top" : "bottom";
+        onmove?.(`${vert}-${horiz}` as PortraitCorner);
+      }
+      portraitEl.style.transform = "";
     }
 
     dragState = null;
-    dragOffsetX = 0;
-    dragOffsetY = 0;
     isDragging = false;
   }
 
@@ -254,7 +275,6 @@
   class:dragging={isDragging}
   data-corner={corner}
   bind:this={portraitEl}
-  style:transform={isDragging ? `translate(${dragOffsetX}px, ${dragOffsetY}px)` : undefined}
 >
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
@@ -422,19 +442,25 @@
   .portrait.dragging {
     cursor: grabbing;
     opacity: 0.92;
+    backdrop-filter: none;
+    animation: none;
     transition: none;
   }
 
+  .portrait.dragging .avatar-frame {
+    animation: none;
+  }
+
   .drag-handle {
-    height: 14px;
+    height: 8px;
     margin: -4px -4px 0;
     display: flex;
     align-items: center;
     justify-content: center;
     color: var(--text-muted);
     cursor: grab;
-    border-radius: 6px;
-    opacity: 0.55;
+    border-radius: 4px;
+    opacity: 0.35;
     transition: opacity 0.12s, background 0.12s;
   }
 
@@ -448,9 +474,9 @@
   }
 
   .drag-dots {
-    font-size: 14px;
+    font-size: 9px;
     line-height: 1;
-    letter-spacing: 2px;
+    letter-spacing: 1px;
   }
 
   .portrait.streaming {
