@@ -84,20 +84,13 @@ export interface SessionRecord {
   totalCost?: number;
 }
 
-// Reusable spawn preset — captures the fields SpawnDialog exposes so
-// users can one-click-prefill the dialog instead of refilling each time.
-export interface AgentTemplate {
-  id: string;
+// Result of `detect_project` — the auto-generated binding emits an unusable
+// serde_json::Value type, so the shape lives here instead.
+export interface DetectedProject {
+  rootPath: string;
   name: string;
-  provider?: string | null;
-  model?: string | null;
-  thinkingLevel?: string | null;
-  cwd?: string | null;
-  shadowName?: string | null;
-  shadowTitle?: string | null;
-  shadowGrade?: string | null;
-  createdAt: string;
-  updatedAt: string;
+  projectId?: string | null;
+  hasInstructions: boolean;
 }
 
 // Agent spawn config
