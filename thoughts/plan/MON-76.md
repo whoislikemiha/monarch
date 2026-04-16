@@ -75,23 +75,27 @@ The backend side is a new Tauri command (plus its WebSocket twin) that walks a d
 - Update `CLAUDE.md` — add the new reusable component to the file reference table if it turns into a first-class thing.
 - Update `ONBOARDING.md` § 12 with the new Tauri command and the new frontend component.
 
-## Open questions
+## Resolved decisions (confirmed with user)
 
-1. **Is the spawn flow actually a target today?** The issue description assumed SpawnDialog has an initial-prompt textarea — it does not. Do we (a) keep the ticket scoped to `ChatInput.svelte` only + a reusable component ready for later, or (b) also add a new initial-prompt field to SpawnForm as part of this ticket, or (c) also wire `PromptEditor.svelte` (the shadow-oath editor) since it's a textarea even if semantically different? Recommendation: (a) — ship the reusable control, wire only `ChatInput` now.
+1. **Surface scope.** Ship a reusable `MentionAutocomplete` control; wire it into `ChatInput.svelte` only for this ticket. SpawnForm and PromptEditor are **not** targets — adding an initial-prompt field to SpawnForm and deciding whether shadow-oath editing benefits from mentions are both separate tickets.
 
-2. **Fallback when `cwd` is unset.** Some shadows have no `cwd` (optional field). Options: disable the feature (no dropdown appears), default to `$HOME`, or default to the Monarch project root. Recommendation: disable — "no cwd" is the user's signal they haven't chosen a workspace.
+2. **Fallback when `cwd` is unset.** Disable the feature entirely — no dropdown when `agent.cwd` is missing. "No cwd" is the user's signal they haven't chosen a workspace.
 
-3. **Gitignore / hidden file policy.** Default assumption: honor `.gitignore`, skip `.git`, `node_modules`, dotfiles at the top level. Should we surface a toggle to include ignored files? Probably not in v1.
+3. **Fuzzy match style.** True fzf-style fuzzy via `nucleo-matcher`. Gaps allowed, subsequence scoring.
 
-4. **Fuzzy match style.** Token-substring (matches every whitespace-separated token in the filename/path) vs. true fuzzy (gaps allowed, like fzf). IDEs generally do the latter. `nucleo-matcher` gives us true fuzzy out of the box. Confirm that's the desired feel.
+4. **TAB behavior.** TAB is only intercepted while the mention dropdown is open. Outside that window TAB keeps its default textarea behavior. `ChatInput` does not currently indent on TAB, so there is no conflict.
 
-5. **Result ranking.** Beyond fuzzy score, do we bias shallow paths over deep ones? Recently-touched files? v1: just fuzzy score + alphabetical tiebreak. Record ranking tweaks as follow-ups.
+## Open questions (remain for implementation-time judgment)
 
-6. **Keybinding: TAB accepts vs. TAB cycles.** The user confirmed TAB accepts, arrows cycle. Inside a textarea this hijacks the default TAB-inserts-tab behavior, which is already the norm (most textareas in Monarch don't accept literal tabs). Worth confirming no one leans on TAB-for-indent inside `ChatInput`.
+1. **Gitignore / hidden file policy.** Default: honor `.gitignore`, skip `.git`, `node_modules`, dotfiles at the top level. No toggle in v1.
 
-7. **Watching the textarea.** Svelte 5 input handling — is it preferable to wrap the textarea inside the mention component, or to accept an `HTMLTextAreaElement` ref and attach handlers externally? Wrapping is cleaner but more invasive to the existing `ChatInput` markup; ref-based is less intrusive. Recommend ref-based for v1.
+2. **Result ranking beyond fuzzy score.** Do we bias shallow paths over deep, or recently-touched files? v1: fuzzy score + alphabetical tiebreak. Ranking tweaks become follow-up tickets if they matter.
 
-8. **Scanning cost on huge workspaces.** Even with `.gitignore`, some users may point `cwd` at `$HOME` or a monorepo with millions of files. Do we need incremental / lazy walking, or is a hard cap + gitignore enough? Start with cap + gitignore; add incremental walk if benchmarks warrant it.
+3. **Dropdown anchor position.** Caret-anchored (mirror-div technique) vs. anchored to the whole textarea (above/below). Start with textarea-anchored in v1 unless it feels bad in testing; upgrade only if needed.
+
+4. **Wrapping vs. ref.** Implementation choice — is `MentionAutocomplete` a wrapper around `<textarea>` or a sibling that takes an `HTMLTextAreaElement` ref? Ref-based is less invasive to `ChatInput.svelte`. Lean ref-based for v1.
+
+5. **Scanning cost on huge workspaces.** Even with `.gitignore`, pointing `cwd` at `$HOME` or a giant monorepo is possible. Start with hard cap (~100–200) + gitignore; add incremental/lazy walking only if benchmarks show a real pain point.
 
 ## Out of scope
 
