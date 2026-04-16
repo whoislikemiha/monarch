@@ -170,7 +170,7 @@
   <div class="avatar-frame" title={avatarTooltip}>
     <ShadowAvatar
       agentId={agent.id}
-      size={280}
+      size={128}
       avatarType={agent.avatarType}
       avatarPath={agent.avatarPath}
     />
@@ -245,8 +245,6 @@
   }
 
   .avatar-frame {
-    width: 128px;
-    height: 128px;
     align-self: center;
     border: 1px solid var(--border-strong);
     border-radius: 8px;
@@ -255,13 +253,7 @@
     align-items: center;
     justify-content: center;
     background: var(--bg-panel-2);
-  }
-
-  .avatar-frame :global(canvas),
-  .avatar-frame :global(img) {
-    width: 100% !important;
-    height: 100% !important;
-    object-fit: cover;
+    line-height: 0;
   }
 
   .stack {
