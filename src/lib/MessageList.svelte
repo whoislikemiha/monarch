@@ -1,6 +1,7 @@
 <script lang="ts">
   import AssistantMessageComp from "./AssistantMessage.svelte";
   import ToolGroup from "./ToolGroup.svelte";
+  import AttachmentThumb from "./AttachmentThumb.svelte";
   import { formatCost, formatDuration } from "./format";
   import type { DisplayItem, AssistantMessage } from "./types";
   import type { PendingImage } from "./ChatInput.svelte";
@@ -51,24 +52,37 @@
   {#each items as item, i (i)}
     {#if item.kind === "user"}
       {@const userIdx = userIndexAt.get(i)}
-      {@const imgs = userIdx != null ? sentImages?.get(userIdx) : undefined}
+      {@const persistedAttachments = item.attachments ?? []}
+      {@const ephemeralImgs =
+        persistedAttachments.length === 0 && userIdx != null
+          ? sentImages?.get(userIdx)
+          : undefined}
+      {@const hasAnyImages =
+        persistedAttachments.length > 0 ||
+        (ephemeralImgs && ephemeralImgs.length > 0)}
       <div class="message user-message">
         <div class="message-label">You</div>
         {#if item.content}
           <div class="message-content">{item.content}</div>
         {/if}
-        {#if imgs && imgs.length > 0}
+        {#if hasAnyImages}
           <div class="sent-image-strip" class:text-above={!!item.content}>
-            {#each imgs as img (img.id)}
-              <button
-                type="button"
-                class="sent-thumb"
-                onclick={() => onimageclick?.(img.dataUrl)}
-                aria-label="View image"
-              >
-                <img src={img.dataUrl} alt="attachment" />
-              </button>
-            {/each}
+            {#if persistedAttachments.length > 0}
+              {#each persistedAttachments as att (att.path)}
+                <AttachmentThumb attachment={att} onclick={onimageclick} />
+              {/each}
+            {:else if ephemeralImgs}
+              {#each ephemeralImgs as img (img.id)}
+                <button
+                  type="button"
+                  class="sent-thumb"
+                  onclick={() => onimageclick?.(img.dataUrl)}
+                  aria-label="View image"
+                >
+                  <img src={img.dataUrl} alt="attachment" />
+                </button>
+              {/each}
+            {/if}
           </div>
         {/if}
       </div>
