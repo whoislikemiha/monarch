@@ -775,6 +775,7 @@
         onsend={sendPrompt}
         onthumbclick={(src) => (lightboxSrc = src)}
         disabled={isStreaming}
+        cwd={agent.cwd}
         bind:this={chatInputRef}
       />
     </div>

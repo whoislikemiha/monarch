@@ -1,5 +1,6 @@
 <script lang="ts">
   import { readImage } from "@tauri-apps/plugin-clipboard-manager";
+  import MentionAutocomplete from "./MentionAutocomplete.svelte";
 
   export interface PendingImage {
     id: string;
@@ -16,16 +17,22 @@
     onthumbclick,
     disabled = false,
     placeholder: customPlaceholder,
+    cwd,
   }: {
     onsend: (message: string, images: PendingImage[]) => void;
     onthumbclick?: (src: string) => void;
     disabled?: boolean;
     placeholder?: string;
+    /**
+     * Working directory used as the anchor for @-mention file suggestions
+     * (MON-76). When undefined the mention dropdown is disabled entirely.
+     */
+    cwd?: string;
   } = $props();
 
   let text = $state("");
   let images = $state<PendingImage[]>([]);
-  let textareaEl: HTMLTextAreaElement;
+  let textareaEl = $state<HTMLTextAreaElement | undefined>(undefined);
   let fileInputEl: HTMLInputElement;
 
   export function focus() {
@@ -209,6 +216,9 @@
       {disabled}
       rows="1"
     ></textarea>
+
+    <MentionAutocomplete {textareaEl} {cwd} bind:text />
+
 
     <button
       class="send-btn"
