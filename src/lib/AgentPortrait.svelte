@@ -338,7 +338,7 @@
     >
       <ShadowAvatar
         agentId={agent.id}
-        size={isMinified ? 84 : 180}
+        size={isMinified ? 112 : 180}
         avatarType={agent.avatarType}
         avatarPath={agent.avatarPath}
       />
@@ -547,8 +547,8 @@
   }
 
   .portrait.minified .avatar-frame {
-    width: 84px;
-    height: 84px;
+    width: 112px;
+    height: 112px;
   }
 
   .mini-ctx {
