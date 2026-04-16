@@ -2,7 +2,8 @@
   import { invoke } from "$lib/api";
   import type { ModelInfo, ProviderAuthStatus } from "./bindings";
   import { PROVIDERS, REFRESHABLE_PROVIDERS } from "./providers";
-  import { availableLevels, displayLabel, supportsThinking } from "./thinking";
+  import { supportsThinking } from "./thinking";
+  import ThinkingPicker from "./ThinkingPicker.svelte";
 
   // Bindable surface. These four values are the entire user-visible output of
   // the selector — the spawn form reads them on submit, the future runtime
@@ -307,12 +308,8 @@
 
 {#if supportsThinking(provider, model)}
   <div class="field">
-    <label class="label" for="thinking">Thinking</label>
-    <select id="thinking" bind:value={thinkingLevel}>
-      {#each availableLevels(provider, model) as level}
-        <option value={level}>{displayLabel(provider, model, level)}</option>
-      {/each}
-    </select>
+    <span class="label">Thinking</span>
+    <ThinkingPicker {provider} {model} bind:value={thinkingLevel} />
   </div>
 {/if}
 
@@ -576,8 +573,7 @@
     min-width: 0;
   }
 
-  input,
-  select {
+  input {
     width: 100%;
     background: var(--bg-panel-2);
     border: 1px solid var(--border-subtle);
@@ -594,14 +590,8 @@
     opacity: 0.6;
   }
 
-  input:focus,
-  select:focus {
+  input:focus {
     border-color: var(--accent);
-  }
-
-  select {
-    cursor: pointer;
-    appearance: none;
   }
 
   @media (max-width: 640px) {

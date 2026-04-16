@@ -1,13 +1,6 @@
 <script lang="ts">
   import type { DisplayItem, SessionStats, Usage } from "./types";
-  import {
-    availableLevels,
-    displayLabel,
-    levelIntensity,
-    supportsThinking,
-    type ThinkingLevel,
-  } from "./thinking";
-  import ThinkingMeter from "./ThinkingMeter.svelte";
+  import ThinkingPicker from "./ThinkingPicker.svelte";
 
   let {
     isStreaming,
@@ -35,14 +28,6 @@
 
   const DEFAULT_CONTEXT_WINDOW = 128000;
   const CHARS_PER_TOKEN = 4;
-  let showThinkingPicker = $state(false);
-  let levels = $derived(availableLevels(provider ?? "", model ?? ""));
-  let modelSupportsThinking = $derived(supportsThinking(provider ?? "", model ?? ""));
-  let currentLevel = $derived((thinkingLevel || "off") as ThinkingLevel);
-  let currentLevelLabel = $derived(
-    displayLabel(provider ?? "", model ?? "", currentLevel),
-  );
-  let currentIntensity = $derived(levelIntensity(currentLevel));
 
   function formatTokens(n: number): string {
     if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
@@ -155,37 +140,13 @@
       <span class="control-tag model" title={model}>{model}</span>
     {/if}
 
-    {#if modelSupportsThinking}
-      <div class="thinking-wrap">
-        <button
-          class="control-btn thinking-btn"
-          class:level-max={currentIntensity >= 5}
-          class:level-hot={currentIntensity === 4}
-          class:level-warm={currentIntensity === 3}
-          class:level-cool={currentIntensity > 0 && currentIntensity < 3}
-          onclick={() => (showThinkingPicker = !showThinkingPicker)}
-          title="Set thinking level"
-        >
-          <ThinkingMeter intensity={currentIntensity} />
-          <span class="thinking-label">thinking: {currentLevelLabel}</span>
-        </button>
-        {#if showThinkingPicker}
-          <div class="thinking-dropdown">
-            {#each levels as level}
-              {@const optIntensity = levelIntensity(level)}
-              <button
-                class="thinking-option"
-                class:active={level === currentLevel}
-                onclick={() => { onthinking(level); showThinkingPicker = false; }}
-              >
-                <ThinkingMeter intensity={optIntensity} size="md" />
-                <span class="opt-label">{displayLabel(provider ?? "", model ?? "", level)}</span>
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {/if}
+    <ThinkingPicker
+      provider={provider ?? ""}
+      model={model ?? ""}
+      value={thinkingLevel ?? "off"}
+      direction="up"
+      onchange={onthinking}
+    />
 
     {#if hasContextMeter}
       <div
@@ -322,104 +283,6 @@
 
   .context-meter.critical .context-fill {
     background: var(--error);
-  }
-
-  .control-btn {
-    font-size: 10px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    padding: 3px 8px;
-    border-radius: 4px;
-    background: var(--bg-panel-2);
-    border: 1px solid var(--border-subtle);
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-
-  .control-btn:hover {
-    background: var(--bg-panel-3);
-    border-color: var(--border-strong);
-  }
-
-  .thinking-wrap {
-    position: relative;
-  }
-
-  .thinking-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .thinking-btn.level-cool {
-    border-color: var(--accent-blue-border-subtle);
-    color: var(--accent-blue);
-  }
-
-  .thinking-btn.level-warm {
-    border-color: var(--accent-border-subtle);
-    color: var(--accent);
-  }
-
-  .thinking-btn.level-hot {
-    border-color: var(--accent-border-hover);
-    color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent-border-subtle) inset;
-  }
-
-  .thinking-btn.level-max {
-    border-color: var(--warning-border-subtle);
-    color: var(--warning);
-    box-shadow: 0 0 6px var(--warning-glow), 0 0 0 1px var(--warning-border-faint) inset;
-  }
-
-  .thinking-label {
-    letter-spacing: 0.2px;
-  }
-
-  .thinking-dropdown {
-    position: absolute;
-    bottom: 100%;
-    left: 0;
-    margin-bottom: 4px;
-    background: var(--bg-panel-2);
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    padding: 4px;
-    z-index: 50;
-    display: flex;
-    flex-direction: column;
-    min-width: 140px;
-  }
-
-  .thinking-option {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 10px;
-    border: none;
-    border-radius: 4px;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    cursor: pointer;
-    text-align: left;
-    transition: background 0.1s, color 0.1s;
-  }
-
-  .thinking-option:hover {
-    background: var(--bg-panel-3);
-    color: var(--text-primary);
-  }
-
-  .thinking-option.active {
-    color: var(--accent);
-    background: var(--accent-bg-subtle);
-  }
-
-  .opt-label {
-    flex: 1;
   }
 
   .control-tag.model {

@@ -4,7 +4,8 @@
   import { SHADOW_GRADES, type Agent, type ShadowGrade } from "./types";
   import { agentStore } from "./stores/agentStore.svelte";
   import AvatarPicker from "./avatar/AvatarPicker.svelte";
-  import { availableLevels, displayLabel, supportsThinking } from "./thinking";
+  import { supportsThinking } from "./thinking";
+  import ThinkingPicker from "./ThinkingPicker.svelte";
 
   let {
     agent,
@@ -296,12 +297,8 @@
     <div class="row">
       {#if supportsThinking(selectedProvider, modelInput)}
         <div class="field">
-          <label class="label" for="edit-thinking">Thinking</label>
-          <select id="edit-thinking" bind:value={thinkingLevel}>
-            {#each availableLevels(selectedProvider, modelInput) as level}
-              <option value={level}>{displayLabel(selectedProvider, modelInput, level)}</option>
-            {/each}
-          </select>
+          <span class="label">Thinking</span>
+          <ThinkingPicker provider={selectedProvider} model={modelInput} bind:value={thinkingLevel} />
         </div>
       {/if}
       <div class="field flex-grow">
