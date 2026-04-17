@@ -20,30 +20,29 @@
 
 1. **Surface model-list status from `ModelSelector` to the parent.** Extend the selector's prop surface so `SpawnForm` can tell whether the list is loading, errored, or empty. Preferred shape: a read-only bindable `modelsStatus` object (e.g. `{ loading: boolean; error: string | null; count: number }`) that the parent binds alongside the existing four props. A single aggregate is cleaner than four new bindings, and it centralises the source of truth in one place instead of scattering derived booleans. The selector still renders its own inline error/hint — the new prop is only for the parent's gating.
 
-2. **Compute a `canSpawn` derived in `SpawnForm`.** True iff: `provider` is non-empty AND (the provider is `openai-codex` OR `model.trim()` is non-empty AND the model-list status is not `loading` AND there is no model-list `error`). Use `REFRESHABLE_PROVIDERS` (imported from `providers.ts`) to decide whether loading/error states matter for the active provider, so subscription-backed providers (Anthropic) remain a simple `provider + model` check even if the list is slow to warm.
+2. **Compute a `canSpawn` derived in `SpawnForm`.** True iff: `provider` is non-empty AND (the provider is `openai-codex` OR `model.trim()` is non-empty). Membership in `allModels` is **not** required — "loose" validity, any non-empty typed id is accepted so users pasting a fresh OpenRouter slug aren't blocked. Loading and error states of the model list do **not** themselves disable the button; they only drive the hint copy. This keeps subscription-backed providers (Anthropic) on a pure `provider + model` check and avoids briefly disabling Extract while `get_models` is in-flight for static catalogues.
 
 3. **Wire `canSpawn` into both submit paths.**
    - Bind `disabled={!canSpawn}` on the Extract `<button>`.
    - Early-return from `handleKeydown` / `handleSpawn` when `!canSpawn`, so Ctrl+Enter from the shadow-name field is gated too. Do not rely on the disabled button alone — the keyboard handler is at window scope.
 
-4. **Add a short disabled-state hint near the actions row.** One line of copy that reflects the active reason the button is off:
-   - "Select a provider to continue." (shouldn't happen because a default is picked, but safe fallback)
-   - "Select a model." (provider chosen, no model typed/selected)
-   - "Loading models…" (dynamic provider, `modelsStatus.loading`)
-   - "Waiting for LM Studio…" (LM Studio, loading — from the ticket's copy)
+4. **Add a short disabled-state hint directly above the `.actions` row** (left-aligned, styled like `.field-hint`). One line of copy reflecting the active reason the button is off — the hint leans on the list status even though the status doesn't flip the gate:
+   - "Select a model." (no model typed/selected, list ready)
+   - "Loading models…" (OpenRouter, still loading)
+   - "Waiting for LM Studio…" (LM Studio, still loading — from the ticket's copy)
    - "Model list unavailable — see error above." (dynamic provider, `modelsStatus.error`)
-   Keep the copy in `SpawnForm` (it's the gating owner) rather than pushing a second hint surface into the selector. Provider-specific copy can key off `provider` directly.
+   When `canSpawn` is true the hint is not rendered. Keep the copy in `SpawnForm` (it's the gating owner) rather than pushing a second hint surface into the selector. Provider-specific copy keys off `provider` directly.
 
 5. **Make sure the existing `modelsError` block inside `ModelSelector` still renders as-is.** The new hint in `SpawnForm` is a terse action-adjacent cue; the detailed error + Retry button in the selector remains the primary error surface. Do not duplicate the message.
 
 6. **No change to the `spawn_agent` command, backend, or protocol.** This is frontend-only; backend retry-exhaustion behaviour from MON-51 remains the backstop for any path that still slips through.
 
-## Open questions
+## Resolved decisions
 
-1. **"Valid model" definition.** Should `model` have to match an entry in `allModels` (strict), or is any non-empty `model.trim()` enough (loose)? LM Studio's dropdown only lists loaded models, so free-text there is almost always user error; OpenRouter supports free-form slugs that may not be in the cached list yet. My default is **loose** (non-empty text, no membership check) to avoid surprising power users who paste slugs. Confirm?
-2. **Anthropic "loading" edge case.** The ticket explicitly says subscription-backed providers are unaffected. But `get_models` for `anthropic` still goes through the async path and could momentarily leave `modelsLoading = true`. Is it acceptable for the Extract button to briefly flash disabled on first Anthropic render, or should we gate Anthropic purely on `provider + model` regardless of list state?
-3. **Default provider quirk.** `SpawnForm` starts with `provider = "openrouter"` and `model = ""`, so the button will now be disabled on dialog open until the user picks a model — that's the intended behaviour, but I want to flag the slight UX shift from "always clickable" to "disabled-by-default". OK to proceed?
-4. **Hint placement.** Inline next to the Extract button, above the actions row, or as a `title`/tooltip on the disabled button? I'm leaning toward a tiny `.field-hint`-style line directly above `.actions`, left-aligned. Confirm.
+1. **Valid model = loose.** Any non-empty `model.trim()` counts; no membership check against `allModels`. Confirmed 2026-04-17.
+2. **No provider-specific loading gate.** Loading/error states never disable Extract — only the `provider + model` combination does. The button stays disabled until a model is selected; no flicker on Anthropic. Confirmed 2026-04-17.
+3. **Disabled-by-default on dialog open.** Intentional UX shift — confirmed 2026-04-17.
+4. **Hint placement.** `.field-hint`-style line directly above `.actions`, left-aligned. Confirmed 2026-04-17.
 
 ## Out of scope
 
