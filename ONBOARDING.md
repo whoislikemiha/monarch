@@ -410,6 +410,35 @@ remount and is visible to toolbox tools via `AgentContext.live`.
 Per-agent `AgentView.svelte` keeps only genuinely UI-local state (streaming
 flag, extension request, showStderr, modal open flags, listener handles).
 
+### Notifications surface (MON-51)
+
+`src/lib/stores/notificationsStore.svelte.ts` + `src/lib/NotificationStack.svelte`
+provide the single app-wide toast surface. The store holds a `$state` array of
+`{id, level, message, agentId?, agentName?, createdAt, count}`. `error` entries
+persist until the user dismisses them; `warning` and `info` auto-expire. Within a
+5 s window an identical `(level, message, agentId)` triple collapses into the
+existing entry and bumps `count`, so a rate-limit loop can't stack fifty toasts.
+
+`NotificationStack` is mounted once in `App.svelte` outside `<main>`, fixed at the
+top right (z-index 1100 — above dialogs). Cards with an `agentId` render a
+header link that calls `agentStore.selectAgent(agentId)` to jump to that agent.
+
+Who pushes:
+
+- `agentStore.createAgent` / `spawnStoppedAgent` catch blocks push the
+  `formatSpawnError(err)` result on spawn failure.
+- `agentStore.registerAgentListeners` sets up per-agent listeners on
+  `agent-event-{id}` and `agent-exit-{id}`. Non-zero exit → toast. Any
+  `sidecar_error`-typed envelope → toast. Crucially, this runs for every agent,
+  not just the active one — the motivating case is a backgrounded agent silently
+  hitting a 429 while the user's attention is elsewhere.
+- `AgentView.handleNarrowEvent` keeps its own `console.error` for the active
+  agent (dev diagnostic); the user-facing toast is emitted by the store.
+
+Out of scope today: `agent-stderr-{id}` is not yet emitted from Rust (see the
+`eprintln!` in `src-tauri/src/agent/sidecar.rs`); the frontend listener exists
+but is a no-op. Per-agent sidecar stderr routing is a separate piece of work.
+
 Event flow from backend to UI:
 
 1. Svelte calls `invoke("send_command", …)`.

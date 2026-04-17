@@ -27,6 +27,10 @@ npm run tauri build      # package desktop binary
 npx svelte-check         # frontend
 cargo check              # backend (from src-tauri/)
 
+# frontend tests (Vitest — runs store unit tests)
+npm test                 # single run
+npm run test:watch       # watch mode
+
 # regenerate Tauri bindings after Rust type changes
 cargo run -- --export-bindings   # from src-tauri/
 ```
@@ -107,6 +111,8 @@ If you add a new table, command, event channel, or convention — it belongs in 
 | Frontend | `src/lib/bindings.ts` | Auto-generated Tauri command types (**do not edit**) |
 | Frontend | `src/lib/toolbox/liveAgentStore.svelte.ts` | Per-agent reactive state (SvelteMap + `$state`) |
 | Frontend | `src/lib/stores/agentStore.svelte.ts` | Active/saved agent list + selection state |
+| Frontend | `src/lib/stores/notificationsStore.svelte.ts` | App-wide error/warning toasts (MON-51) |
+| Frontend | `src/lib/NotificationStack.svelte` | Top-right overlay rendering notifications (MON-51) |
 | Frontend | `src/lib/thinking.ts` | Thinking-level UI catalogue + per-provider labels |
 
 Full file reference: [ONBOARDING.md](./ONBOARDING.md) section 12.
