@@ -85,7 +85,7 @@ export const commands = {
 	switchAgentSession: (agentId: string, sessionId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("switch_agent_session", { agentId, sessionId })),
 	// Forward extension UI response from frontend to sidecar
 	respondExtensionUi: (req: ExtensionUiResponseRequest) => typedError<null, ErrorDto>(__TAURI_INVOKE("respond_extension_ui", { req })),
-	getModels: (provider: string) => typedError<ModelInfo[], ErrorDto>(__TAURI_INVOKE("get_models", { provider })),
+	getModels: (provider: string, forceRefresh: boolean | null) => typedError<ModelInfo[], ErrorDto>(__TAURI_INVOKE("get_models", { provider, forceRefresh })),
 	getProviderAuthStatus: (provider: string) => typedError<ProviderAuthStatus, ErrorDto>(__TAURI_INVOKE("get_provider_auth_status", { provider })),
 	getAgentPrompt: (agentId: string) => typedError<string | null, ErrorDto>(__TAURI_INVOKE("get_agent_prompt", { agentId })),
 	saveAgentPrompt: (agentId: string, prompt: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("save_agent_prompt", { agentId, prompt })),

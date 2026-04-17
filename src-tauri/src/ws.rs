@@ -266,7 +266,16 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
         // ---- Models ----
         "get_models" => {
             let provider = str_field(&args, "provider")?;
-            let models = crate::models::ws_get_models(&state.model_cache, provider).await?;
+            let force_refresh = args
+                .get("forceRefresh")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let models = crate::models::ws_get_models(
+                &state.model_cache,
+                provider,
+                force_refresh,
+            )
+            .await?;
             serde_json::to_value(models).map_err(MonarchError::from)
         }
         "get_provider_auth_status" => {
