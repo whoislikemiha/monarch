@@ -37,6 +37,7 @@
 import { invoke, listen, type UnlistenFn } from "$lib/api";
 import { commands } from "../bindings";
 import { removeLiveState } from "../toolbox/liveAgentStore.svelte";
+import { notificationsStore } from "./notificationsStore.svelte";
 import type { Agent, AgentConfig, Project } from "../types";
 
 // --- DB row types mirroring Rust ---------------------------------------
@@ -489,15 +490,15 @@ class AgentStore {
             ? { ...a, status: "error" as const, stderrLines: [...a.stderrLines, line] }
             : a,
         );
+        notificationsStore.add({
+          level: "error",
+          message: line,
+          agentId: id,
+          agentName: this.getAgent(id)?.name ?? name,
+        });
       });
 
-    // Track exit listener for cleanup
-    const unlisten = await listen(`agent-exit-${id}`, () => {
-      this.agents = this.agents.map((a) =>
-        a.id === id ? { ...a, status: "stopped" as const } : a,
-      );
-    });
-    this.exitListeners.set(id, unlisten);
+    await this.registerAgentListeners(id);
 
     return id;
   }
@@ -624,17 +625,70 @@ class AgentStore {
       await this.loadProjects();
     } catch (err) {
       console.error("Failed to spawn stopped agent:", err);
+      const line = formatSpawnError(err);
       this.agents = this.agents.map((a) =>
-        a.id === id ? { ...a, status: "error" as const, stderrLines: [...a.stderrLines, String(err)] } : a,
+        a.id === id ? { ...a, status: "error" as const, stderrLines: [...a.stderrLines, line] } : a,
       );
+      notificationsStore.add({
+        level: "error",
+        message: line,
+        agentId: id,
+        agentName: this.getAgent(id)?.name ?? agent.name,
+      });
       throw err;
     }
-    const unlisten = await listen(`agent-exit-${id}`, () => {
+    await this.registerAgentListeners(id);
+  }
+
+  /**
+   * MON-51: register the per-agent listeners that feed the notifications
+   * surface. Lives here (not in AgentView) so background agents — ones the
+   * user isn't currently viewing — still surface errors. Covers:
+   *   - `agent-exit-{id}`: flips status and toasts on non-zero exit.
+   *   - `agent-event-{id}`: toasts on `sidecar_error`. The event payload is
+   *     JSON-encoded per the MON-14 narrowed protocol; malformed payloads
+   *     are ignored (AgentView keeps its own listener for the active agent
+   *     and will log if it cares).
+   * Both teardown closures are folded into a single `exitListeners` entry
+   * so `killAgent` stays one-line.
+   */
+  private async registerAgentListeners(id: string): Promise<void> {
+    const unlistenExit = await listen<number | null>(`agent-exit-${id}`, (event) => {
       this.agents = this.agents.map((a) =>
         a.id === id ? { ...a, status: "stopped" as const } : a,
       );
+      const code = event.payload;
+      if (code != null && code !== 0) {
+        notificationsStore.add({
+          level: "error",
+          message: `Sidecar exited (code ${code})`,
+          agentId: id,
+          agentName: this.getAgent(id)?.name,
+        });
+      }
     });
-    this.exitListeners.set(id, unlisten);
+
+    const unlistenEvent = await listen<string>(`agent-event-${id}`, (event) => {
+      let parsed: { type?: string; error?: string };
+      try {
+        parsed = JSON.parse(event.payload);
+      } catch {
+        return;
+      }
+      if (parsed.type === "sidecar_error" && parsed.error) {
+        notificationsStore.add({
+          level: "error",
+          message: parsed.error,
+          agentId: id,
+          agentName: this.getAgent(id)?.name,
+        });
+      }
+    });
+
+    this.exitListeners.set(id, () => {
+      unlistenExit();
+      unlistenEvent();
+    });
   }
 
   updateAgent(id: string, updater: (agent: Agent) => Agent): void {

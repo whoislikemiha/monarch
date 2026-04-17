@@ -10,6 +10,7 @@
   import SettingsDialog from "./lib/SettingsDialog.svelte";
   import ToolPanelStack from "./lib/toolbox/ToolPanelStack.svelte";
   import EditAgentDialog from "./lib/EditAgentDialog.svelte";
+  import NotificationStack from "./lib/NotificationStack.svelte";
   import { liveAgentStore } from "./lib/toolbox/liveAgentStore.svelte";
   import {
     persistOpenIds,
@@ -339,6 +340,8 @@
     <ToolRail {openToolIds} ontoggle={toggleTool} onsettings={() => (showSettings = true)} />
   </div>
 </main>
+
+<NotificationStack />
 
 {#if showSpawnDialog}
   <SpawnDialog

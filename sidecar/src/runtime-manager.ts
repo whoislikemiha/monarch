@@ -299,6 +299,27 @@ export class RuntimeManager {
 				agentId,
 				event: event as unknown as Record<string, unknown>,
 			});
+
+			// MON-51: retry exhaustion is the provider-unreachable path Pi
+			// takes when the backend (LM Studio down, network blip, 429
+			// storm) refuses long enough to use up maxAttempts. Pi does
+			// NOT throw from session.prompt() in that case — it resolves
+			// quietly and the only signal is `auto_retry_end` with
+			// `success: false`. Mirror it to a top-level `error` so the
+			// frontend notification store picks it up alongside other
+			// sidecar errors.
+			if (
+				event.type === "auto_retry_end" &&
+				event.success === false
+			) {
+				emit({
+					type: "error",
+					agentId,
+					error:
+						event.finalError ??
+						`Request failed after ${event.attempt} retries.`,
+				});
+			}
 		};
 
 		const unsubscribe = session.subscribe(listener);
