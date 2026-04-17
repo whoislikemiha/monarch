@@ -5,23 +5,33 @@
   import { supportsThinking } from "./thinking";
   import ThinkingPicker from "./ThinkingPicker.svelte";
 
-  // Bindable surface. These four values are the entire user-visible output of
+  // Bindable surface. These values are the entire user-visible output of
   // the selector — the spawn form reads them on submit, the future runtime
   // switcher in AgentView will write them to `set_model`. `contextWindow` is
   // effectively read-only from the parent's perspective (populated only for
   // LM Studio when the discovered model reports a context length), but it's
   // bindable so the consumer can stamp it into their payload without pulling
-  // the full model list.
+  // the full model list. `modelsStatus` is read-only from the parent's side
+  // too — it mirrors the async fetch lifecycle so the consumer can drive
+  // gating copy without duplicating the fetch.
+  export type ModelsStatus = {
+    loading: boolean;
+    error: string | null;
+    count: number;
+  };
+
   let {
     provider = $bindable("openrouter"),
     model = $bindable(""),
     thinkingLevel = $bindable("off"),
     contextWindow = $bindable<number | undefined>(undefined),
+    modelsStatus = $bindable<ModelsStatus>({ loading: false, error: null, count: 0 }),
   }: {
     provider?: string;
     model?: string;
     thinkingLevel?: string;
     contextWindow?: number | undefined;
+    modelsStatus?: ModelsStatus;
   } = $props();
 
   let allModels: ModelInfo[] = $state([]);
@@ -110,6 +120,15 @@
       provider === "lmstudio" && typeof detected === "number" && detected > 0
         ? Math.floor(detected)
         : undefined;
+  });
+
+  // Mirror the internal fetch lifecycle out through the bindable status prop.
+  $effect(() => {
+    modelsStatus = {
+      loading: modelsLoading,
+      error: modelsError,
+      count: allModels.length,
+    };
   });
 
   function refreshModels() {

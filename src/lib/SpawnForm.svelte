@@ -6,8 +6,9 @@
   import { SHADOW_GRADES } from "./types";
   import type { AgentTemplateRow } from "./bindings";
   import { agentStore } from "./stores/agentStore.svelte";
-  import ModelSelector from "./ModelSelector.svelte";
+  import ModelSelector, { type ModelsStatus } from "./ModelSelector.svelte";
   import TemplateSelector from "./TemplateSelector.svelte";
+  import { REFRESHABLE_PROVIDERS } from "./providers";
   import { commands } from "$lib/bindings";
   import { clampLevel } from "./thinking";
 
@@ -24,6 +25,26 @@
   let model = $state("");
   let thinkingLevel = $state("off");
   let contextWindow: number | undefined = $state(undefined);
+  let modelsStatus = $state<ModelsStatus>({ loading: false, error: null, count: 0 });
+
+  // Extract is gated on provider + model only. Loading/error states drive the
+  // hint copy but do not themselves disable the button — see MON-79.
+  let canSpawn = $derived.by(() => {
+    if (!provider) return false;
+    if (provider === "openai-codex") return true;
+    return model.trim().length > 0;
+  });
+
+  let disabledHint = $derived.by(() => {
+    if (canSpawn) return "";
+    if (REFRESHABLE_PROVIDERS.has(provider)) {
+      if (modelsStatus.error) return "Model list unavailable — see error above.";
+      if (modelsStatus.loading) {
+        return provider === "lmstudio" ? "Waiting for LM Studio…" : "Loading models…";
+      }
+    }
+    return "Select a model.";
+  });
   // On every distinct (provider, model) we apply the config default once.
   // The user can override in the picker afterwards; if they later switch
   // model, the new model's default wins (thinking is model-specific anyway).
@@ -111,6 +132,7 @@
   });
 
   async function handleSpawn() {
+    if (!canSpawn) return;
     if (saveAsTemplate && shadowName.trim()) {
       await persistCurrentAsTemplate();
     }
@@ -160,7 +182,7 @@
 
 <TemplateSelector onselect={applyTemplate} />
 
-<ModelSelector bind:provider bind:model bind:thinkingLevel bind:contextWindow />
+<ModelSelector bind:provider bind:model bind:thinkingLevel bind:contextWindow bind:modelsStatus />
 
 {#if agentStore.projects.length > 0}
   <div class="section">
@@ -251,9 +273,13 @@
   {/if}
 </label>
 
+{#if !canSpawn}
+  <div class="action-hint">{disabledHint}</div>
+{/if}
+
 <div class="actions">
   <button class="btn-cancel" onclick={oncancel}>Cancel</button>
-  <button class="btn-spawn" onclick={handleSpawn}>
+  <button class="btn-spawn" onclick={handleSpawn} disabled={!canSpawn}>
     Extract
     <span class="shortcut">Ctrl+Enter</span>
   </button>
@@ -489,6 +515,22 @@
 
   .btn-spawn:hover {
     background: var(--accent-hover);
+  }
+
+  .btn-spawn:disabled {
+    background: var(--bg-panel-2);
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+
+  .btn-spawn:disabled:hover {
+    background: var(--bg-panel-2);
+  }
+
+  .action-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.5;
   }
 
   .shortcut {
