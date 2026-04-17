@@ -432,6 +432,11 @@ Who pushes:
   `sidecar_error`-typed envelope → toast. Crucially, this runs for every agent,
   not just the active one — the motivating case is a backgrounded agent silently
   hitting a 429 while the user's attention is elsewhere.
+- `sidecar/src/runtime-manager.ts` mirrors Pi's `auto_retry_end { success: false }`
+  to a top-level `type: "error"` event so retry exhaustion (LM Studio offline,
+  sustained provider failure) surfaces as a toast. Pi's `session.prompt()` does
+  not throw in that case — it resolves quietly and the retry-end event is the
+  only signal — so the mirror lives at the listener, not in a try/catch.
 - `AgentView.handleNarrowEvent` keeps its own `console.error` for the active
   agent (dev diagnostic); the user-facing toast is emitted by the store.
 
