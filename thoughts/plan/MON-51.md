@@ -49,10 +49,14 @@ A new `src/lib/stores/notificationsStore.svelte.ts` module:
 A new `src/lib/NotificationStack.svelte` component:
 
 - No props; reads directly from `notificationsStore.notifications`.
-- Renders a fixed-position overlay (top-right by default, decision below in open questions). Stack vertically, newest on top.
-- Per-notification card: level icon + colour, message, optional agent context line, optional `count` badge when de-duplicated, manual dismiss button.
+- Renders a fixed-position overlay in the **top-right**. Z-index must layer above the agent portrait, which is sticky-positioned at the top — pick a z value above the highest existing sticky/dialog layer (audit existing `z-index` usage before settling on a value).
+- Stack vertically, newest on top.
+- Per-notification card has an optional **header line**: when the notification carries an `agentId`, render the agent name as a clickable link that calls `agentStore.setSelectedId(agentId)` (jumps to that agent's chat, where the stderr panel and compact-error view show the underlying detail). When there is no agent context, omit the header.
+- Body: level icon + colour, message text, optional `count` badge when de-duplicated, manual dismiss button.
 - Hovering a notification pauses its auto-dismiss timer. Leaving resumes it.
-- Keyboard: dismisses the topmost on `Esc` (handled inside the component or via an `App.svelte`-level keymap delegation — see open questions).
+- Stack capacity: cap visible at **5**; older entries collapse into a "+N more" pill at the bottom of the stack. Clicking the pill expands them. Entries still expire / dismiss normally while collapsed.
+- No `Esc` keybinding — `Esc` stays reserved for dialogs and other interactions.
+- No sound for v1.
 - Styling consistent with the existing dialog / panel look (read `SpawnDialog`, `ConfirmDialog`, `SettingsDialog` for the visual language already in use).
 
 ### 3. Wire into `App.svelte`
@@ -67,21 +71,45 @@ A new `src/lib/NotificationStack.svelte` component:
 - `src/lib/AgentView.svelte` — in the `agent-exit-{id}` handler, when the exit code is non-zero, push an `error`-level notification.
 - Keep `agent.stderrLines[]` writes as-is in all sites — the panel and compact-error view are still the drill-down.
 
-### 5. Conventions and docs
+### 5. Tests — introduce Vitest for the store
+
+No frontend test harness exists in the repo today. This issue introduces one — narrowly scoped to the new store:
+
+- Add `vitest` + `@vitest/ui` as devDependencies. Vite already drives the frontend build, so Vitest is the natural fit — no separate config needed beyond a minimal `vitest.config.ts` (or reuse `vite.config.ts`).
+- Add a `"test": "vitest run"` script to `package.json`.
+- New test file: `src/lib/stores/notificationsStore.test.ts`. Cover:
+  - `add` pushes an entry with the expected shape and unique `id`.
+  - `dismiss(id)` removes the entry and clears its pending auto-expiry timer (assert no orphan timers using Vitest fake timers).
+  - `error` level never auto-expires; `warning` and `info` auto-expire at the configured defaults (verified via `vi.useFakeTimers()` + `vi.advanceTimersByTime`).
+  - Dedup: calling `add` with the same `(level, message, agentId)` within the 5 s window increments `count` on the existing entry, refreshes `createdAt`, and resets the timer rather than pushing a new one. Outside the window, a fresh entry is pushed.
+  - `dismissAll` empties the array and cancels all timers.
+- No component tests for `NotificationStack.svelte` (not worth the jsdom + Svelte testing-library setup at v1).
+- No wiring / integration tests against `invoke` (too heavy vs the payoff).
+
+### 6. Manual verification
+
+Run `WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11 npm run tauri dev` and reproduce each wired error path:
+
+- **Spawn failure** — clear the Anthropic API key in Settings, Extract Shadow against an Anthropic model, confirm a toast appears with the formatted message and an agent-name header that jumps to the failed agent's chat.
+- **`sidecar_error` mid-session** — temporarily add a one-shot `throw new Error("test sidecar_error")` inside `sidecar/src/runtime-manager.ts` on the stream path, rebuild the sidecar, send a message, confirm the toast appears, then revert the hack.
+- **Agent exit** — `pkill -f sidecar/dist/index.js` from another terminal during an active session, confirm the toast appears.
+
+### 7. Conventions and docs
 
 - Add `notificationsStore.svelte.ts` and `NotificationStack.svelte` to the "Start Here" table in `CLAUDE.md`.
 - Add a short paragraph in `ONBOARDING.md` (frontend section) on the notification flow: who pushes, what's shown, what's dropped (de-dup window).
+- Document the new `npm test` script + Vitest setup in `CLAUDE.md` under "Build & Dev" / type-checking (this is the first frontend test command in the repo).
 - No changes to the Rust event channel taxonomy — both the existing channel doc lines in `CLAUDE.md` (line 120) and `ONBOARDING.md` (line 330) stay correct.
 
-## Open questions
+## Decisions (resolved)
 
-1. **Position.** Top-right vs bottom-right. Top-right keeps notifications away from the chat composer and aligns with the modals' focus. Bottom-right is more conventional for app toasts. Default: top-right unless the user prefers bottom-right.
-2. **Stack capacity.** Cap the visible stack at e.g. 5 — older overflow gets collapsed into a "+N more" pill, or simply dropped from view (kept in store until expiry). Need to pick.
-3. **Click-through behaviour.** Clicking a notification could (a) jump to the originating agent (`agentStore.setSelectedId`), (b) copy the underlying text, (c) do nothing. Default proposal: clicking the agent-context line jumps to the agent; clicking the message body copies. Confirm.
-4. **De-dup key strictness.** Should the de-dup key be exact `(level + message + agentId)`, or normalised (e.g. trim trailing identifiers / hashes)? Strict is simpler and probably fine for v1.
-5. **Esc keymap.** `App.svelte` already wires `onkeydown={handleKeydown}` (`src/App.svelte:278`). The cleanest spot to hook `Esc` is inside that handler, but that risks competing with dialog-close behaviour. Likely safer: handle inside `NotificationStack` itself with a window listener that bails if a dialog is open. Need to confirm there's no existing global `Esc` consumer that would break.
-6. **Sound / visual ping.** Out of scope per the issue, but worth flagging — operators may want an audible cue for `error`-level notifications. Defer unless asked.
-7. **Test strategy.** No frontend test harness exists in the repo today (per ONBOARDING). Acceptance is "verified manually in dev with WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11 npm run tauri dev" by reproducing each error path. Confirm this is acceptable.
+1. **Position** — top-right, z-index above the sticky agent portrait.
+2. **Stack capacity** — cap at 5 visible; overflow collapses into a "+N more" pill.
+3. **Click behaviour** — header shows the agent name when agent-specific; clicking the name jumps to that agent's chat. No click action on the body itself; explicit dismiss button handles dismissal.
+4. **De-dup window** — strict `(level + message + agentId)` key, 5 s window.
+5. **Esc** — untouched; `Esc` stays reserved for dialogs.
+6. **Sound** — none for v1.
+7. **Tests** — Vitest for `notificationsStore` only; manual smoke for the wiring sites (see sections 5 and 6).
 
 ## Out of scope reminders
 
