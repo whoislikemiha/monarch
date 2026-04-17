@@ -37,6 +37,7 @@
 import { invoke, listen, type UnlistenFn } from "$lib/api";
 import { commands } from "../bindings";
 import { removeLiveState } from "../toolbox/liveAgentStore.svelte";
+import { notificationsStore } from "./notificationsStore.svelte";
 import type { Agent, AgentConfig, Project } from "../types";
 
 // --- DB row types mirroring Rust ---------------------------------------
@@ -489,13 +490,31 @@ class AgentStore {
             ? { ...a, status: "error" as const, stderrLines: [...a.stderrLines, line] }
             : a,
         );
+        notificationsStore.add({
+          level: "error",
+          message: line,
+          agentId: id,
+          agentName: name,
+        });
       });
 
-    // Track exit listener for cleanup
-    const unlisten = await listen(`agent-exit-${id}`, () => {
+    // Track exit listener for cleanup. A non-zero exit is treated as a
+    // crash worth surfacing — the per-agent stderr panel still shows the
+    // detail, but the toast makes it visible when the operator isn't on
+    // that agent's view.
+    const unlisten = await listen<number | null>(`agent-exit-${id}`, (event) => {
       this.agents = this.agents.map((a) =>
         a.id === id ? { ...a, status: "stopped" as const } : a,
       );
+      const code = event.payload;
+      if (code != null && code !== 0) {
+        notificationsStore.add({
+          level: "error",
+          message: `Sidecar exited (code ${code})`,
+          agentId: id,
+          agentName: name,
+        });
+      }
     });
     this.exitListeners.set(id, unlisten);
 
@@ -624,15 +643,31 @@ class AgentStore {
       await this.loadProjects();
     } catch (err) {
       console.error("Failed to spawn stopped agent:", err);
+      const line = formatSpawnError(err);
       this.agents = this.agents.map((a) =>
-        a.id === id ? { ...a, status: "error" as const, stderrLines: [...a.stderrLines, String(err)] } : a,
+        a.id === id ? { ...a, status: "error" as const, stderrLines: [...a.stderrLines, line] } : a,
       );
+      notificationsStore.add({
+        level: "error",
+        message: line,
+        agentId: id,
+        agentName: agent.name,
+      });
       throw err;
     }
-    const unlisten = await listen(`agent-exit-${id}`, () => {
+    const unlisten = await listen<number | null>(`agent-exit-${id}`, (event) => {
       this.agents = this.agents.map((a) =>
         a.id === id ? { ...a, status: "stopped" as const } : a,
       );
+      const code = event.payload;
+      if (code != null && code !== 0) {
+        notificationsStore.add({
+          level: "error",
+          message: `Sidecar exited (code ${code})`,
+          agentId: id,
+          agentName: agent.name,
+        });
+      }
     });
     this.exitListeners.set(id, unlisten);
   }
