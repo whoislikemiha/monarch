@@ -43,7 +43,6 @@
   let showDropdown = $state(false);
   let highlightedIndex = $state(-1);
   let modelInputEl: HTMLInputElement | undefined = $state(undefined);
-  let fixedModelId = $derived(provider === "openai-codex" ? "gpt-5.4" : "");
 
   // Fuzzy filtered models — each space-separated term must match somewhere
   let filteredModels = $derived(() => {
@@ -58,12 +57,15 @@
       .slice(0, 50);
   });
 
-  async function fetchModels(p: string) {
+  async function fetchModels(p: string, forceRefresh = false) {
     const token = ++modelFetchToken;
     modelsLoading = true;
     modelsError = null;
     try {
-      const fetched = await invoke<ModelInfo[]>("get_models", { provider: p });
+      const fetched = await invoke<ModelInfo[]>("get_models", {
+        provider: p,
+        forceRefresh,
+      });
       if (token !== modelFetchToken) return; // stale — provider changed
       allModels = fetched;
     } catch (err) {
@@ -95,7 +97,7 @@
     const p = provider;
     allModels = [];
     modelsError = null;
-    model = fixedModelId || "";
+    model = "";
     showDropdown = false;
     highlightedIndex = -1;
     fetchModels(p);
@@ -132,7 +134,9 @@
   });
 
   function refreshModels() {
-    fetchModels(provider);
+    // Retry button always busts the cache so transient provider failures
+    // (stale OAuth token, 5xx) can be retried without waiting out the TTL.
+    fetchModels(provider, true);
   }
 
   function selectModel(m: ModelInfo) {
@@ -142,10 +146,6 @@
   }
 
   function handleModelKeydown(e: KeyboardEvent) {
-    if (fixedModelId) {
-      return;
-    }
-
     const models = filteredModels();
     if (!showDropdown || models.length === 0) {
       if (e.key === "ArrowDown" && allModels.length > 0) {
@@ -239,25 +239,22 @@
       type="text"
       bind:this={modelInputEl}
       bind:value={model}
-      placeholder={fixedModelId
-        ? "Uses your Pi Codex login"
-        : modelsLoading
-          ? "Loading models..."
-          : modelsError
-            ? "Provider unreachable — see hint below"
-            : allModels.length === 0
-              ? "No models available"
-              : "Search models..."}
-      readonly={!!fixedModelId}
-      onfocus={() => { if (!fixedModelId) showDropdown = true; }}
+      placeholder={modelsLoading
+        ? "Loading models..."
+        : modelsError
+          ? "Provider unreachable — see hint below"
+          : allModels.length === 0
+            ? "No models available"
+            : "Search models..."}
+      onfocus={() => (showDropdown = true)}
       onblur={() => setTimeout(() => (showDropdown = false), 200)}
       onkeydown={handleModelKeydown}
-      oninput={() => { if (!fixedModelId) { showDropdown = true; highlightedIndex = 0; } }}
+      oninput={() => { showDropdown = true; highlightedIndex = 0; }}
       autocomplete="off"
     />
     {#if modelsLoading}
       <span class="loading-indicator"></span>
-    {:else if !fixedModelId && REFRESHABLE_PROVIDERS.has(provider)}
+    {:else if REFRESHABLE_PROVIDERS.has(provider)}
       <button
         class="refresh-btn"
         onmousedown={(e: MouseEvent) => { e.preventDefault(); refreshModels(); }}
@@ -267,7 +264,7 @@
         ↻
       </button>
     {/if}
-    {#if !fixedModelId && showDropdown && filteredModels().length > 0}
+    {#if showDropdown && filteredModels().length > 0}
       <div class="model-dropdown">
         {#each filteredModels() as m, i (m.id)}
           <button
@@ -284,12 +281,7 @@
       </div>
     {/if}
   </div>
-  {#if fixedModelId}
-    <div class="field-hint">
-      Uses Pi's existing `openai-codex` auth and locks this provider to GPT-5.4.
-    </div>
-  {/if}
-  {#if !fixedModelId && modelsError}
+  {#if modelsError}
     <div class="model-error">
       <span class="model-error-label">Can't reach provider</span>
       <span class="model-error-text">{modelsError}</span>
@@ -297,7 +289,7 @@
         Retry
       </button>
     </div>
-  {:else if !fixedModelId && !modelsLoading && allModels.length === 0}
+  {:else if !modelsLoading && allModels.length === 0}
     <div class="field-hint">
       No models found for this provider.
     </div>

@@ -15,8 +15,12 @@ export const PROVIDERS: readonly ProviderOption[] = [
 ] as const;
 
 // Providers whose model lists are fetched over the network and benefit from
-// an explicit refresh action (vs. statically known model catalogues).
+// an explicit refresh action. All four providers now discover their model
+// lists dynamically (Anthropic + Codex via `/v1/models` using the Pi-stored
+// OAuth credential, OpenRouter and LM Studio via their own list endpoints).
 export const REFRESHABLE_PROVIDERS: ReadonlySet<string> = new Set([
+  "anthropic",
+  "openai-codex",
   "openrouter",
   "lmstudio",
 ]);
