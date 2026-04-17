@@ -494,29 +494,11 @@ class AgentStore {
           level: "error",
           message: line,
           agentId: id,
-          agentName: name,
+          agentName: this.getAgent(id)?.name ?? name,
         });
       });
 
-    // Track exit listener for cleanup. A non-zero exit is treated as a
-    // crash worth surfacing — the per-agent stderr panel still shows the
-    // detail, but the toast makes it visible when the operator isn't on
-    // that agent's view.
-    const unlisten = await listen<number | null>(`agent-exit-${id}`, (event) => {
-      this.agents = this.agents.map((a) =>
-        a.id === id ? { ...a, status: "stopped" as const } : a,
-      );
-      const code = event.payload;
-      if (code != null && code !== 0) {
-        notificationsStore.add({
-          level: "error",
-          message: `Sidecar exited (code ${code})`,
-          agentId: id,
-          agentName: name,
-        });
-      }
-    });
-    this.exitListeners.set(id, unlisten);
+    await this.registerAgentListeners(id);
 
     return id;
   }
@@ -651,11 +633,27 @@ class AgentStore {
         level: "error",
         message: line,
         agentId: id,
-        agentName: agent.name,
+        agentName: this.getAgent(id)?.name ?? agent.name,
       });
       throw err;
     }
-    const unlisten = await listen<number | null>(`agent-exit-${id}`, (event) => {
+    await this.registerAgentListeners(id);
+  }
+
+  /**
+   * MON-51: register the per-agent listeners that feed the notifications
+   * surface. Lives here (not in AgentView) so background agents — ones the
+   * user isn't currently viewing — still surface errors. Covers:
+   *   - `agent-exit-{id}`: flips status and toasts on non-zero exit.
+   *   - `agent-event-{id}`: toasts on `sidecar_error`. The event payload is
+   *     JSON-encoded per the MON-14 narrowed protocol; malformed payloads
+   *     are ignored (AgentView keeps its own listener for the active agent
+   *     and will log if it cares).
+   * Both teardown closures are folded into a single `exitListeners` entry
+   * so `killAgent` stays one-line.
+   */
+  private async registerAgentListeners(id: string): Promise<void> {
+    const unlistenExit = await listen<number | null>(`agent-exit-${id}`, (event) => {
       this.agents = this.agents.map((a) =>
         a.id === id ? { ...a, status: "stopped" as const } : a,
       );
@@ -665,11 +663,32 @@ class AgentStore {
           level: "error",
           message: `Sidecar exited (code ${code})`,
           agentId: id,
-          agentName: agent.name,
+          agentName: this.getAgent(id)?.name,
         });
       }
     });
-    this.exitListeners.set(id, unlisten);
+
+    const unlistenEvent = await listen<string>(`agent-event-${id}`, (event) => {
+      let parsed: { type?: string; error?: string };
+      try {
+        parsed = JSON.parse(event.payload);
+      } catch {
+        return;
+      }
+      if (parsed.type === "sidecar_error" && parsed.error) {
+        notificationsStore.add({
+          level: "error",
+          message: parsed.error,
+          agentId: id,
+          agentName: this.getAgent(id)?.name,
+        });
+      }
+    });
+
+    this.exitListeners.set(id, () => {
+      unlistenExit();
+      unlistenEvent();
+    });
   }
 
   updateAgent(id: string, updater: (agent: Agent) => Agent): void {

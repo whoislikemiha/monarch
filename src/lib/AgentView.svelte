@@ -230,8 +230,10 @@
         break;
 
       case "sidecar_error":
-        // Error pings are still logged to the console; the Rust side does
-        // not fold them into LiveAgentState (see agent.rs).
+        // MON-51: agentStore holds a parallel listener on `agent-event-{id}`
+        // that surfaces sidecar_error as a toast for every agent (including
+        // background ones the user isn't currently viewing). This console.error
+        // remains as a dev-time diagnostic for the active agent only.
         console.error("[sidecar] error:", event.error);
         break;
 
