@@ -87,8 +87,15 @@ const OPENAI_STANDARD: ModelThinkingProfile = {
 
 function anthropicProfile(modelId: string): ModelThinkingProfile {
   const id = modelId.toLowerCase();
-  if (id.includes("opus-4-6") || id.includes("opus-4.6")) return ANTHROPIC_OPUS_46;
-  if (id.includes("sonnet-4-6") || id.includes("sonnet-4.6")) return ANTHROPIC_SONNET_46;
+  // Generation-4 Claude models use adaptive thinking. Match by family
+  // prefix so future minor bumps (opus-4-7, opus-4-8, sonnet-4-7, …)
+  // inherit the right picker without code changes. pi-ai's own
+  // `supportsAdaptiveThinking` currently hardcodes 4.6; on newer
+  // versions it falls back to budget thinking, but the picker shape
+  // here reflects what Anthropic actually exposes for the model
+  // (which is what users see in Claude.ai / Claude Code).
+  if (id.includes("opus-4-") || id.includes("opus-4.")) return ANTHROPIC_OPUS_46;
+  if (id.includes("sonnet-4-") || id.includes("sonnet-4.")) return ANTHROPIC_SONNET_46;
   if (id.includes("sonnet") || id.includes("opus") || id.includes("claude-3-7")) {
     return ANTHROPIC_NON_ADAPTIVE;
   }
