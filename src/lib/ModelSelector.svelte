@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "$lib/api";
-  import type { ModelInfo, ProviderAuthStatus } from "./bindings";
+  import type { AuthMode, ModelInfo, ProviderAuthStatus } from "./bindings";
   import { PROVIDERS, REFRESHABLE_PROVIDERS } from "./providers";
   import { supportsThinking } from "./thinking";
   import ThinkingPicker from "./ThinkingPicker.svelte";
@@ -43,7 +43,23 @@
   let showDropdown = $state(false);
   let highlightedIndex = $state(-1);
   let modelInputEl: HTMLInputElement | undefined = $state(undefined);
-  let fixedModelId = $derived(provider === "openai-codex" ? "gpt-5.4" : "");
+
+  // The Tauri invoke wrapper rejects with the serialised `ErrorDto`
+  // (`{ kind, message, details }`) — not a real Error instance. Plain
+  // `String(err)` would give "[object Object]"; pull the message field
+  // (and details if any) so the user sees what actually failed.
+  function formatInvokeError(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    if (err && typeof err === "object") {
+      const dto = err as { message?: unknown; details?: unknown };
+      const msg = typeof dto.message === "string" ? dto.message : "";
+      const details = typeof dto.details === "string" ? dto.details : "";
+      if (msg && details) return `${msg} (${details})`;
+      if (msg) return msg;
+      if (details) return details;
+    }
+    return String(err);
+  }
 
   // Fuzzy filtered models — each space-separated term must match somewhere
   let filteredModels = $derived(() => {
@@ -58,18 +74,20 @@
       .slice(0, 50);
   });
 
-  async function fetchModels(p: string) {
+  async function fetchModels(p: string, forceRefresh = false) {
     const token = ++modelFetchToken;
     modelsLoading = true;
     modelsError = null;
     try {
-      const fetched = await invoke<ModelInfo[]>("get_models", { provider: p });
+      const fetched = await invoke<ModelInfo[]>("get_models", {
+        provider: p,
+        forceRefresh,
+      });
       if (token !== modelFetchToken) return; // stale — provider changed
       allModels = fetched;
     } catch (err) {
       if (token !== modelFetchToken) return;
-      const message = err instanceof Error ? err.message : String(err);
-      modelsError = message;
+      modelsError = formatInvokeError(err);
       allModels = [];
     } finally {
       if (token === modelFetchToken) {
@@ -95,7 +113,7 @@
     const p = provider;
     allModels = [];
     modelsError = null;
-    model = fixedModelId || "";
+    model = "";
     showDropdown = false;
     highlightedIndex = -1;
     fetchModels(p);
@@ -132,7 +150,9 @@
   });
 
   function refreshModels() {
-    fetchModels(provider);
+    // Retry button always busts the cache so transient provider failures
+    // (stale OAuth token, 5xx) can be retried without waiting out the TTL.
+    fetchModels(provider, true);
   }
 
   function selectModel(m: ModelInfo) {
@@ -142,10 +162,6 @@
   }
 
   function handleModelKeydown(e: KeyboardEvent) {
-    if (fixedModelId) {
-      return;
-    }
-
     const models = filteredModels();
     if (!showDropdown || models.length === 0) {
       if (e.key === "ArrowDown" && allModels.length > 0) {
@@ -190,6 +206,15 @@
     if (n >= 1024) return (n / 1024).toFixed(n % 1024 === 0 ? 0 : 1) + "k";
     return String(n);
   }
+
+  function authModeLabel(mode: AuthMode): string {
+    switch (mode) {
+      case "subscription": return "SUBSCRIPTION";
+      case "apiKey": return "API KEY";
+      case "both": return "SUB + API";
+      case "none": return "NOT CONFIGURED";
+    }
+  }
 </script>
 
 <div class="section">
@@ -214,17 +239,24 @@
     class:warn={!!authStatus?.checked && !authStatus?.configured}
     class:neutral={!authStatus?.checked}
   >
-    <span class="auth-status-label">
-      {#if authLoading}
-        Checking auth...
-      {:else if authStatus?.checked && authStatus?.configured}
-        Auth ready
-      {:else if authStatus?.checked}
-        Auth missing
-      {:else}
-        Auth not checked
+    <div class="auth-status-row">
+      <span class="auth-status-label">
+        {#if authLoading}
+          Checking auth...
+        {:else if authStatus?.checked && authStatus?.configured}
+          Auth ready
+        {:else if authStatus?.checked}
+          Auth missing
+        {:else}
+          Auth not checked
+        {/if}
+      </span>
+      {#if !authLoading && authStatus?.checked}
+        <span class="auth-mode-chip" data-mode={authStatus.authMode}>
+          {authModeLabel(authStatus.authMode)}
+        </span>
       {/if}
-    </span>
+    </div>
     {#if !authLoading && authStatus}
       <span class="auth-status-text">{authStatus.message}</span>
     {/if}
@@ -239,25 +271,22 @@
       type="text"
       bind:this={modelInputEl}
       bind:value={model}
-      placeholder={fixedModelId
-        ? "Uses your Pi Codex login"
-        : modelsLoading
-          ? "Loading models..."
-          : modelsError
-            ? "Provider unreachable — see hint below"
-            : allModels.length === 0
-              ? "No models available"
-              : "Search models..."}
-      readonly={!!fixedModelId}
-      onfocus={() => { if (!fixedModelId) showDropdown = true; }}
+      placeholder={modelsLoading
+        ? "Loading models..."
+        : modelsError
+          ? "Provider unreachable — see hint below"
+          : allModels.length === 0
+            ? "No models available"
+            : "Search models..."}
+      onfocus={() => (showDropdown = true)}
       onblur={() => setTimeout(() => (showDropdown = false), 200)}
       onkeydown={handleModelKeydown}
-      oninput={() => { if (!fixedModelId) { showDropdown = true; highlightedIndex = 0; } }}
+      oninput={() => { showDropdown = true; highlightedIndex = 0; }}
       autocomplete="off"
     />
     {#if modelsLoading}
       <span class="loading-indicator"></span>
-    {:else if !fixedModelId && REFRESHABLE_PROVIDERS.has(provider)}
+    {:else if REFRESHABLE_PROVIDERS.has(provider)}
       <button
         class="refresh-btn"
         onmousedown={(e: MouseEvent) => { e.preventDefault(); refreshModels(); }}
@@ -267,7 +296,7 @@
         ↻
       </button>
     {/if}
-    {#if !fixedModelId && showDropdown && filteredModels().length > 0}
+    {#if showDropdown && filteredModels().length > 0}
       <div class="model-dropdown">
         {#each filteredModels() as m, i (m.id)}
           <button
@@ -277,19 +306,21 @@
             onmousedown={(e: MouseEvent) => { e.preventDefault(); selectModel(m); }}
             onmouseenter={() => (highlightedIndex = i)}
           >
-            <span class="model-id">{m.id}</span>
+            <div class="model-option-head">
+              <span class="model-id">{m.id}</span>
+              {#if m.subscription === true}
+                <span class="model-tag tag-sub" title="Reachable via Pi subscription auth">SUB</span>
+              {:else if m.subscription === false}
+                <span class="model-tag tag-api" title="API-key only — Pi subscription cannot spawn this model">API</span>
+              {/if}
+            </div>
             <span class="model-name">{m.name}</span>
           </button>
         {/each}
       </div>
     {/if}
   </div>
-  {#if fixedModelId}
-    <div class="field-hint">
-      Uses Pi's existing `openai-codex` auth and locks this provider to GPT-5.4.
-    </div>
-  {/if}
-  {#if !fixedModelId && modelsError}
+  {#if modelsError}
     <div class="model-error">
       <span class="model-error-label">Can't reach provider</span>
       <span class="model-error-text">{modelsError}</span>
@@ -297,7 +328,7 @@
         Retry
       </button>
     </div>
-  {:else if !fixedModelId && !modelsLoading && allModels.length === 0}
+  {:else if !modelsLoading && allModels.length === 0}
     <div class="field-hint">
       No models found for this provider.
     </div>
@@ -398,6 +429,13 @@
     border-color: var(--border-subtle);
   }
 
+  .auth-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
   .auth-status-label {
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
@@ -410,6 +448,37 @@
     font-size: 12px;
     line-height: 1.45;
     color: var(--text-secondary);
+  }
+
+  .auth-mode-chip {
+    font-size: 9.5px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    letter-spacing: 0.6px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid currentColor;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .auth-mode-chip[data-mode="subscription"] {
+    color: var(--auth-ok-border, #4ade80);
+    background: rgba(74, 222, 128, 0.08);
+  }
+
+  .auth-mode-chip[data-mode="apiKey"] {
+    color: #60a5fa;
+    background: rgba(96, 165, 250, 0.08);
+  }
+
+  .auth-mode-chip[data-mode="both"] {
+    color: #c084fc;
+    background: rgba(192, 132, 252, 0.08);
+  }
+
+  .auth-mode-chip[data-mode="none"] {
+    color: var(--text-muted);
+    background: transparent;
   }
 
   .model-field {
@@ -545,6 +614,12 @@
     border-left: 2px solid var(--accent);
   }
 
+  .model-option-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
   .model-id {
     color: var(--text-primary);
     font-size: 12px;
@@ -553,6 +628,27 @@
   .model-name {
     color: var(--text-muted);
     font-size: 10px;
+  }
+
+  .model-tag {
+    font-size: 8.5px;
+    letter-spacing: 0.5px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid currentColor;
+    text-transform: uppercase;
+    line-height: 1.2;
+    flex-shrink: 0;
+  }
+
+  .model-tag.tag-sub {
+    color: var(--auth-ok-border, #4ade80);
+    background: rgba(74, 222, 128, 0.08);
+  }
+
+  .model-tag.tag-api {
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.08);
   }
 
   .lmstudio-context {

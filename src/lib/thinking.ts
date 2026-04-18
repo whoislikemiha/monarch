@@ -67,18 +67,18 @@ const GOOGLE_GEMINI: ModelThinkingProfile = {
   },
 };
 
-// OpenAI gpt-5.1-codex-max, gpt-5.2, gpt-5.2-codex, gpt-5.3, gpt-5.3-codex
-// — per pi-agent-core ThinkingLevel doc comment.
-const OPENAI_XHIGH_MODELS: readonly string[] = [
-  "gpt-5.1-codex-max",
-  "gpt-5.2",
-  "gpt-5.2-codex",
-  "gpt-5.3",
-  "gpt-5.3-codex",
-];
+// xhigh-capable OpenAI families per pi-ai's `supportsXhigh` (see
+// node_modules/@mariozechner/pi-ai/dist/models.js): any id containing
+// `gpt-5.2`, `gpt-5.3`, or `gpt-5.4`. This covers `-codex`, `-mini`,
+// and any other suffix without an explicit allowlist. Bump in lockstep
+// with pi-ai's check.
+const OPENAI_XHIGH_FAMILIES: readonly string[] = ["gpt-5.2", "gpt-5.3", "gpt-5.4"];
+// gpt-5.2/5.3/5.4 dropped `minimal` from their reasoning_effort set
+// (replaced by `xhigh` on the high end). Matches the effort picker in
+// the codex CLI.
 const OPENAI_XHIGH: ModelThinkingProfile = {
   supportsThinking: true,
-  levels: ["off", "minimal", "low", "medium", "high", "xhigh"],
+  levels: ["off", "low", "medium", "high", "xhigh"],
 };
 const OPENAI_STANDARD: ModelThinkingProfile = {
   supportsThinking: true,
@@ -87,8 +87,15 @@ const OPENAI_STANDARD: ModelThinkingProfile = {
 
 function anthropicProfile(modelId: string): ModelThinkingProfile {
   const id = modelId.toLowerCase();
-  if (id.includes("opus-4-6") || id.includes("opus-4.6")) return ANTHROPIC_OPUS_46;
-  if (id.includes("sonnet-4-6") || id.includes("sonnet-4.6")) return ANTHROPIC_SONNET_46;
+  // Generation-4 Claude models use adaptive thinking. Match by family
+  // prefix so future minor bumps (opus-4-7, opus-4-8, sonnet-4-7, …)
+  // inherit the right picker without code changes. pi-ai's own
+  // `supportsAdaptiveThinking` currently hardcodes 4.6; on newer
+  // versions it falls back to budget thinking, but the picker shape
+  // here reflects what Anthropic actually exposes for the model
+  // (which is what users see in Claude.ai / Claude Code).
+  if (id.includes("opus-4-") || id.includes("opus-4.")) return ANTHROPIC_OPUS_46;
+  if (id.includes("sonnet-4-") || id.includes("sonnet-4.")) return ANTHROPIC_SONNET_46;
   if (id.includes("sonnet") || id.includes("opus") || id.includes("claude-3-7")) {
     return ANTHROPIC_NON_ADAPTIVE;
   }
@@ -97,7 +104,7 @@ function anthropicProfile(modelId: string): ModelThinkingProfile {
 
 function openaiProfile(modelId: string): ModelThinkingProfile {
   const id = modelId.toLowerCase();
-  if (OPENAI_XHIGH_MODELS.some((m) => id.includes(m))) return OPENAI_XHIGH;
+  if (OPENAI_XHIGH_FAMILIES.some((fam) => id.includes(fam))) return OPENAI_XHIGH;
   if (id.startsWith("gpt-5") || id.startsWith("o1") || id.startsWith("o3") || id.startsWith("o4")) {
     return OPENAI_STANDARD;
   }
