@@ -101,16 +101,22 @@ fn anthropic_subscription_supports(id: &str) -> bool {
 }
 
 /// Whether a model ID is reachable via Pi's OpenAI Codex subscription auth.
-/// Covers the modern reasoning + codex stack: `gpt-5*` (incl. `-codex`,
-/// `-mini`, `.X` variants), the `o1` / `o3` / `o4` reasoning lines, and
-/// the standalone `codex-*` line. `gpt-4*`, `gpt-3.5*`, embeddings,
-/// audio, and image models surface as API-only.
+/// Authoritative list pulled directly from `codex` CLI's "Select Model
+/// and Effort" picker. Bump in lockstep with that screen — the live API
+/// list is much broader (gpt-4*, embeddings, audio, image, …) but only
+/// these IDs are reachable via the ChatGPT subscription.
+const OPENAI_CODEX_SUBSCRIPTION_IDS: &[&str] = &[
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex",
+    "gpt-5.2",
+    "gpt-5.2-codex",
+    "gpt-5.1-codex-max",
+    "gpt-5.1-codex-mini",
+];
+
 fn openai_codex_subscription_supports(id: &str) -> bool {
-    id.starts_with("gpt-5")
-        || id.starts_with("o1")
-        || id.starts_with("o3")
-        || id.starts_with("o4")
-        || id.starts_with("codex-")
+    OPENAI_CODEX_SUBSCRIPTION_IDS.contains(&id)
 }
 
 /// Curated fallback for Anthropic. Used when no `ANTHROPIC_API_KEY` env var
@@ -136,28 +142,19 @@ fn anthropic_curated() -> Vec<ModelInfo> {
 
 /// Curated fallback for OpenAI Codex. Same story: Pi's ChatGPT subscription
 /// JWT lacks the `api.model.read` scope and is rejected by `/v1/models`,
-/// so OAuth-only users see this list.
+/// so OAuth-only users see this list — which is exactly the subscription
+/// set, since that's all they could spawn anyway.
 fn openai_codex_curated() -> Vec<ModelInfo> {
-    [
-        "gpt-5.4",
-        "gpt-5.4-codex",
-        "gpt-5",
-        "gpt-5-codex",
-        "gpt-5-mini",
-        "o3",
-        "o3-mini",
-        "o4-mini",
-        "codex-mini-latest",
-    ]
-    .into_iter()
-    .map(|id| ModelInfo {
-        id: id.to_string(),
-        name: id.to_string(),
-        provider: "openai-codex".to_string(),
-        context_window: None,
-        subscription: Some(true),
-    })
-    .collect()
+    OPENAI_CODEX_SUBSCRIPTION_IDS
+        .iter()
+        .map(|id| ModelInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            provider: "openai-codex".to_string(),
+            context_window: None,
+            subscription: Some(true),
+        })
+        .collect()
 }
 
 /// Shared cache-or-fetch pattern. Returns the cached value when fresh,
