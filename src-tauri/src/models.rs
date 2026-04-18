@@ -122,10 +122,13 @@ fn openai_codex_subscription_supports(id: &str) -> bool {
 /// Curated fallback for Anthropic. Used when no `ANTHROPIC_API_KEY` env var
 /// is set — Pi's subscription OAuth tokens cannot call `/v1/models`
 /// (Anthropic returns "OAuth authentication is currently not supported"),
-/// so OAuth-only users see this list. Bump these as new models ship.
+/// so OAuth-only users see this list. Bound by what pi-ai's bundled
+/// model registry actually knows — listing models pi-ai can't spawn
+/// makes them silently fall back to pi's default model. Bump alongside
+/// pi-ai version bumps.
 fn anthropic_curated() -> Vec<ModelInfo> {
     [
-        ("claude-opus-4-7", "Claude Opus 4.7"),
+        ("claude-opus-4-6", "Claude Opus 4.6"),
         ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
         ("claude-haiku-4-5", "Claude Haiku 4.5"),
     ]
