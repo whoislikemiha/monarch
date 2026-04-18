@@ -233,6 +233,8 @@ export type AgentUpdatePayload = {
 	avatarPath: string | null,
 };
 
+export type AuthMode = "none" | "subscription" | "apiKey" | "both";
+
 export type Cost = {
 	input?: number,
 	output?: number,
@@ -372,6 +374,13 @@ export type ModelInfo = {
 	 *  and only for models LM Studio reports as currently loaded.
 	 */
 	contextWindow: number | null,
+	/**
+	 *  Whether this model is reachable via Pi's subscription credentials.
+	 *  `Some(true)` for the curated subscription set, `Some(false)` for live
+	 *  API-only entries, `None` for providers where the distinction is moot
+	 *  (OpenRouter, LM Studio).
+	 */
+	subscription: boolean | null,
 };
 
 export type NotificationLevel = "info" | "warning" | "error";
@@ -401,6 +410,7 @@ export type ProviderAuthStatus = {
 	configured: boolean,
 	source: string | null,
 	message: string,
+	authMode: AuthMode,
 };
 
 export type SessionRow = {

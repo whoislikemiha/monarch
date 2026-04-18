@@ -17,15 +17,31 @@ pub struct ModelInfo {
     /// and only for models LM Studio reports as currently loaded.
     #[serde(rename = "contextWindow")]
     pub context_window: Option<u32>,
+    /// Whether this model is reachable via Pi's subscription credentials.
+    /// `Some(true)` for the curated subscription set, `Some(false)` for live
+    /// API-only entries, `None` for providers where the distinction is moot
+    /// (OpenRouter, LM Studio).
+    pub subscription: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthMode {
+    None,
+    Subscription,
+    ApiKey,
+    Both,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderAuthStatus {
     pub provider: String,
     pub checked: bool,
     pub configured: bool,
     pub source: Option<String>,
     pub message: String,
+    pub auth_mode: AuthMode,
 }
 
 // Cache for fetched models
@@ -74,47 +90,66 @@ fn env_var_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|s| !s.is_empty())
 }
 
+/// Curated subscription-supported set for Anthropic. Used both as the
+/// fallback list when no API key is configured AND as the membership
+/// check that flags subscription support on the live API list.
+const ANTHROPIC_SUBSCRIPTION_MODELS: &[(&str, &str)] = &[
+    ("claude-opus-4-7", "Claude Opus 4.7"),
+    ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+    ("claude-haiku-4-5", "Claude Haiku 4.5"),
+];
+
+const OPENAI_CODEX_SUBSCRIPTION_MODELS: &[&str] = &[
+    "gpt-5.4",
+    "gpt-5",
+    "gpt-5-mini",
+    "o3",
+    "o3-mini",
+    "o4-mini",
+    "codex-mini-latest",
+];
+
+fn anthropic_subscription_supports(id: &str) -> bool {
+    ANTHROPIC_SUBSCRIPTION_MODELS
+        .iter()
+        .any(|(known, _)| *known == id)
+}
+
+fn openai_codex_subscription_supports(id: &str) -> bool {
+    OPENAI_CODEX_SUBSCRIPTION_MODELS.contains(&id)
+}
+
 /// Curated fallback for Anthropic. Used when no `ANTHROPIC_API_KEY` env var
 /// is set — Pi's subscription OAuth tokens cannot call `/v1/models`
 /// (Anthropic returns "OAuth authentication is currently not supported"),
 /// so OAuth-only users see this list. Bump these as new models ship.
 fn anthropic_curated() -> Vec<ModelInfo> {
-    [
-        ("claude-opus-4-7", "Claude Opus 4.7"),
-        ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
-        ("claude-haiku-4-5", "Claude Haiku 4.5"),
-    ]
-    .into_iter()
-    .map(|(id, name)| ModelInfo {
-        id: id.to_string(),
-        name: name.to_string(),
-        provider: "anthropic".to_string(),
-        context_window: None,
-    })
-    .collect()
+    ANTHROPIC_SUBSCRIPTION_MODELS
+        .iter()
+        .map(|(id, name)| ModelInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            provider: "anthropic".to_string(),
+            context_window: None,
+            subscription: Some(true),
+        })
+        .collect()
 }
 
 /// Curated fallback for OpenAI Codex. Same story: Pi's ChatGPT subscription
 /// JWT lacks the `api.model.read` scope and is rejected by `/v1/models`,
 /// so OAuth-only users see this list.
 fn openai_codex_curated() -> Vec<ModelInfo> {
-    [
-        "gpt-5.4",
-        "gpt-5",
-        "gpt-5-mini",
-        "o3",
-        "o3-mini",
-        "o4-mini",
-        "codex-mini-latest",
-    ]
-    .into_iter()
-    .map(|id| ModelInfo {
-        id: id.to_string(),
-        name: id.to_string(),
-        provider: "openai-codex".to_string(),
-        context_window: None,
-    })
-    .collect()
+    OPENAI_CODEX_SUBSCRIPTION_MODELS
+        .iter()
+        .map(|id| ModelInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            provider: "openai-codex".to_string(),
+            context_window: None,
+            subscription: Some(true),
+        })
+        .collect()
 }
 
 /// Shared cache-or-fetch pattern. Returns the cached value when fresh,
@@ -278,6 +313,7 @@ async fn fetch_lmstudio_models_native(
             name: m.id,
             provider: "lmstudio".to_string(),
             context_window: m.loaded_context_length,
+            subscription: None,
         })
         .collect())
 }
@@ -308,6 +344,7 @@ async fn fetch_lmstudio_models_openai(
             name: m.id,
             provider: "lmstudio".to_string(),
             context_window: None,
+            subscription: None,
         })
         .collect())
 }
@@ -332,6 +369,7 @@ async fn fetch_openrouter_models() -> Result<Vec<ModelInfo>, MonarchError> {
             name: m.name,
             provider: "openrouter".to_string(),
             context_window: None,
+            subscription: None,
         })
         .collect())
 }
@@ -364,6 +402,7 @@ async fn fetch_anthropic_models(api_key: String) -> Result<Vec<ModelInfo>, Monar
         .into_iter()
         .map(|m| ModelInfo {
             name: m.display_name.unwrap_or_else(|| m.id.clone()),
+            subscription: Some(anthropic_subscription_supports(&m.id)),
             id: m.id,
             provider: "anthropic".to_string(),
             context_window: None,
@@ -415,6 +454,7 @@ async fn fetch_openai_codex_models(api_key: String) -> Result<Vec<ModelInfo>, Mo
         .into_iter()
         .map(|m| ModelInfo {
             name: m.id.clone(),
+            subscription: Some(openai_codex_subscription_supports(&m.id)),
             id: m.id,
             provider: "openai-codex".to_string(),
             context_window: None,
@@ -528,6 +568,7 @@ fn get_provider_auth_status_inner(provider: String) -> Result<ProviderAuthStatus
             configured: false,
             source: None,
             message: "This provider does not use Pi subscription auth checks.".to_string(),
+            auth_mode: AuthMode::None,
         }),
     }
 }
@@ -544,11 +585,12 @@ fn auth_status_for(
     pi_label: &str,
     env_var_name: &str,
 ) -> ProviderAuthStatus {
-    let (configured, source, message) = match (pi_found, env_found) {
+    let (configured, source, message, auth_mode) = match (pi_found, env_found) {
         (true, true) => (
             true,
             Some(format!("~/.pi/agent/auth.json + ${env_var_name}")),
             format!("{pi_label} subscription for spawn, {env_var_name} for live model list."),
+            AuthMode::Both,
         ),
         (true, false) => (
             true,
@@ -557,11 +599,13 @@ fn auth_status_for(
                 "{pi_label} subscription found. Showing curated model list — \
                  set {env_var_name} for live discovery."
             ),
+            AuthMode::Subscription,
         ),
         (false, true) => (
             true,
             Some(format!("${env_var_name}")),
             format!("Using {env_var_name} from environment for spawn and live model list."),
+            AuthMode::ApiKey,
         ),
         (false, false) => (
             false,
@@ -570,6 +614,7 @@ fn auth_status_for(
                 "No {pi_label} auth or {env_var_name} found. \
                  Showing curated fallback list; spawning will fail until you log in."
             ),
+            AuthMode::None,
         ),
     };
 
@@ -579,5 +624,6 @@ fn auth_status_for(
         configured,
         source,
         message,
+        auth_mode,
     }
 }

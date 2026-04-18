@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "$lib/api";
-  import type { ModelInfo, ProviderAuthStatus } from "./bindings";
+  import type { AuthMode, ModelInfo, ProviderAuthStatus } from "./bindings";
   import { PROVIDERS, REFRESHABLE_PROVIDERS } from "./providers";
   import { supportsThinking } from "./thinking";
   import ThinkingPicker from "./ThinkingPicker.svelte";
@@ -206,6 +206,15 @@
     if (n >= 1024) return (n / 1024).toFixed(n % 1024 === 0 ? 0 : 1) + "k";
     return String(n);
   }
+
+  function authModeLabel(mode: AuthMode): string {
+    switch (mode) {
+      case "subscription": return "SUBSCRIPTION";
+      case "apiKey": return "API KEY";
+      case "both": return "SUB + API";
+      case "none": return "NOT CONFIGURED";
+    }
+  }
 </script>
 
 <div class="section">
@@ -230,17 +239,24 @@
     class:warn={!!authStatus?.checked && !authStatus?.configured}
     class:neutral={!authStatus?.checked}
   >
-    <span class="auth-status-label">
-      {#if authLoading}
-        Checking auth...
-      {:else if authStatus?.checked && authStatus?.configured}
-        Auth ready
-      {:else if authStatus?.checked}
-        Auth missing
-      {:else}
-        Auth not checked
+    <div class="auth-status-row">
+      <span class="auth-status-label">
+        {#if authLoading}
+          Checking auth...
+        {:else if authStatus?.checked && authStatus?.configured}
+          Auth ready
+        {:else if authStatus?.checked}
+          Auth missing
+        {:else}
+          Auth not checked
+        {/if}
+      </span>
+      {#if !authLoading && authStatus?.checked}
+        <span class="auth-mode-chip" data-mode={authStatus.authMode}>
+          {authModeLabel(authStatus.authMode)}
+        </span>
       {/if}
-    </span>
+    </div>
     {#if !authLoading && authStatus}
       <span class="auth-status-text">{authStatus.message}</span>
     {/if}
@@ -290,7 +306,14 @@
             onmousedown={(e: MouseEvent) => { e.preventDefault(); selectModel(m); }}
             onmouseenter={() => (highlightedIndex = i)}
           >
-            <span class="model-id">{m.id}</span>
+            <div class="model-option-head">
+              <span class="model-id">{m.id}</span>
+              {#if m.subscription === true}
+                <span class="model-tag tag-sub" title="Reachable via Pi subscription auth">SUB</span>
+              {:else if m.subscription === false}
+                <span class="model-tag tag-api" title="API-key only — Pi subscription cannot spawn this model">API</span>
+              {/if}
+            </div>
             <span class="model-name">{m.name}</span>
           </button>
         {/each}
@@ -406,6 +429,13 @@
     border-color: var(--border-subtle);
   }
 
+  .auth-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
   .auth-status-label {
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
@@ -418,6 +448,37 @@
     font-size: 12px;
     line-height: 1.45;
     color: var(--text-secondary);
+  }
+
+  .auth-mode-chip {
+    font-size: 9.5px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    letter-spacing: 0.6px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid currentColor;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .auth-mode-chip[data-mode="subscription"] {
+    color: var(--auth-ok-border, #4ade80);
+    background: rgba(74, 222, 128, 0.08);
+  }
+
+  .auth-mode-chip[data-mode="apiKey"] {
+    color: #60a5fa;
+    background: rgba(96, 165, 250, 0.08);
+  }
+
+  .auth-mode-chip[data-mode="both"] {
+    color: #c084fc;
+    background: rgba(192, 132, 252, 0.08);
+  }
+
+  .auth-mode-chip[data-mode="none"] {
+    color: var(--text-muted);
+    background: transparent;
   }
 
   .model-field {
@@ -553,6 +614,12 @@
     border-left: 2px solid var(--accent);
   }
 
+  .model-option-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
   .model-id {
     color: var(--text-primary);
     font-size: 12px;
@@ -561,6 +628,27 @@
   .model-name {
     color: var(--text-muted);
     font-size: 10px;
+  }
+
+  .model-tag {
+    font-size: 8.5px;
+    letter-spacing: 0.5px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid currentColor;
+    text-transform: uppercase;
+    line-height: 1.2;
+    flex-shrink: 0;
+  }
+
+  .model-tag.tag-sub {
+    color: var(--auth-ok-border, #4ade80);
+    background: rgba(74, 222, 128, 0.08);
+  }
+
+  .model-tag.tag-api {
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.08);
   }
 
   .lmstudio-context {
