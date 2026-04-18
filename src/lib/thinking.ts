@@ -73,9 +73,12 @@ const GOOGLE_GEMINI: ModelThinkingProfile = {
 // and any other suffix without an explicit allowlist. Bump in lockstep
 // with pi-ai's check.
 const OPENAI_XHIGH_FAMILIES: readonly string[] = ["gpt-5.2", "gpt-5.3", "gpt-5.4"];
+// gpt-5.2/5.3/5.4 dropped `minimal` from their reasoning_effort set
+// (replaced by `xhigh` on the high end). Matches the effort picker in
+// the codex CLI.
 const OPENAI_XHIGH: ModelThinkingProfile = {
   supportsThinking: true,
-  levels: ["off", "minimal", "low", "medium", "high", "xhigh"],
+  levels: ["off", "low", "medium", "high", "xhigh"],
 };
 const OPENAI_STANDARD: ModelThinkingProfile = {
   supportsThinking: true,
