@@ -90,33 +90,27 @@ fn env_var_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|s| !s.is_empty())
 }
 
-/// Curated subscription-supported set for Anthropic. Used both as the
-/// fallback list when no API key is configured AND as the membership
-/// check that flags subscription support on the live API list.
-const ANTHROPIC_SUBSCRIPTION_MODELS: &[(&str, &str)] = &[
-    ("claude-opus-4-7", "Claude Opus 4.7"),
-    ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
-    ("claude-haiku-4-5", "Claude Haiku 4.5"),
-];
-
-const OPENAI_CODEX_SUBSCRIPTION_MODELS: &[&str] = &[
-    "gpt-5.4",
-    "gpt-5",
-    "gpt-5-mini",
-    "o3",
-    "o3-mini",
-    "o4-mini",
-    "codex-mini-latest",
-];
-
+/// Whether a model ID is reachable via Pi's Anthropic subscription auth.
+/// Prefix-based: every current-generation `claude-{opus,sonnet,haiku}-4*`
+/// is in subscription; older Claude 3.x variants in the live API list are
+/// API-only.
 fn anthropic_subscription_supports(id: &str) -> bool {
-    ANTHROPIC_SUBSCRIPTION_MODELS
-        .iter()
-        .any(|(known, _)| *known == id)
+    id.starts_with("claude-opus-4")
+        || id.starts_with("claude-sonnet-4")
+        || id.starts_with("claude-haiku-4")
 }
 
+/// Whether a model ID is reachable via Pi's OpenAI Codex subscription auth.
+/// Covers the modern reasoning + codex stack: `gpt-5*` (incl. `-codex`,
+/// `-mini`, `.X` variants), the `o1` / `o3` / `o4` reasoning lines, and
+/// the standalone `codex-*` line. `gpt-4*`, `gpt-3.5*`, embeddings,
+/// audio, and image models surface as API-only.
 fn openai_codex_subscription_supports(id: &str) -> bool {
-    OPENAI_CODEX_SUBSCRIPTION_MODELS.contains(&id)
+    id.starts_with("gpt-5")
+        || id.starts_with("o1")
+        || id.starts_with("o3")
+        || id.starts_with("o4")
+        || id.starts_with("codex-")
 }
 
 /// Curated fallback for Anthropic. Used when no `ANTHROPIC_API_KEY` env var
@@ -124,32 +118,46 @@ fn openai_codex_subscription_supports(id: &str) -> bool {
 /// (Anthropic returns "OAuth authentication is currently not supported"),
 /// so OAuth-only users see this list. Bump these as new models ship.
 fn anthropic_curated() -> Vec<ModelInfo> {
-    ANTHROPIC_SUBSCRIPTION_MODELS
-        .iter()
-        .map(|(id, name)| ModelInfo {
-            id: id.to_string(),
-            name: name.to_string(),
-            provider: "anthropic".to_string(),
-            context_window: None,
-            subscription: Some(true),
-        })
-        .collect()
+    [
+        ("claude-opus-4-7", "Claude Opus 4.7"),
+        ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+        ("claude-haiku-4-5", "Claude Haiku 4.5"),
+    ]
+    .into_iter()
+    .map(|(id, name)| ModelInfo {
+        id: id.to_string(),
+        name: name.to_string(),
+        provider: "anthropic".to_string(),
+        context_window: None,
+        subscription: Some(true),
+    })
+    .collect()
 }
 
 /// Curated fallback for OpenAI Codex. Same story: Pi's ChatGPT subscription
 /// JWT lacks the `api.model.read` scope and is rejected by `/v1/models`,
 /// so OAuth-only users see this list.
 fn openai_codex_curated() -> Vec<ModelInfo> {
-    OPENAI_CODEX_SUBSCRIPTION_MODELS
-        .iter()
-        .map(|id| ModelInfo {
-            id: id.to_string(),
-            name: id.to_string(),
-            provider: "openai-codex".to_string(),
-            context_window: None,
-            subscription: Some(true),
-        })
-        .collect()
+    [
+        "gpt-5.4",
+        "gpt-5.4-codex",
+        "gpt-5",
+        "gpt-5-codex",
+        "gpt-5-mini",
+        "o3",
+        "o3-mini",
+        "o4-mini",
+        "codex-mini-latest",
+    ]
+    .into_iter()
+    .map(|id| ModelInfo {
+        id: id.to_string(),
+        name: id.to_string(),
+        provider: "openai-codex".to_string(),
+        context_window: None,
+        subscription: Some(true),
+    })
+    .collect()
 }
 
 /// Shared cache-or-fetch pattern. Returns the cached value when fresh,
