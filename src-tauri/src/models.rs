@@ -170,6 +170,11 @@ struct OpenAiListResponse {
 #[derive(Deserialize)]
 struct OpenAiListModel {
     id: String,
+    /// Unix epoch seconds. Used to sort newest-first so the dropdown's
+    /// first 50 entries are the latest models, not whatever order OpenAI
+    /// returns (which is roughly by id alphabetically).
+    #[serde(default)]
+    created: u64,
 }
 
 #[derive(Deserialize)]
@@ -399,10 +404,15 @@ async fn fetch_openai_codex_models(api_key: String) -> Result<Vec<ModelInfo>, Mo
 
     let parsed: OpenAiListResponse = resp.json().await?;
 
-    Ok(parsed
+    let mut filtered: Vec<OpenAiListModel> = parsed
         .data
         .into_iter()
         .filter(|m| is_codex_chat_model(&m.id))
+        .collect();
+    filtered.sort_by(|a, b| b.created.cmp(&a.created));
+
+    Ok(filtered
+        .into_iter()
         .map(|m| ModelInfo {
             name: m.id.clone(),
             id: m.id,
