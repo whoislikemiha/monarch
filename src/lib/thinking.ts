@@ -67,15 +67,12 @@ const GOOGLE_GEMINI: ModelThinkingProfile = {
   },
 };
 
-// OpenAI gpt-5.1-codex-max, gpt-5.2, gpt-5.2-codex, gpt-5.3, gpt-5.3-codex
-// — per pi-agent-core ThinkingLevel doc comment.
-const OPENAI_XHIGH_MODELS: readonly string[] = [
-  "gpt-5.1-codex-max",
-  "gpt-5.2",
-  "gpt-5.2-codex",
-  "gpt-5.3",
-  "gpt-5.3-codex",
-];
+// xhigh-capable OpenAI families per pi-ai's `supportsXhigh` (see
+// node_modules/@mariozechner/pi-ai/dist/models.js): any id containing
+// `gpt-5.2`, `gpt-5.3`, or `gpt-5.4`. This covers `-codex`, `-mini`,
+// and any other suffix without an explicit allowlist. Bump in lockstep
+// with pi-ai's check.
+const OPENAI_XHIGH_FAMILIES: readonly string[] = ["gpt-5.2", "gpt-5.3", "gpt-5.4"];
 const OPENAI_XHIGH: ModelThinkingProfile = {
   supportsThinking: true,
   levels: ["off", "minimal", "low", "medium", "high", "xhigh"],
@@ -97,7 +94,7 @@ function anthropicProfile(modelId: string): ModelThinkingProfile {
 
 function openaiProfile(modelId: string): ModelThinkingProfile {
   const id = modelId.toLowerCase();
-  if (OPENAI_XHIGH_MODELS.some((m) => id.includes(m))) return OPENAI_XHIGH;
+  if (OPENAI_XHIGH_FAMILIES.some((fam) => id.includes(fam))) return OPENAI_XHIGH;
   if (id.startsWith("gpt-5") || id.startsWith("o1") || id.startsWith("o3") || id.startsWith("o4")) {
     return OPENAI_STANDARD;
   }
