@@ -44,6 +44,23 @@
   let highlightedIndex = $state(-1);
   let modelInputEl: HTMLInputElement | undefined = $state(undefined);
 
+  // The Tauri invoke wrapper rejects with the serialised `ErrorDto`
+  // (`{ kind, message, details }`) — not a real Error instance. Plain
+  // `String(err)` would give "[object Object]"; pull the message field
+  // (and details if any) so the user sees what actually failed.
+  function formatInvokeError(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    if (err && typeof err === "object") {
+      const dto = err as { message?: unknown; details?: unknown };
+      const msg = typeof dto.message === "string" ? dto.message : "";
+      const details = typeof dto.details === "string" ? dto.details : "";
+      if (msg && details) return `${msg} (${details})`;
+      if (msg) return msg;
+      if (details) return details;
+    }
+    return String(err);
+  }
+
   // Fuzzy filtered models — each space-separated term must match somewhere
   let filteredModels = $derived(() => {
     const query = model.toLowerCase().trim();
@@ -70,8 +87,7 @@
       allModels = fetched;
     } catch (err) {
       if (token !== modelFetchToken) return;
-      const message = err instanceof Error ? err.message : String(err);
-      modelsError = message;
+      modelsError = formatInvokeError(err);
       allModels = [];
     } finally {
       if (token === modelFetchToken) {

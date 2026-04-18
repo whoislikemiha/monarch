@@ -51,14 +51,14 @@ fn pi_auth_path() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(".pi").join("agent").join("auth.json"))
 }
 
-fn pi_auth_entry(provider: &str) -> Result<Option<Value>, MonarchError> {
+fn pi_auth_entry_exists(provider: &str) -> Result<bool, MonarchError> {
     let path = match pi_auth_path() {
         Some(path) => path,
-        None => return Ok(None),
+        None => return Ok(false),
     };
 
     if !path.exists() {
-        return Ok(None);
+        return Ok(false);
     }
 
     let content = fs::read_to_string(&path)?;
@@ -67,70 +67,54 @@ fn pi_auth_entry(provider: &str) -> Result<Option<Value>, MonarchError> {
     Ok(parsed
         .as_object()
         .and_then(|obj| obj.get(provider))
-        .cloned())
-}
-
-fn pi_auth_entry_exists(provider: &str) -> Result<bool, MonarchError> {
-    Ok(pi_auth_entry(provider)?.is_some())
-}
-
-/// Extract the OAuth `access` token Pi stores for a given provider.
-/// Returns `None` if `auth.json` is missing, the provider isn't configured,
-/// or the entry lacks an `access` field.
-fn pi_auth_access_token(provider: &str) -> Result<Option<String>, MonarchError> {
-    Ok(pi_auth_entry(provider)?
-        .and_then(|entry| entry.get("access").cloned())
-        .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .filter(|s| !s.is_empty()))
+        .is_some())
 }
 
 fn env_var_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|s| !s.is_empty())
 }
 
-/// Source of a provider credential — used both to pick the right auth header
-/// at fetch time and to tell the user in the UI which credential we're on.
-#[derive(Debug, Clone, Copy)]
-enum AuthSource {
-    PiSubscription,
-    EnvApiKey,
+/// Curated fallback for Anthropic. Used when no `ANTHROPIC_API_KEY` env var
+/// is set — Pi's subscription OAuth tokens cannot call `/v1/models`
+/// (Anthropic returns "OAuth authentication is currently not supported"),
+/// so OAuth-only users see this list. Bump these as new models ship.
+fn anthropic_curated() -> Vec<ModelInfo> {
+    [
+        ("claude-opus-4-7", "Claude Opus 4.7"),
+        ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+        ("claude-haiku-4-5", "Claude Haiku 4.5"),
+    ]
+    .into_iter()
+    .map(|(id, name)| ModelInfo {
+        id: id.to_string(),
+        name: name.to_string(),
+        provider: "anthropic".to_string(),
+        context_window: None,
+    })
+    .collect()
 }
 
-struct ProviderCreds {
-    token: String,
-    source: AuthSource,
-}
-
-fn anthropic_creds() -> Result<Option<ProviderCreds>, MonarchError> {
-    if let Some(token) = pi_auth_access_token("anthropic")? {
-        return Ok(Some(ProviderCreds {
-            token,
-            source: AuthSource::PiSubscription,
-        }));
-    }
-    if let Some(token) = env_var_nonempty("ANTHROPIC_API_KEY") {
-        return Ok(Some(ProviderCreds {
-            token,
-            source: AuthSource::EnvApiKey,
-        }));
-    }
-    Ok(None)
-}
-
-fn openai_codex_creds() -> Result<Option<ProviderCreds>, MonarchError> {
-    if let Some(token) = pi_auth_access_token("openai-codex")? {
-        return Ok(Some(ProviderCreds {
-            token,
-            source: AuthSource::PiSubscription,
-        }));
-    }
-    if let Some(token) = env_var_nonempty("OPENAI_API_KEY") {
-        return Ok(Some(ProviderCreds {
-            token,
-            source: AuthSource::EnvApiKey,
-        }));
-    }
-    Ok(None)
+/// Curated fallback for OpenAI Codex. Same story: Pi's ChatGPT subscription
+/// JWT lacks the `api.model.read` scope and is rejected by `/v1/models`,
+/// so OAuth-only users see this list.
+fn openai_codex_curated() -> Vec<ModelInfo> {
+    [
+        "gpt-5.4",
+        "gpt-5",
+        "gpt-5-mini",
+        "o3",
+        "o3-mini",
+        "o4-mini",
+        "codex-mini-latest",
+    ]
+    .into_iter()
+    .map(|id| ModelInfo {
+        id: id.to_string(),
+        name: id.to_string(),
+        provider: "openai-codex".to_string(),
+        context_window: None,
+    })
+    .collect()
 }
 
 /// Shared cache-or-fetch pattern. Returns the cached value when fresh,
@@ -347,32 +331,17 @@ async fn fetch_openrouter_models() -> Result<Vec<ModelInfo>, MonarchError> {
         .collect())
 }
 
-async fn fetch_anthropic_models() -> Result<Vec<ModelInfo>, MonarchError> {
-    let creds = anthropic_creds()?.ok_or_else(|| {
-        MonarchError::persistence(
-            "No Anthropic credentials found. Log in via Pi or set ANTHROPIC_API_KEY.",
-        )
-    })?;
-
+async fn fetch_anthropic_models(api_key: String) -> Result<Vec<ModelInfo>, MonarchError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()?;
 
-    let mut req = client
+    let resp = client
         .get("https://api.anthropic.com/v1/models")
-        .header("anthropic-version", "2023-06-01");
-
-    // Pi's Anthropic access token is an OAuth `sk-ant-oat01-...` — goes as
-    // a Bearer token with the OAuth beta header. The env-var fallback is a
-    // classic `sk-ant-api03-...` API key, which takes `x-api-key`.
-    req = match creds.source {
-        AuthSource::PiSubscription => req
-            .header("Authorization", format!("Bearer {}", creds.token))
-            .header("anthropic-beta", "oauth-2025-04-20"),
-        AuthSource::EnvApiKey => req.header("x-api-key", creds.token),
-    };
-
-    let resp = req.send().await?;
+        .header("anthropic-version", "2023-06-01")
+        .header("x-api-key", api_key)
+        .send()
+        .await?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -408,20 +377,14 @@ fn is_codex_chat_model(id: &str) -> bool {
     CODEX_ID_PREFIXES.iter().any(|p| id.starts_with(p))
 }
 
-async fn fetch_openai_codex_models() -> Result<Vec<ModelInfo>, MonarchError> {
-    let creds = openai_codex_creds()?.ok_or_else(|| {
-        MonarchError::persistence(
-            "No OpenAI Codex credentials found. Log in via Pi or set OPENAI_API_KEY.",
-        )
-    })?;
-
+async fn fetch_openai_codex_models(api_key: String) -> Result<Vec<ModelInfo>, MonarchError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()?;
 
     let resp = client
         .get("https://api.openai.com/v1/models")
-        .header("Authorization", format!("Bearer {}", creds.token))
+        .header("Authorization", format!("Bearer {}", api_key))
         .send()
         .await?;
 
@@ -455,23 +418,39 @@ async fn get_models_inner(
     force_refresh: bool,
 ) -> Result<Vec<ModelInfo>, MonarchError> {
     match provider {
+        // Anthropic + Codex listing endpoints don't accept Pi's subscription
+        // OAuth tokens — Anthropic outright rejects OAuth on /v1/models, and
+        // ChatGPT JWTs lack the `api.model.read` scope. We only attempt a
+        // live fetch when an API-key env var is present; otherwise return
+        // the curated fallback so subscription-only users still see a useful
+        // list. If the API-key live fetch fails, we surface the error rather
+        // than silently degrading — the user opted into live by setting the
+        // key and should see why it broke.
         "anthropic" => {
-            cached_or_fetch(
-                &cache.anthropic,
-                "anthropic cache",
-                force_refresh,
-                fetch_anthropic_models,
-            )
-            .await
+            if let Some(api_key) = env_var_nonempty("ANTHROPIC_API_KEY") {
+                cached_or_fetch(
+                    &cache.anthropic,
+                    "anthropic cache",
+                    force_refresh,
+                    || fetch_anthropic_models(api_key),
+                )
+                .await
+            } else {
+                Ok(anthropic_curated())
+            }
         }
         "openai-codex" => {
-            cached_or_fetch(
-                &cache.openai_codex,
-                "openai-codex cache",
-                force_refresh,
-                fetch_openai_codex_models,
-            )
-            .await
+            if let Some(api_key) = env_var_nonempty("OPENAI_API_KEY") {
+                cached_or_fetch(
+                    &cache.openai_codex,
+                    "openai-codex cache",
+                    force_refresh,
+                    || fetch_openai_codex_models(api_key),
+                )
+                .await
+            } else {
+                Ok(openai_codex_curated())
+            }
         }
         "openrouter" => {
             cached_or_fetch(
@@ -543,9 +522,11 @@ fn get_provider_auth_status_inner(provider: String) -> Result<ProviderAuthStatus
     }
 }
 
-/// Build a `ProviderAuthStatus` honouring the "Pi subscription takes precedence
-/// over env API key" order the fetchers themselves use. Keeps the status the
-/// UI sees and the credential the fetcher actually picks in lockstep.
+/// Build a `ProviderAuthStatus` describing both spawn-auth (which credential
+/// will be used to call the provider at session-spawn time, handled by Pi)
+/// and listing-auth (whether the model picker shows a live or curated list).
+/// Pi's subscription OAuth tokens cover spawn but cannot call `/v1/models`,
+/// so the listing path keys off the env API key only.
 fn auth_status_for(
     provider: String,
     pi_found: bool,
@@ -553,31 +534,40 @@ fn auth_status_for(
     pi_label: &str,
     env_var_name: &str,
 ) -> ProviderAuthStatus {
-    if pi_found {
-        ProviderAuthStatus {
-            provider,
-            checked: true,
-            configured: true,
-            source: Some("~/.pi/agent/auth.json".to_string()),
-            message: format!("{pi_label} subscription auth found."),
-        }
-    } else if env_found {
-        ProviderAuthStatus {
-            provider,
-            checked: true,
-            configured: true,
-            source: Some(format!("${env_var_name}")),
-            message: format!("Using {env_var_name} from environment."),
-        }
-    } else {
-        ProviderAuthStatus {
-            provider,
-            checked: true,
-            configured: false,
-            source: None,
-            message: format!(
-                "No {pi_label} auth or {env_var_name} found — model list will be unavailable."
+    let (configured, source, message) = match (pi_found, env_found) {
+        (true, true) => (
+            true,
+            Some(format!("~/.pi/agent/auth.json + ${env_var_name}")),
+            format!("{pi_label} subscription for spawn, {env_var_name} for live model list."),
+        ),
+        (true, false) => (
+            true,
+            Some("~/.pi/agent/auth.json".to_string()),
+            format!(
+                "{pi_label} subscription found. Showing curated model list — \
+                 set {env_var_name} for live discovery."
             ),
-        }
+        ),
+        (false, true) => (
+            true,
+            Some(format!("${env_var_name}")),
+            format!("Using {env_var_name} from environment for spawn and live model list."),
+        ),
+        (false, false) => (
+            false,
+            None,
+            format!(
+                "No {pi_label} auth or {env_var_name} found. \
+                 Showing curated fallback list; spawning will fail until you log in."
+            ),
+        ),
+    };
+
+    ProviderAuthStatus {
+        provider,
+        checked: true,
+        configured,
+        source,
+        message,
     }
 }
