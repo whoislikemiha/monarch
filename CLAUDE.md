@@ -33,7 +33,15 @@ npm run test:watch       # watch mode
 
 # regenerate Tauri bindings after Rust type changes
 cargo run -- --export-bindings   # from src-tauri/
+
+# bump Pi packages to latest (run before each release; Pi releases ~daily)
+npm run pi:upgrade               # bumps pi-ai + pi-coding-agent in root + sidecar, rebuilds sidecar
 ```
+
+After `pi:upgrade`, sanity-check `sidecar/node_modules/@mariozechner/pi-ai/dist/models.generated.js` for the
+latest model IDs and update the curated lists in `src-tauri/src/models.rs` (`anthropic_curated`,
+`openai_codex_curated`) plus the subscription-tagging sets in the same file. Pi catalog drift is the
+main reason curated lists go stale.
 
 ### Where things land
 
