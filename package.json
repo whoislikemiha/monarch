@@ -11,11 +11,12 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "pi:upgrade": "npm install @mariozechner/pi-ai@latest @mariozechner/pi-coding-agent@latest && npm install --prefix sidecar @mariozechner/pi-ai@latest @mariozechner/pi-coding-agent@latest && npm run build:sidecar"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.65.2",
-    "@mariozechner/pi-coding-agent": "^0.65.2",
+    "@mariozechner/pi-ai": "^0.67.68",
+    "@mariozechner/pi-coding-agent": "^0.67.68",
     "@rive-app/canvas": "^2.37.1",
     "@rive-app/webgl2": "^2.37.1",
     "@tauri-apps/api": "^2",
