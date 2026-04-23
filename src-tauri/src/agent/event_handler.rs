@@ -29,8 +29,11 @@ fn get_session_id(inner: &Arc<PlMutex<AgentManagerInner>>, agent_id: &str) -> Op
     inner.lock().session_map.get(agent_id).cloned()
 }
 
-/// Emit an event to both Tauri webview and WebSocket clients
-pub(super) fn emit_event(
+/// Emit an event to both Tauri webview and WebSocket clients.
+/// MON-83: promoted from `pub(super)` to `pub(crate)` so non-agent
+/// command surfaces (e.g. quest CRUD in `db.rs`) can broadcast their own
+/// event channels without rebuilding the dual-emit plumbing.
+pub(crate) fn emit_event(
     app: &AppHandle,
     ws_tx: &broadcast::Sender<WsBroadcast>,
     event_name: &str,

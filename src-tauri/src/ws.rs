@@ -467,6 +467,76 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             Ok(Value::String(result))
         }
 
+        // ---- DB: Quests (MON-83) ----
+        // Write commands emit the matching `quest-*-{id}` channel via the
+        // shared broadcast pipeline so WS subscribers stay in sync without
+        // a manual refetch.
+        "db_create_quest" => {
+            let payload: crate::db::CreateQuestPayload =
+                serde_json::from_value(args.get("payload").cloned().unwrap_or(args.clone()))
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid payload: {}", e)))?;
+            let id = state.db.create_quest_internal(&payload).await?;
+            let app = state.agent_mgr.get_app_handle()?;
+            crate::agent::emit_event(
+                &app,
+                &state.agent_mgr.ws_broadcast,
+                &format!("quest-created-{}", id),
+                &serde_json::json!({ "id": id }).to_string(),
+            );
+            Ok(Value::String(id))
+        }
+        "db_update_quest" => {
+            let payload: crate::db::UpdateQuestPayload =
+                serde_json::from_value(args.get("payload").cloned().unwrap_or(args.clone()))
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid payload: {}", e)))?;
+            let id = payload.id.clone();
+            state.db.update_quest_internal(&payload).await?;
+            let app = state.agent_mgr.get_app_handle()?;
+            crate::agent::emit_event(
+                &app,
+                &state.agent_mgr.ws_broadcast,
+                &format!("quest-updated-{}", id),
+                &serde_json::json!({ "id": id }).to_string(),
+            );
+            Ok(Value::Null)
+        }
+        "db_get_quest" => {
+            let quest_id = str_field(&args, "questId")?;
+            let quest = state.db.get_quest_internal(&quest_id).await?;
+            serde_json::to_value(quest).map_err(MonarchError::from)
+        }
+        "db_list_quests_for_agent" => {
+            let agent_id = str_field(&args, "agentId")?;
+            let quests = state.db.list_quests_for_agent_internal(&agent_id).await?;
+            serde_json::to_value(quests).map_err(MonarchError::from)
+        }
+        "db_get_quest_tree_for_root" => {
+            let root_id = str_field(&args, "rootId")?;
+            let tree = state.db.get_quest_tree_for_root_internal(&root_id).await?;
+            serde_json::to_value(tree).map_err(MonarchError::from)
+        }
+        "db_record_quest_event" => {
+            let payload: crate::db::RecordQuestEventPayload =
+                serde_json::from_value(args.get("payload").cloned().unwrap_or(args.clone()))
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid payload: {}", e)))?;
+            let quest_id = payload.quest_id.clone();
+            let event_type = payload.event_type.clone();
+            let id = state.db.record_quest_event_internal(&payload).await?;
+            let app = state.agent_mgr.get_app_handle()?;
+            crate::agent::emit_event(
+                &app,
+                &state.agent_mgr.ws_broadcast,
+                &format!("quest-event-{}", quest_id),
+                &serde_json::json!({ "id": id, "eventType": event_type }).to_string(),
+            );
+            Ok(Value::String(id))
+        }
+        "db_list_quest_events" => {
+            let quest_id = str_field(&args, "questId")?;
+            let events = state.db.list_quest_events_internal(&quest_id).await?;
+            serde_json::to_value(events).map_err(MonarchError::from)
+        }
+
         _ => Err(MonarchError::not_found(format!("command {}", cmd))),
     }
 }

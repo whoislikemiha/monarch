@@ -26,6 +26,11 @@ mod sidecar;
 pub use commands::{ExtensionUiResponseRequest, SpawnAgentRequest};
 pub use manager::AgentManager;
 
+/// MON-83: cross-module access to the dual (Tauri + WS) emit helper so
+/// non-agent command surfaces can broadcast their own event channels
+/// (e.g. `quest-created-{id}`) through the same broadcast pipeline.
+pub(crate) use event_handler::emit_event;
+
 /// Debounce window for streaming `message_update` events. Token-rate chunks
 /// would otherwise clone + serialize the full snapshot per token; 16ms caps
 /// the emit rate at ~60fps which is visually equivalent and ~10x cheaper on
