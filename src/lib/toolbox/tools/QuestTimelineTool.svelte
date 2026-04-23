@@ -169,7 +169,6 @@
             type="text"
             bind:value={formTitle}
             placeholder="Short, imperative"
-            autofocus
             required
           />
         </label>

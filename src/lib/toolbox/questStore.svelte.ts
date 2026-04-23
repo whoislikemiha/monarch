@@ -46,9 +46,11 @@ class QuestStore {
   private subs = new Map<string, AgentSubs>();
 
   ensure(agentId: string): AgentQuestState {
-    let entry = this.byAgent.get(agentId);
-    if (entry) return entry;
-    entry = $state({
+    const existing = this.byAgent.get(agentId);
+    if (existing) return existing;
+    // `$state` must sit in a variable declaration initializer; the entry
+    // then lives in the SvelteMap which stays reactive on its own.
+    const entry: AgentQuestState = $state({
       agentId,
       roots: [],
       treesByRoot: new SvelteMap(),
