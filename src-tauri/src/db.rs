@@ -1933,24 +1933,25 @@ impl Database {
     }
 
     /// Link an existing classification row to a persisted user message.
-    /// No-ops silently if the classification id is unknown (e.g. classifier
-    /// disabled mid-turn, or a duplicate backfill).
+    /// Returns the number of rows updated — `0` means the classification
+    /// row isn't in the table yet (classifier still in flight); the caller
+    /// should stash the mapping and re-apply on `SaveClassification`.
     pub async fn backfill_classification_message_id(
         &self,
         classification_id: &str,
         message_id: i64,
-    ) -> Result<(), MonarchError> {
+    ) -> Result<usize, MonarchError> {
         let classification_id = classification_id.to_string();
-        self.conn
+        Ok(self
+            .conn
             .call(move |conn| {
-                conn.execute(
+                let rows = conn.execute(
                     "UPDATE classifications SET message_id = ?1 WHERE id = ?2",
                     params![message_id, classification_id],
                 )?;
-                Ok(())
+                Ok(rows)
             })
-            .await?;
-        Ok(())
+            .await?)
     }
 
     pub async fn list_classifications_for_agent_internal(

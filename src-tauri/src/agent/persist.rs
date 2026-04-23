@@ -14,6 +14,7 @@
 
 use dashmap::DashMap;
 use parking_lot::Mutex as PlMutex;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::{broadcast, mpsc};
@@ -37,6 +38,17 @@ use super::WsBroadcast;
 pub(super) struct PendingAttachment {
     pub data_base64: String,
     pub mime_type: String,
+}
+
+/// MON-82: per-consumer state that survives between `PersistCommand`s.
+/// Required because the classifier round-trip (~1.5 s on Haiku) usually
+/// lands AFTER Pi's user `message_end` in the pipeline, so the
+/// `SaveAssistantMessage` apply stashes the pending (classification_id →
+/// message_id) pair here and `SaveClassification`'s apply consumes it
+/// when the classification row is finally inserted.
+#[derive(Default)]
+pub(super) struct PersistContext {
+    pending_classification_links: HashMap<String, i64>,
 }
 
 /// A persistence effect to apply in FIFO order by the single consumer.
@@ -111,7 +123,11 @@ impl PersistCommand {
         }
     }
 
-    async fn apply(self, db: &Database) -> Result<(), MonarchError> {
+    async fn apply(
+        self,
+        db: &Database,
+        ctx: &mut PersistContext,
+    ) -> Result<(), MonarchError> {
         match self {
             Self::LogEvent {
                 agent_id,
@@ -138,18 +154,36 @@ impl PersistCommand {
                 let tokens = message.tokens;
                 let cost = message.cost;
                 let message_id = db.save_message_internal(&message).await?;
-                // MON-82: link the classification row to the just-saved user
-                // message. Best-effort — a failure here shouldn't drop the
-                // message; it's an analytics/display tag, not core data.
+                // MON-82: pair the just-saved user row with its paired
+                // classification. Two orderings are possible:
+                //
+                // - Classifier beat us here (rare — Haiku is usually ~1.5 s,
+                //   Pi's user `message_end` is instant): row already exists,
+                //   backfill its `message_id` now.
+                // - Classifier still pending (common): stash the mapping on
+                //   the consumer context; `SaveClassification`'s apply picks
+                //   it up when the row finally lands.
+                //
+                // Both paths are best-effort — a failure here shouldn't drop
+                // the message; it's a display/analytics tag, not core data.
                 if let Some(cid) = pending_classification_id {
-                    if let Err(e) = db
+                    match db
                         .backfill_classification_message_id(&cid, message_id)
                         .await
                     {
-                        eprintln!(
-                            "[monarch] classifier backfill failed for {}: {:?}",
-                            cid, e
-                        );
+                        Ok(rows) if rows == 0 => {
+                            ctx.pending_classification_links
+                                .insert(cid, message_id);
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            eprintln!(
+                                "[monarch] classifier backfill failed for {}: {:?}",
+                                cid, e
+                            );
+                            ctx.pending_classification_links
+                                .insert(cid, message_id);
+                        }
                     }
                 }
                 // MON-75: write image attachments to disk and link them
@@ -210,8 +244,21 @@ impl PersistCommand {
                 db.record_tool_usage(&agent_id, &tool_name, is_error)
                     .await
             }
-            Self::SaveClassification { payload } => {
-                db.save_classification_internal(&payload).await
+            Self::SaveClassification { mut payload } => {
+                // MON-82: if `SaveAssistantMessage` already stashed a
+                // message_id for this classification (the common case —
+                // classifier returns ~1.5 s after the user row saved),
+                // take it so the INSERT lands with a valid FK and no
+                // follow-up UPDATE is needed.
+                let linked = ctx.pending_classification_links.remove(&payload.id);
+                db.save_classification_internal(&payload).await?;
+                if let Some(mid) = linked {
+                    db.backfill_classification_message_id(&payload.id, mid)
+                        .await?;
+                }
+                // Suppress unused-mut warning when `linked` is None.
+                let _ = &mut payload;
+                Ok(())
             }
         }
     }
@@ -488,9 +535,10 @@ pub(super) async fn run_persist_consumer(
     ws_tx: broadcast::Sender<WsBroadcast>,
     app_handle: Arc<PlMutex<Option<AppHandle>>>,
 ) {
+    let mut ctx = PersistContext::default();
     while let Some(cmd) = rx.recv().await {
         let agent_id = cmd.agent_id().to_string();
-        let err: String = match cmd.apply(&db).await {
+        let err: String = match cmd.apply(&db, &mut ctx).await {
             Ok(()) => continue,
             Err(e) => e.to_string(),
         };
