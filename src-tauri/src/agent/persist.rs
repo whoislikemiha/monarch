@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::db::{Database, MessageRow};
+use crate::db::{Database, MessageRow, SaveClassificationPayload};
 use crate::error::MonarchError;
 use crate::persistence::write_attachment_bytes;
 use crate::sidecar_protocol::InnerEvent;
@@ -63,6 +63,10 @@ pub(super) enum PersistCommand {
         agent_id: String,
         message: MessageRow,
         attachments: Vec<PendingAttachment>,
+        /// MON-82: only set for user-role messages paired with an in-flight
+        /// classification. Backfilled inline after the insert yields
+        /// `message_id` so the FK lands in the same apply call.
+        pending_classification_id: Option<String>,
     },
     /// Persist a `tool_execution_end` as a synthesized `toolResult` row.
     SaveToolResult {
@@ -86,6 +90,12 @@ pub(super) enum PersistCommand {
         tool_name: String,
         is_error: bool,
     },
+    /// MON-82: persist a classifier result. Insert only — the row's
+    /// `message_id` stays NULL and is filled in by the `SaveAssistantMessage`
+    /// apply when the paired user message lands.
+    SaveClassification {
+        payload: SaveClassificationPayload,
+    },
 }
 
 impl PersistCommand {
@@ -97,6 +107,7 @@ impl PersistCommand {
             | Self::IncrementAgentStats { agent_id, .. }
             | Self::IncrementAgentTurns { agent_id, .. }
             | Self::RecordToolUsage { agent_id, .. } => agent_id,
+            Self::SaveClassification { payload } => &payload.agent_id,
         }
     }
 
@@ -120,12 +131,27 @@ impl PersistCommand {
             Self::SaveAssistantMessage {
                 message,
                 attachments,
+                pending_classification_id,
                 ..
             } => {
                 let session_id = message.session_id.clone();
                 let tokens = message.tokens;
                 let cost = message.cost;
                 let message_id = db.save_message_internal(&message).await?;
+                // MON-82: link the classification row to the just-saved user
+                // message. Best-effort — a failure here shouldn't drop the
+                // message; it's an analytics/display tag, not core data.
+                if let Some(cid) = pending_classification_id {
+                    if let Err(e) = db
+                        .backfill_classification_message_id(&cid, message_id)
+                        .await
+                    {
+                        eprintln!(
+                            "[monarch] classifier backfill failed for {}: {:?}",
+                            cid, e
+                        );
+                    }
+                }
                 // MON-75: write image attachments to disk and link them
                 // back to the row we just inserted. A failure here should
                 // not roll back the message — the text still persists and
@@ -184,6 +210,9 @@ impl PersistCommand {
                 db.record_tool_usage(&agent_id, &tool_name, is_error)
                     .await
             }
+            Self::SaveClassification { payload } => {
+                db.save_classification_internal(&payload).await
+            }
         }
     }
 }
@@ -233,7 +262,10 @@ pub(super) fn build_persist_commands(
     };
 
     match event {
-        InnerEvent::MessageEnd { message } => {
+        InnerEvent::MessageEnd {
+            message,
+            classification_id,
+        } => {
             let role = if message.role.is_empty() {
                 "unknown".to_string()
             } else {
@@ -259,6 +291,16 @@ pub(super) fn build_persist_commands(
                 None => (0, 0.0),
             };
 
+            // MON-82: if this is the user turn and the sidecar paired a
+            // classification with it, attach the id so the apply body can
+            // backfill `classifications.message_id` right after the insert
+            // (no deferred UPDATE, no race with the pipeline).
+            let pending_classification_id = if role == "user" {
+                classification_id.clone()
+            } else {
+                None
+            };
+
             cmds.push(PersistCommand::SaveAssistantMessage {
                 agent_id: agent_id.to_string(),
                 message: MessageRow {
@@ -274,6 +316,7 @@ pub(super) fn build_persist_commands(
                     attachments: Vec::new(),
                 },
                 attachments,
+                pending_classification_id,
             });
 
             // MON-63: increment per-agent lifetime stats

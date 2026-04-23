@@ -141,9 +141,39 @@ export interface SidecarErrorEvent {
   error: string;
 }
 
+// MON-82: Classifier output. Emitted once per user turn, independently of
+// the Pi turn (the classifier races against the Pi session and never
+// blocks it). `id` is a UUID minted sidecar-side so the frontend can pair
+// a pending pill with the resolved row and Rust can backfill the
+// `classifications.message_id` FK once the user message row lands.
+//
+// `complexity`, `confidence`, `rationale`, `model`, `tokensIn`, `tokensOut`,
+// and `latencyMs` are populated on success; on failure, `error` is set
+// (provider crash, timeout, malformed JSON) and the rest may be null.
+export type ComplexityLabel =
+  | "chitchat"
+  | "simple"
+  | "decomposable"
+  | "delegate";
+
+export interface ClassificationEvent {
+  type: "classification";
+  agentId: string;
+  id: string;
+  complexity?: ComplexityLabel;
+  confidence?: number;
+  rationale?: string;
+  model?: string;
+  tokensIn?: number;
+  tokensOut?: number;
+  latencyMs?: number;
+  error?: string;
+}
+
 export type SidecarEvent =
   | SessionReadyEvent
   | SessionDestroyedEvent
   | AgentEventEnvelope
   | ExtensionUIRequestEvent
-  | SidecarErrorEvent;
+  | SidecarErrorEvent
+  | ClassificationEvent;

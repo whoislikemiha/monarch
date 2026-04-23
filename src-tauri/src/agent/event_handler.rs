@@ -228,6 +228,60 @@ pub(super) async fn handle_sidecar_event(
             emit_event(app, ws_tx, &event_name, &error_event.to_string());
         }
 
+        // MON-82: classifier output for one user turn. Persist-via-pipeline
+        // (so ordering with the user `MessageEnd` stays consistent) and
+        // rebroadcast to the frontend on a dedicated channel so the pill
+        // can resolve from `pending` to `ok`/`failed`.
+        SidecarEvent::Classification {
+            agent_id,
+            id,
+            complexity,
+            confidence,
+            rationale,
+            model,
+            tokens_in,
+            tokens_out,
+            latency_ms,
+            error,
+        } => {
+            let payload = crate::db::SaveClassificationPayload {
+                id: id.clone(),
+                agent_id: agent_id.clone(),
+                session_id: None,
+                complexity: complexity.clone(),
+                confidence,
+                rationale: rationale.clone(),
+                model: model.clone(),
+                tokens_in,
+                tokens_out,
+                latency_ms,
+                error: error.clone(),
+            };
+            if persist_tx
+                .send(PersistCommand::SaveClassification { payload })
+                .await
+                .is_err()
+            {
+                eprintln!(
+                    "[monarch] persist consumer closed, dropping classification"
+                );
+            }
+            let event_name = format!("agent-classification-{}", agent_id);
+            let out = serde_json::json!({
+                "id": id,
+                "agentId": agent_id,
+                "complexity": complexity,
+                "confidence": confidence,
+                "rationale": rationale,
+                "model": model,
+                "tokensIn": tokens_in,
+                "tokensOut": tokens_out,
+                "latencyMs": latency_ms,
+                "error": error,
+            });
+            emit_event(app, ws_tx, &event_name, &out.to_string());
+        }
+
         SidecarEvent::Unknown { raw } => {
             // Envelope-level unknown — the sidecar shipped a top-level
             // message type the Rust side doesn't recognize. Flip desync for
@@ -290,7 +344,7 @@ async fn compute_event_durations(
     let now_ms = chrono::Utc::now().timestamp_millis();
     let guard = entry.inner.read().await;
     match event {
-        InnerEvent::MessageEnd { message } if message.role == "assistant" => EventDurations {
+        InnerEvent::MessageEnd { message, .. } if message.role == "assistant" => EventDurations {
             turn_duration_ms: guard
                 .state
                 .turn_started_at_ms
