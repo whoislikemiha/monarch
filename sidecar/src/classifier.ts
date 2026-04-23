@@ -143,6 +143,15 @@ async function runProvider(
       `classifier model ${p.provider}/${p.model} not registered — check credentials`,
     );
   }
+  // pi-ai's `complete()` does NOT thread credentials from the session's
+  // AuthStorage on its own — it falls back to env vars and ultimately to
+  // an empty key. Resolve explicitly via the session's modelRegistry so
+  // ~/.pi/agent/auth.json is honoured, matching how Pi's own
+  // session.prompt() reaches the provider.
+  const auth = await session.modelRegistry.getApiKeyAndHeaders(model);
+  if (!auth.ok) {
+    throw new Error(`auth for ${p.provider}/${p.model}: ${auth.error}`);
+  }
   const started = Date.now();
   const ctx: Context = {
     systemPrompt,
@@ -154,7 +163,11 @@ async function runProvider(
       },
     ],
   };
-  const result = await complete(model, ctx, { signal });
+  const result = await complete(model, ctx, {
+    signal,
+    apiKey: auth.apiKey,
+    headers: auth.headers,
+  });
   const latencyMs = Date.now() - started;
   // `complete` returns an AssistantMessage; shape:
   // { role: "assistant", content: ContentPart[] | string, usage?, ... }
