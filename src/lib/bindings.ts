@@ -150,6 +150,39 @@ export const commands = {
 	dbGetUiState: (key: string) => typedError<string | null, ErrorDto>(__TAURI_INVOKE("db_get_ui_state", { key })),
 	dbSetUiState: (key: string, value: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_set_ui_state", { key, value })),
 	dbGetAgentStats: (agentId: string) => typedError<AgentStats, ErrorDto>(__TAURI_INVOKE("db_get_agent_stats", { agentId })),
+	dbCreateQuest: (payload: CreateQuestPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_create_quest", { payload })),
+	dbUpdateQuest: (payload: UpdateQuestPayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_quest", { payload })),
+	dbGetQuest: (questId: string) => typedError<{
+	id: string,
+	rootId: string,
+	parentId: string | null,
+	title: string,
+	description: string | null,
+	status: string,
+	grade: string | null,
+	execHint: string | null,
+	exploreForkCount: number | null,
+	assigneeShadowId: string | null,
+	worktreePath: string | null,
+	branchName: string | null,
+	baseBranch: string | null,
+	branchedFromId: string | null,
+	supersededById: string | null,
+	createdBy: string,
+	createdAt: string,
+	startedAt: string | null,
+	completedAt: string | null,
+	abandonedAt: string | null,
+	estimatedTokens: number | null,
+	actualTokens: number | null,
+	estimatedDurationMs: number | null,
+	actualDurationMs: number | null,
+	summary: string | null,
+} | null, ErrorDto>(__TAURI_INVOKE("db_get_quest", { questId })),
+	dbListQuestsForAgent: (agentId: string) => typedError<QuestRow[], ErrorDto>(__TAURI_INVOKE("db_list_quests_for_agent", { agentId })),
+	dbGetQuestTreeForRoot: (rootId: string) => typedError<QuestRow[], ErrorDto>(__TAURI_INVOKE("db_get_quest_tree_for_root", { rootId })),
+	dbRecordQuestEvent: (payload: RecordQuestEventPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_record_quest_event", { payload })),
+	dbListQuestEvents: (questId: string) => typedError<QuestEventRow[], ErrorDto>(__TAURI_INVOKE("db_list_quest_events", { questId })),
 	toolboxListTools: () => __TAURI_INVOKE<ToolDescriptor[]>("toolbox_list_tools"),
 	toolboxPlaceholderPing: () => typedError<string, ErrorDto>(__TAURI_INVOKE("toolbox_placeholder_ping")),
 	setZoom: (level: number) => typedError<number, ErrorDto>(__TAURI_INVOKE("set_zoom", { level })),
@@ -239,6 +272,23 @@ export type Cost = {
 	input?: number,
 	output?: number,
 	total?: number,
+};
+
+/**
+ *  Payload for `db_create_quest`. `id` is optional — server generates a
+ *  UUID if omitted. Defaults: `status='pending'`, `grade='C'`,
+ *  `exec_hint='in_context'`, `created_by='monarch'`.
+ */
+export type CreateQuestPayload = {
+	id: string | null,
+	parentId: string | null,
+	title: string,
+	description: string | null,
+	status: string | null,
+	grade: string | null,
+	execHint: string | null,
+	assigneeShadowId: string | null,
+	createdBy: string | null,
 };
 
 export type DisplayItem = { kind: "user"; content: string; timestamp: number | null; 
@@ -413,6 +463,50 @@ export type ProviderAuthStatus = {
 	authMode: AuthMode,
 };
 
+export type QuestEventRow = {
+	id: string,
+	questId: string,
+	eventType: string,
+	actor: string | null,
+	payloadJson: string | null,
+	createdAt: string,
+};
+
+export type QuestRow = {
+	id: string,
+	rootId: string,
+	parentId: string | null,
+	title: string,
+	description: string | null,
+	status: string,
+	grade: string | null,
+	execHint: string | null,
+	exploreForkCount: number | null,
+	assigneeShadowId: string | null,
+	worktreePath: string | null,
+	branchName: string | null,
+	baseBranch: string | null,
+	branchedFromId: string | null,
+	supersededById: string | null,
+	createdBy: string,
+	createdAt: string,
+	startedAt: string | null,
+	completedAt: string | null,
+	abandonedAt: string | null,
+	estimatedTokens: number | null,
+	actualTokens: number | null,
+	estimatedDurationMs: number | null,
+	actualDurationMs: number | null,
+	summary: string | null,
+};
+
+export type RecordQuestEventPayload = {
+	questId: string,
+	eventType: string,
+	actor: string | null,
+	payloadJson: string | null,
+};
+
 export type SessionRow = {
 	id: string,
 	agentId: string,
@@ -515,6 +609,25 @@ export type ToolUsageEntry = {
 	toolName: string,
 	callCount: number,
 	errorCount: number,
+};
+
+/**
+ *  Payload for `db_update_quest`. Only non-`None` fields are written.
+ *  Lifecycle timestamps (`started_at` / `completed_at` / `abandoned_at`)
+ *  can be set explicitly by the caller; the Steward owns this in Slice 4+.
+ */
+export type UpdateQuestPayload = {
+	id: string,
+	title: string | null,
+	description: string | null,
+	status: string | null,
+	grade: string | null,
+	execHint: string | null,
+	assigneeShadowId: string | null,
+	summary: string | null,
+	startedAt: string | null,
+	completedAt: string | null,
+	abandonedAt: string | null,
 };
 
 export type Usage = {

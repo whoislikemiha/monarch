@@ -314,6 +314,79 @@ impl Database {
                     [],
                 );
 
+                // MON-83: Quest system Slice 2 — fractal unit of work.
+                // Design: plans/quests.md. Quests are orthogonal to sessions —
+                // a quest can span sessions, a session can span quests.
+                // CHECK constraints pin the finite enums (status/grade/
+                // exec_hint/created_by) at the storage layer; Rust mirrors
+                // the same values in quest::types.
+                let _ = conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS quest_nodes (
+                        id TEXT PRIMARY KEY,
+                        root_id TEXT NOT NULL,
+                        parent_id TEXT REFERENCES quest_nodes(id) ON DELETE CASCADE,
+                        title TEXT NOT NULL,
+                        description TEXT,
+                        status TEXT NOT NULL CHECK (status IN (
+                            'pending','in_progress','claimed_done',
+                            'verified','disputed','ambiguous',
+                            'done','abandoned','superseded'
+                        )),
+                        grade TEXT CHECK (grade IN ('E','D','C','B','A','S')),
+                        exec_hint TEXT CHECK (exec_hint IN ('in_context','delegate','explore')),
+                        explore_fork_count INTEGER,
+                        assignee_shadow_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+                        worktree_path TEXT,
+                        branch_name TEXT,
+                        base_branch TEXT,
+                        branched_from_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL,
+                        superseded_by_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL,
+                        created_by TEXT NOT NULL CHECK (created_by IN (
+                            'architect','steward','orchestrator','monarch'
+                        )),
+                        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                        started_at TEXT,
+                        completed_at TEXT,
+                        abandoned_at TEXT,
+                        estimated_tokens INTEGER,
+                        actual_tokens INTEGER,
+                        estimated_duration_ms INTEGER,
+                        actual_duration_ms INTEGER,
+                        summary TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_quest_nodes_root ON quest_nodes(root_id);
+                    CREATE INDEX IF NOT EXISTS idx_quest_nodes_parent ON quest_nodes(parent_id);
+                    CREATE INDEX IF NOT EXISTS idx_quest_nodes_assignee_status
+                        ON quest_nodes(assignee_shadow_id, status);
+                    CREATE INDEX IF NOT EXISTS idx_quest_nodes_created_at
+                        ON quest_nodes(created_at);",
+                );
+                let _ = conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS quest_events (
+                        id TEXT PRIMARY KEY,
+                        quest_id TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
+                        event_type TEXT NOT NULL,
+                        actor TEXT,
+                        payload_json TEXT,
+                        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_quest_events_quest
+                        ON quest_events(quest_id, created_at);",
+                );
+                // messages.quest_id: nullable FK. Slice 2 leaves this NULL
+                // everywhere; Slice 3 (Architect) is the first writer.
+                let _ = conn.execute_batch(
+                    "ALTER TABLE messages ADD COLUMN quest_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL;",
+                );
+                let _ = conn.execute_batch(
+                    "CREATE INDEX IF NOT EXISTS idx_messages_quest ON messages(quest_id);",
+                );
+                // agents.current_quest_id: nullable pointer into the tree.
+                // Slice 2 adds the column; Slice 3+ populate it.
+                let _ = conn.execute_batch(
+                    "ALTER TABLE agents ADD COLUMN current_quest_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL;",
+                );
+
                 Ok(())
             })
             .await?;
@@ -505,6 +578,95 @@ pub struct AgentStats {
     pub tool_usage: Vec<ToolUsageEntry>,
     pub specialization: SpecializationScores,
     pub updated_at: String,
+}
+
+// MON-83: Quest system row types. Enums (status/grade/exec_hint/created_by)
+// are stored as strings matching the CHECK constraints in the schema. See
+// plans/quests.md for the full design.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestRow {
+    pub id: String,
+    pub root_id: String,
+    pub parent_id: Option<String>,
+    pub title: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub grade: Option<String>,
+    pub exec_hint: Option<String>,
+    pub explore_fork_count: Option<i32>,
+    pub assignee_shadow_id: Option<String>,
+    pub worktree_path: Option<String>,
+    pub branch_name: Option<String>,
+    pub base_branch: Option<String>,
+    pub branched_from_id: Option<String>,
+    pub superseded_by_id: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub abandoned_at: Option<String>,
+    pub estimated_tokens: Option<i32>,
+    pub actual_tokens: Option<i32>,
+    pub estimated_duration_ms: Option<i64>,
+    pub actual_duration_ms: Option<i64>,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestEventRow {
+    pub id: String,
+    pub quest_id: String,
+    pub event_type: String,
+    pub actor: Option<String>,
+    pub payload_json: Option<String>,
+    pub created_at: String,
+}
+
+/// Payload for `db_create_quest`. `id` is optional — server generates a
+/// UUID if omitted. Defaults: `status='pending'`, `grade='C'`,
+/// `exec_hint='in_context'`, `created_by='monarch'`.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateQuestPayload {
+    pub id: Option<String>,
+    pub parent_id: Option<String>,
+    pub title: String,
+    pub description: Option<String>,
+    pub status: Option<String>,
+    pub grade: Option<String>,
+    pub exec_hint: Option<String>,
+    pub assignee_shadow_id: Option<String>,
+    pub created_by: Option<String>,
+}
+
+/// Payload for `db_update_quest`. Only non-`None` fields are written.
+/// Lifecycle timestamps (`started_at` / `completed_at` / `abandoned_at`)
+/// can be set explicitly by the caller; the Steward owns this in Slice 4+.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateQuestPayload {
+    pub id: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub status: Option<String>,
+    pub grade: Option<String>,
+    pub exec_hint: Option<String>,
+    pub assignee_shadow_id: Option<String>,
+    pub summary: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub abandoned_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordQuestEventPayload {
+    pub quest_id: String,
+    pub event_type: String,
+    pub actor: Option<String>,
+    pub payload_json: Option<String>,
 }
 
 // ---- Persistence API ----
@@ -1408,7 +1570,269 @@ impl Database {
             .await
             .map_err(MonarchError::from)
     }
+
+    // ---- MON-83: Quests ----
+
+    /// Insert a quest node. Uses the payload id if present, otherwise mints a
+    /// fresh UUID. `root_id` is resolved from the parent: root quests have
+    /// `root_id = id`; sub-quests inherit the parent's `root_id`. A
+    /// `status_change: null → <status>` event is seeded in the same
+    /// transaction so the event log always has a creation entry (Slice 2
+    /// read-only UI relies on this for its success criterion).
+    pub async fn create_quest_internal(
+        &self,
+        payload: &CreateQuestPayload,
+    ) -> Result<String, MonarchError> {
+        let payload = payload.clone();
+        let id = payload.id.clone().unwrap_or_else(crate::util::uuid_v4_simple);
+        let status = payload.status.clone().unwrap_or_else(|| "pending".to_string());
+        let grade = payload.grade.clone().unwrap_or_else(|| "C".to_string());
+        let exec_hint = payload
+            .exec_hint
+            .clone()
+            .unwrap_or_else(|| "in_context".to_string());
+        let created_by = payload
+            .created_by
+            .clone()
+            .unwrap_or_else(|| "monarch".to_string());
+        let now = crate::util::chrono_now();
+        let event_id = crate::util::uuid_v4_simple();
+
+        let id_for_return = id.clone();
+        self.conn
+            .call(move |conn| {
+                let tx = conn.unchecked_transaction()?;
+                // Resolve root_id: if parent present, inherit its root; else self.
+                let root_id: String = if let Some(pid) = payload.parent_id.as_ref() {
+                    tx.query_row(
+                        "SELECT root_id FROM quest_nodes WHERE id = ?1",
+                        params![pid],
+                        |row| row.get::<_, String>(0),
+                    )?
+                } else {
+                    id.clone()
+                };
+                tx.execute(
+                    "INSERT INTO quest_nodes (
+                        id, root_id, parent_id, title, description,
+                        status, grade, exec_hint, assignee_shadow_id,
+                        created_by, created_at
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![
+                        id,
+                        root_id,
+                        payload.parent_id,
+                        payload.title,
+                        payload.description,
+                        status,
+                        grade,
+                        exec_hint,
+                        payload.assignee_shadow_id,
+                        created_by,
+                        now,
+                    ],
+                )?;
+                // Seed the creation event so the event log is never empty.
+                let event_payload = serde_json::json!({
+                    "from": null,
+                    "to": status,
+                })
+                .to_string();
+                tx.execute(
+                    "INSERT INTO quest_events (id, quest_id, event_type, actor, payload_json, created_at)
+                     VALUES (?1, ?2, 'status_change', ?3, ?4, ?5)",
+                    params![event_id, id, created_by, event_payload, now],
+                )?;
+                tx.commit()?;
+                Ok(())
+            })
+            .await?;
+        Ok(id_for_return)
+    }
+
+    /// Partial update — only `Some` fields are written. Status / timestamp
+    /// changes that carry semantic weight (e.g. status→done) should ALSO
+    /// record a `quest_events` row via `record_quest_event_internal`; this
+    /// method does not mirror them automatically so the caller keeps full
+    /// control over the audit trail.
+    pub async fn update_quest_internal(
+        &self,
+        payload: &UpdateQuestPayload,
+    ) -> Result<(), MonarchError> {
+        let payload = payload.clone();
+        self.conn
+            .call(move |conn| {
+                // Build SET clause dynamically. `rusqlite` does not support
+                // array-of-params with named columns, so we stringify and
+                // push each present field.
+                let mut sets: Vec<&str> = Vec::new();
+                let mut args: Vec<rusqlite::types::Value> = Vec::new();
+                macro_rules! push {
+                    ($field:expr, $col:literal) => {
+                        if let Some(v) = $field.as_ref() {
+                            sets.push(concat!($col, " = ?"));
+                            args.push(rusqlite::types::Value::Text(v.clone()));
+                        }
+                    };
+                }
+                push!(payload.title, "title");
+                push!(payload.description, "description");
+                push!(payload.status, "status");
+                push!(payload.grade, "grade");
+                push!(payload.exec_hint, "exec_hint");
+                push!(payload.assignee_shadow_id, "assignee_shadow_id");
+                push!(payload.summary, "summary");
+                push!(payload.started_at, "started_at");
+                push!(payload.completed_at, "completed_at");
+                push!(payload.abandoned_at, "abandoned_at");
+                if sets.is_empty() {
+                    return Ok(());
+                }
+                let sql = format!(
+                    "UPDATE quest_nodes SET {} WHERE id = ?",
+                    sets.join(", ")
+                );
+                args.push(rusqlite::types::Value::Text(payload.id.clone()));
+                let params_slice: Vec<&dyn rusqlite::ToSql> =
+                    args.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+                conn.execute(&sql, params_slice.as_slice())?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_quest_internal(
+        &self,
+        quest_id: &str,
+    ) -> Result<Option<QuestRow>, MonarchError> {
+        let quest_id = quest_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(QUEST_SELECT_SQL)?;
+                let mut rows = stmt.query(params![quest_id])?;
+                if let Some(row) = rows.next()? {
+                    Ok(Some(map_quest(row)?))
+                } else {
+                    Ok(None)
+                }
+            })
+            .await?)
+    }
+
+    /// Every quest where this agent is the assignee, ordered newest-first.
+    /// Filter is assignee-only — `agents.current_quest_id` is a pointer into
+    /// the tree, not a list key.
+    pub async fn list_quests_for_agent_internal(
+        &self,
+        agent_id: &str,
+    ) -> Result<Vec<QuestRow>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(&format!(
+                    "{} WHERE assignee_shadow_id = ?1 ORDER BY created_at DESC",
+                    QUEST_BASE_SELECT
+                ))?;
+                let rows = stmt
+                    .query_map(params![agent_id], map_quest)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await?)
+    }
+
+    /// Full tree under `root_id`, ordered by created_at so a depth-first
+    /// reconstruction on the frontend (using parent_id) produces a stable
+    /// visual order.
+    pub async fn get_quest_tree_for_root_internal(
+        &self,
+        root_id: &str,
+    ) -> Result<Vec<QuestRow>, MonarchError> {
+        let root_id = root_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(&format!(
+                    "{} WHERE root_id = ?1 ORDER BY created_at ASC",
+                    QUEST_BASE_SELECT
+                ))?;
+                let rows = stmt
+                    .query_map(params![root_id], map_quest)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await?)
+    }
+
+    pub async fn record_quest_event_internal(
+        &self,
+        payload: &RecordQuestEventPayload,
+    ) -> Result<String, MonarchError> {
+        let payload = payload.clone();
+        let id = crate::util::uuid_v4_simple();
+        let now = crate::util::chrono_now();
+        let id_for_return = id.clone();
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT INTO quest_events (id, quest_id, event_type, actor, payload_json, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        id,
+                        payload.quest_id,
+                        payload.event_type,
+                        payload.actor,
+                        payload.payload_json,
+                        now,
+                    ],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(id_for_return)
+    }
+
+    pub async fn list_quest_events_internal(
+        &self,
+        quest_id: &str,
+    ) -> Result<Vec<QuestEventRow>, MonarchError> {
+        let quest_id = quest_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, quest_id, event_type, actor, payload_json, created_at
+                     FROM quest_events WHERE quest_id = ?1 ORDER BY created_at ASC",
+                )?;
+                let rows = stmt
+                    .query_map(params![quest_id], map_quest_event)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await?)
+    }
 }
+
+// Shared column list for quest_nodes SELECTs. `QUEST_SELECT_SQL` is the
+// single-row lookup by id; `QUEST_BASE_SELECT` is the prefix for filtered
+// list queries (no WHERE clause).
+const QUEST_BASE_SELECT: &str = "SELECT \
+    id, root_id, parent_id, title, description, status, grade, exec_hint, \
+    explore_fork_count, assignee_shadow_id, worktree_path, branch_name, \
+    base_branch, branched_from_id, superseded_by_id, created_by, created_at, \
+    started_at, completed_at, abandoned_at, estimated_tokens, actual_tokens, \
+    estimated_duration_ms, actual_duration_ms, summary FROM quest_nodes";
+
+const QUEST_SELECT_SQL: &str = "SELECT \
+    id, root_id, parent_id, title, description, status, grade, exec_hint, \
+    explore_fork_count, assignee_shadow_id, worktree_path, branch_name, \
+    base_branch, branched_from_id, superseded_by_id, created_by, created_at, \
+    started_at, completed_at, abandoned_at, estimated_tokens, actual_tokens, \
+    estimated_duration_ms, actual_duration_ms, summary \
+    FROM quest_nodes WHERE id = ?1";
 
 /// Map tool names to specialization categories and compute normalized scores.
 fn compute_specialization(tool_usage: &[ToolUsageEntry]) -> SpecializationScores {
@@ -1562,6 +1986,47 @@ fn map_agent_template(row: &Row<'_>) -> rusqlite::Result<AgentTemplateRow> {
         shadow_grade: row.get(8)?,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
+    })
+}
+
+fn map_quest(row: &Row<'_>) -> rusqlite::Result<QuestRow> {
+    Ok(QuestRow {
+        id: row.get(0)?,
+        root_id: row.get(1)?,
+        parent_id: row.get(2)?,
+        title: row.get(3)?,
+        description: row.get(4)?,
+        status: row.get(5)?,
+        grade: row.get(6)?,
+        exec_hint: row.get(7)?,
+        explore_fork_count: row.get(8)?,
+        assignee_shadow_id: row.get(9)?,
+        worktree_path: row.get(10)?,
+        branch_name: row.get(11)?,
+        base_branch: row.get(12)?,
+        branched_from_id: row.get(13)?,
+        superseded_by_id: row.get(14)?,
+        created_by: row.get(15)?,
+        created_at: row.get(16)?,
+        started_at: row.get(17)?,
+        completed_at: row.get(18)?,
+        abandoned_at: row.get(19)?,
+        estimated_tokens: row.get(20)?,
+        actual_tokens: row.get(21)?,
+        estimated_duration_ms: row.get(22)?,
+        actual_duration_ms: row.get(23)?,
+        summary: row.get(24)?,
+    })
+}
+
+fn map_quest_event(row: &Row<'_>) -> rusqlite::Result<QuestEventRow> {
+    Ok(QuestEventRow {
+        id: row.get(0)?,
+        quest_id: row.get(1)?,
+        event_type: row.get(2)?,
+        actor: row.get(3)?,
+        payload_json: row.get(4)?,
+        created_at: row.get(5)?,
     })
 }
 
@@ -1830,4 +2295,105 @@ pub async fn db_get_agent_stats(
     agent_id: String,
 ) -> Result<AgentStats, MonarchError> {
     db.get_agent_stats_internal(&agent_id).await
+}
+
+// ---- Tauri Commands: Quests (MON-83) ----
+//
+// Write commands take the `AgentManager` state so they can broadcast event
+// channels (`quest-created-{id}` / `quest-updated-{id}` /
+// `quest-event-{questId}`) via the shared `ws_broadcast` sender. Slice 2
+// payloads are small — the event is the quest id and minimal metadata so
+// subscribers can re-fetch with `db_get_quest` / `db_list_quest_events`.
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_create_quest(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    payload: CreateQuestPayload,
+) -> Result<String, MonarchError> {
+    let id = db.create_quest_internal(&payload).await?;
+    crate::agent::emit_event(
+        &app,
+        &agent_mgr.ws_broadcast,
+        &format!("quest-created-{}", id),
+        &serde_json::json!({ "id": id }).to_string(),
+    );
+    Ok(id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_update_quest(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    payload: UpdateQuestPayload,
+) -> Result<(), MonarchError> {
+    let id = payload.id.clone();
+    db.update_quest_internal(&payload).await?;
+    crate::agent::emit_event(
+        &app,
+        &agent_mgr.ws_broadcast,
+        &format!("quest-updated-{}", id),
+        &serde_json::json!({ "id": id }).to_string(),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_get_quest(
+    db: tauri::State<'_, Arc<Database>>,
+    quest_id: String,
+) -> Result<Option<QuestRow>, MonarchError> {
+    db.get_quest_internal(&quest_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_list_quests_for_agent(
+    db: tauri::State<'_, Arc<Database>>,
+    agent_id: String,
+) -> Result<Vec<QuestRow>, MonarchError> {
+    db.list_quests_for_agent_internal(&agent_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_get_quest_tree_for_root(
+    db: tauri::State<'_, Arc<Database>>,
+    root_id: String,
+) -> Result<Vec<QuestRow>, MonarchError> {
+    db.get_quest_tree_for_root_internal(&root_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_record_quest_event(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    payload: RecordQuestEventPayload,
+) -> Result<String, MonarchError> {
+    let quest_id = payload.quest_id.clone();
+    let event_type = payload.event_type.clone();
+    let id = db.record_quest_event_internal(&payload).await?;
+    crate::agent::emit_event(
+        &app,
+        &agent_mgr.ws_broadcast,
+        &format!("quest-event-{}", quest_id),
+        &serde_json::json!({ "id": id, "eventType": event_type }).to_string(),
+    );
+    Ok(id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_list_quest_events(
+    db: tauri::State<'_, Arc<Database>>,
+    quest_id: String,
+) -> Result<Vec<QuestEventRow>, MonarchError> {
+    db.list_quest_events_internal(&quest_id).await
 }

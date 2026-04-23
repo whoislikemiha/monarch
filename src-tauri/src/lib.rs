@@ -44,6 +44,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         // 2 can `import type { LiveAgentState } from '$lib/bindings'` rather
         // than duplicating the inline shape from the getAgentState signature.
         .typ::<agent_state::LiveAgentState>()
+        // MON-83: force QuestRow so `db_get_quest` (Option<QuestRow>) emits
+        // a named type reference rather than an anonymous inline shape.
+        .typ::<db::QuestRow>()
         .commands(collect_commands![
         // Agent lifecycle (sidecar-based)
         agent::commands::spawn_agent,
@@ -101,6 +104,14 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         db::db_set_ui_state,
         // Agent stats
         db::db_get_agent_stats,
+        // Quests (MON-83)
+        db::db_create_quest,
+        db::db_update_quest,
+        db::db_get_quest,
+        db::db_list_quests_for_agent,
+        db::db_get_quest_tree_for_root,
+        db::db_record_quest_event,
+        db::db_list_quest_events,
         // Toolbox
         toolbox::toolbox_list_tools,
         toolbox::placeholder::toolbox_placeholder_ping,
@@ -239,6 +250,13 @@ pub fn run() {
             db::db_get_ui_state,
             db::db_set_ui_state,
             db::db_get_agent_stats,
+            db::db_create_quest,
+            db::db_update_quest,
+            db::db_get_quest,
+            db::db_list_quests_for_agent,
+            db::db_get_quest_tree_for_root,
+            db::db_record_quest_event,
+            db::db_list_quest_events,
             toolbox::toolbox_list_tools,
             toolbox::placeholder::toolbox_placeholder_ping,
             zoom::set_zoom,
