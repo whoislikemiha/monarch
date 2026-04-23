@@ -93,16 +93,16 @@ The work slots cleanly into existing conventions: `db.rs` post-launch `ALTER TAB
 - Update CLAUDE.md "Start Here" with a row for the quest module; add a bullet under Rules & Gotchas noting quest creation is user-initiated in Slice 2 and moves under the Architect in Slice 3.
 - Update ONBOARDING.md data model + file reference sections.
 
-## Open questions
+## Resolved decisions
 
-1. **Manual quest creation UX.** The ticket says "New quest" button — does it live inside the quest timeline tool (most ergonomic; keeps context per-agent), or as a top-level action somewhere in the shell? Recommendation: inside the tool. Confirm.
-2. **Which agent owns a quest?** `list_quests_for_agent` implies quests filter by assignee; but a quest's "owner" could also mean the Monarch's currently-open agent. For MVP, assume a quest is listed for agent X if `assignee_shadow_id = X` OR `current_quest_id = X.current_quest_id`. Confirm the intent so the query surface is right.
-3. **Detail panel placement.** Drawer inside the tool panel vs full modal vs expand-in-place. No existing toolbox tool has a rich detail view yet, so this sets a precedent. Preference?
-4. **Status editing in Slice 2.** The ticket says read-only UI, but also "Event log shows status transitions" as a success criterion — which implies at least one status edit path must exist so we have something to log. Options: (a) allow manual status toggling in the detail panel (ships disputed/ambiguous as "reserved for later" unselectable); (b) seed an initial event row at create time (`status_change: pending → in_progress`) without exposing status edit UI. Recommendation: (b) — cleaner read-only claim. Confirm.
-5. **Event emission in Slice 2.** Emit `quest-*` events now or defer to Slice 3? Emitting now is small (one line per write); skipping keeps the surface tighter. Mild lean toward emitting now — it makes the Slice 3 integration free.
-6. **Grade / exec-hint defaults on manual create.** Probably `grade='C'`, `exec_hint='in_context'` by default with user override. Confirm defaults so the UI can ship the form.
-7. **`agents.current_quest_id` lifecycle.** Added in this slice, but who writes to it? If nobody before Slice 3, do we still add it now (keeps the FK stable) or defer? Recommendation: add the column now, leave it NULL until Slice 3 needs it. Confirm.
-8. **Quest ID generation.** UUIDs (matching `agents.id` convention) vs monotonic `quest_nodes.rowid`. Recommendation: UUID v4 string to match the rest of the schema.
+1. **Manual quest creation UX** — lives **inside the quest timeline toolbox tool**. Keeps the tool in the toolbox registry (per user direction: "keep it in toolbox for now").
+2. **Quest detail view** — opens in a **separate expandable window** when a node is clicked. Implementation: a dedicated overlay/drawer component rendered at the `App.svelte` level (so it can grow beyond the tool panel's width), mounted conditionally from a small shared `questDetailStore` that the toolbox tool writes to on click. The toolbox stays as the entry point and timeline; the expanded view is the detail surface.
+3. **`list_quests_for_agent` semantics** — **assignee-only** (`WHERE assignee_shadow_id = ?`). `agents.current_quest_id` is a pointer into the tree, not a list filter.
+4. **Read-only + event log** — resolved by **auto-seeding a creation event** (`event_type='status_change'`, `payload={from: null, to: 'pending'}`, `actor='monarch'`) inside `create_quest`. Status editing UI is deferred; the log still has content for the success criterion.
+5. **Event channels** — **emit in Slice 2.** `create_quest` → `quest-created-{questId}`; `update_quest` → `quest-updated-{questId}`; `record_quest_event` → `quest-event-{questId}`. One line per write, makes Slice 3 integration free.
+6. **Create-form defaults** — `grade='C'`, `exec_hint='in_context'`, `status='pending'`, `created_by='monarch'`. All user-overridable except `created_by`.
+7. **`agents.current_quest_id`** — add the column now, leave NULL. Slice 3 populates it.
+8. **Quest IDs** — **UUID v4 strings** (matches `agents.id` / `sessions.id`).
 
 ## Out of scope
 
