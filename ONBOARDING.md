@@ -188,6 +188,57 @@ CREATE INDEX idx_memories_agent    ON memories(agent_id);
 CREATE INDEX idx_memories_layer    ON memories(layer);
 CREATE INDEX idx_events_agent      ON events(agent_id);
 CREATE INDEX idx_events_type       ON events(event_type);
+
+-- MON-83: Quest system. Fractal unit of work. Quests are orthogonal
+-- to sessions: a quest can span sessions, a session can span quests.
+CREATE TABLE quest_nodes (
+  id                    TEXT PRIMARY KEY,
+  root_id               TEXT NOT NULL,           -- root of this quest's tree
+  parent_id             TEXT REFERENCES quest_nodes(id) ON DELETE CASCADE,
+  title                 TEXT NOT NULL,
+  description           TEXT,
+  status                TEXT NOT NULL,           -- pending | in_progress | claimed_done
+                                                 -- | verified | disputed | ambiguous
+                                                 -- | done | abandoned | superseded
+  grade                 TEXT,                    -- E | D | C | B | A | S
+  exec_hint             TEXT,                    -- in_context | delegate | explore
+  explore_fork_count    INTEGER,
+  assignee_shadow_id    TEXT REFERENCES agents(id) ON DELETE SET NULL,
+  worktree_path         TEXT,
+  branch_name           TEXT,
+  base_branch           TEXT,
+  branched_from_id      TEXT REFERENCES quest_nodes(id),   -- fork lineage
+  superseded_by_id      TEXT REFERENCES quest_nodes(id),   -- fork-winner pointer
+  created_by            TEXT NOT NULL,           -- architect | steward | orchestrator | monarch
+  created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+  started_at            TEXT,
+  completed_at          TEXT,
+  abandoned_at          TEXT,
+  estimated_tokens      INTEGER,
+  actual_tokens         INTEGER,
+  estimated_duration_ms INTEGER,
+  actual_duration_ms    INTEGER,
+  summary               TEXT                     -- Memory-Keeper-distilled on done (Slice 8)
+);
+
+CREATE TABLE quest_events (
+  id           TEXT PRIMARY KEY,
+  quest_id     TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
+  event_type   TEXT NOT NULL,                    -- status_change | scope_expanded | ...
+  actor        TEXT,                             -- role or shadow_id
+  payload_json TEXT,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- FK extensions on existing tables (Slice 2 leaves both NULL; Slice 3+ populate).
+ALTER TABLE messages ADD COLUMN quest_id         TEXT REFERENCES quest_nodes(id);
+ALTER TABLE agents   ADD COLUMN current_quest_id TEXT REFERENCES quest_nodes(id);
+
+CREATE INDEX idx_quest_nodes_root           ON quest_nodes(root_id);
+CREATE INDEX idx_quest_nodes_parent         ON quest_nodes(parent_id);
+CREATE INDEX idx_quest_nodes_assignee_status ON quest_nodes(assignee_shadow_id, status);
+CREATE INDEX idx_quest_events_quest         ON quest_events(quest_id, created_at);
+CREATE INDEX idx_messages_quest             ON messages(quest_id);
 ```
 
 ### Session ancestry — the key concept

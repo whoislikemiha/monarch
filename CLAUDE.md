@@ -118,6 +118,8 @@ If you add a new table, command, event channel, or convention — it belongs in 
 | Frontend | `src/lib/api.ts` | Unified IPC (Tauri webview or WebSocket fallback) |
 | Frontend | `src/lib/bindings.ts` | Auto-generated Tauri command types (**do not edit**) |
 | Frontend | `src/lib/toolbox/liveAgentStore.svelte.ts` | Per-agent reactive state (SvelteMap + `$state`) |
+| Frontend | `src/lib/toolbox/questStore.svelte.ts` | Per-agent quest tree + event-log slice (MON-83) |
+| Frontend | `src/lib/toolbox/tools/QuestTimelineTool.svelte` | Read-only quest timeline + manual create form (MON-83) |
 | Frontend | `src/lib/stores/agentStore.svelte.ts` | Active/saved agent list + selection state |
 | Frontend | `src/lib/stores/notificationsStore.svelte.ts` | App-wide error/warning toasts (MON-51) |
 | Frontend | `src/lib/NotificationStack.svelte` | Top-right overlay rendering notifications (MON-51) |
@@ -142,7 +144,8 @@ Full file reference: [ONBOARDING.md](./ONBOARDING.md) section 12.
 - **Session ancestry is canonical** — continuing a conversation creates a new session row with `parent_session_id`. `get_messages_with_ancestry` is the only correct way to load history.
 - **Sidecar is singleton** — one Node process hosts many agents, keyed by `agentId`. Not one process per agent.
 - **Legacy columns** — `sessions.pi_session_file` and `agents.custom_prompt` exist in the schema but are inert. Don't build on them.
-- **Schema evolves via `ALTER TABLE` migrations** — `db::init_schema` applies idempotent `ALTER TABLE` / `CREATE TABLE IF NOT EXISTS` blocks at the end of init. Never rewrite the base `CREATE TABLE` for columns added post-launch — add a new migration block. Current post-launch columns: `sessions.parent_session_id`, `agents.project_id`, `agents.context_window`, `agents.archived_at`, `agents.avatar_type`, `agents.avatar_path`, `messages.duration_ms`. Post-launch tables: `projects`, `agent_templates`, `ui_state`, `agent_stats`, `agent_tool_usage`, `message_attachments`.
+- **Schema evolves via `ALTER TABLE` migrations** — `db::init_schema` applies idempotent `ALTER TABLE` / `CREATE TABLE IF NOT EXISTS` blocks at the end of init. Never rewrite the base `CREATE TABLE` for columns added post-launch — add a new migration block. Current post-launch columns: `sessions.parent_session_id`, `agents.project_id`, `agents.context_window`, `agents.archived_at`, `agents.avatar_type`, `agents.avatar_path`, `agents.current_quest_id`, `messages.duration_ms`, `messages.quest_id`. Post-launch tables: `projects`, `agent_templates`, `ui_state`, `agent_stats`, `agent_tool_usage`, `message_attachments`, `quest_nodes`, `quest_events`.
+- **Quests are orthogonal to sessions** (MON-83) — a quest can span multiple sessions, a session can span multiple quests. Aggregation key for "what happened on this quest" is `quest_id`, not `session_id`. Slice 2 creates quests manually via the toolbox tool; Slice 3 (MON-84) adds automatic decomposition via the Architect. Don't couple the two concepts.
 - **Archive lifecycle** — `agents.archived_at IS NULL` means active; non-null means archived. Use `db_archive_agent` / `db_unarchive_agent`, not hard delete, unless the user explicitly asks.
 - **Attachments live on disk** — `message_attachments` is just an ordered reference; bytes go under `~/.config/monarch/attachments/{uuid}.{ext}`. Same pattern as prompts and avatars.
 - **Prompt overrides are files** — stored at `~/.config/monarch/prompts/{agent_id}.md`, not in the DB. Editable externally.
