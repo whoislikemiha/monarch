@@ -314,6 +314,79 @@ impl Database {
                     [],
                 );
 
+                // MON-83: Quest system Slice 2 — fractal unit of work.
+                // Design: plans/quests.md. Quests are orthogonal to sessions —
+                // a quest can span sessions, a session can span quests.
+                // CHECK constraints pin the finite enums (status/grade/
+                // exec_hint/created_by) at the storage layer; Rust mirrors
+                // the same values in quest::types.
+                let _ = conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS quest_nodes (
+                        id TEXT PRIMARY KEY,
+                        root_id TEXT NOT NULL,
+                        parent_id TEXT REFERENCES quest_nodes(id) ON DELETE CASCADE,
+                        title TEXT NOT NULL,
+                        description TEXT,
+                        status TEXT NOT NULL CHECK (status IN (
+                            'pending','in_progress','claimed_done',
+                            'verified','disputed','ambiguous',
+                            'done','abandoned','superseded'
+                        )),
+                        grade TEXT CHECK (grade IN ('E','D','C','B','A','S')),
+                        exec_hint TEXT CHECK (exec_hint IN ('in_context','delegate','explore')),
+                        explore_fork_count INTEGER,
+                        assignee_shadow_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+                        worktree_path TEXT,
+                        branch_name TEXT,
+                        base_branch TEXT,
+                        branched_from_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL,
+                        superseded_by_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL,
+                        created_by TEXT NOT NULL CHECK (created_by IN (
+                            'architect','steward','orchestrator','monarch'
+                        )),
+                        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                        started_at TEXT,
+                        completed_at TEXT,
+                        abandoned_at TEXT,
+                        estimated_tokens INTEGER,
+                        actual_tokens INTEGER,
+                        estimated_duration_ms INTEGER,
+                        actual_duration_ms INTEGER,
+                        summary TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_quest_nodes_root ON quest_nodes(root_id);
+                    CREATE INDEX IF NOT EXISTS idx_quest_nodes_parent ON quest_nodes(parent_id);
+                    CREATE INDEX IF NOT EXISTS idx_quest_nodes_assignee_status
+                        ON quest_nodes(assignee_shadow_id, status);
+                    CREATE INDEX IF NOT EXISTS idx_quest_nodes_created_at
+                        ON quest_nodes(created_at);",
+                );
+                let _ = conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS quest_events (
+                        id TEXT PRIMARY KEY,
+                        quest_id TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
+                        event_type TEXT NOT NULL,
+                        actor TEXT,
+                        payload_json TEXT,
+                        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_quest_events_quest
+                        ON quest_events(quest_id, created_at);",
+                );
+                // messages.quest_id: nullable FK. Slice 2 leaves this NULL
+                // everywhere; Slice 3 (Architect) is the first writer.
+                let _ = conn.execute_batch(
+                    "ALTER TABLE messages ADD COLUMN quest_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL;",
+                );
+                let _ = conn.execute_batch(
+                    "CREATE INDEX IF NOT EXISTS idx_messages_quest ON messages(quest_id);",
+                );
+                // agents.current_quest_id: nullable pointer into the tree.
+                // Slice 2 adds the column; Slice 3+ populate it.
+                let _ = conn.execute_batch(
+                    "ALTER TABLE agents ADD COLUMN current_quest_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL;",
+                );
+
                 Ok(())
             })
             .await?;
