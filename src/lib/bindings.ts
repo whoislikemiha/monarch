@@ -183,11 +183,30 @@ export const commands = {
 	dbGetQuestTreeForRoot: (rootId: string) => typedError<QuestRow[], ErrorDto>(__TAURI_INVOKE("db_get_quest_tree_for_root", { rootId })),
 	dbRecordQuestEvent: (payload: RecordQuestEventPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_record_quest_event", { payload })),
 	dbListQuestEvents: (questId: string) => typedError<QuestEventRow[], ErrorDto>(__TAURI_INVOKE("db_list_quest_events", { questId })),
+	dbListClassificationsForAgent: (agentId: string, limit: number | null) => typedError<ClassificationRow[], ErrorDto>(__TAURI_INVOKE("db_list_classifications_for_agent", { agentId, limit })),
+	dbGetClassificationForMessage: (messageId: number) => typedError<{
+	id: string,
+	messageId: number | null,
+	agentId: string,
+	sessionId: string | null,
+	complexity: string | null,
+	confidence: number | null,
+	rationale: string | null,
+	model: string | null,
+	tokensIn: number | null,
+	tokensOut: number | null,
+	latencyMs: number | null,
+	error: string | null,
+	createdAt: string,
+} | null, ErrorDto>(__TAURI_INVOKE("db_get_classification_for_message", { messageId })),
 	toolboxListTools: () => __TAURI_INVOKE<ToolDescriptor[]>("toolbox_list_tools"),
 	toolboxPlaceholderPing: () => typedError<string, ErrorDto>(__TAURI_INVOKE("toolbox_placeholder_ping")),
 	setZoom: (level: number) => typedError<number, ErrorDto>(__TAURI_INVOKE("set_zoom", { level })),
 	getThinkingDefault: (provider: string, model: string) => typedError<string, ErrorDto>(__TAURI_INVOKE("get_thinking_default", { provider, model })),
 	getThinkingConfigPath: () => typedError<string, ErrorDto>(__TAURI_INVOKE("get_thinking_config_path")),
+	classifierGetConfig: () => typedError<ResolvedClassifierConfig, ErrorDto>(__TAURI_INVOKE("classifier_get_config")),
+	classifierSetConfig: (config: ClassifierConfig) => typedError<ResolvedClassifierConfig, ErrorDto>(__TAURI_INVOKE("classifier_set_config", { config })),
+	classifierGetConfigPath: () => typedError<string, ErrorDto>(__TAURI_INVOKE("classifier_get_config_path")),
 };
 
 /* Types */
@@ -267,6 +286,34 @@ export type AgentUpdatePayload = {
 };
 
 export type AuthMode = "none" | "subscription" | "apiKey" | "both";
+
+export type ClassificationRow = {
+	id: string,
+	messageId: number | null,
+	agentId: string,
+	sessionId: string | null,
+	complexity: string | null,
+	confidence: number | null,
+	rationale: string | null,
+	model: string | null,
+	tokensIn: number | null,
+	tokensOut: number | null,
+	latencyMs: number | null,
+	error: string | null,
+	createdAt: string,
+};
+
+export type ClassifierConfig = {
+	enabled?: boolean | null,
+	primary?: ClassifierProvider | null,
+	fallback?: ClassifierProvider | null,
+	timeoutMs?: number | null,
+};
+
+export type ClassifierProvider = {
+	provider: string,
+	model: string,
+};
 
 export type Cost = {
 	input?: number,
@@ -505,6 +552,15 @@ export type RecordQuestEventPayload = {
 	eventType: string,
 	actor: string | null,
 	payloadJson: string | null,
+};
+
+// Resolved view — all fields filled in, ready to ship to the sidecar.
+export type ResolvedClassifierConfig = {
+	enabled: boolean,
+	primary: ClassifierProvider,
+	fallback: ClassifierProvider | null,
+	timeoutMs: number,
+	systemPrompt: string,
 };
 
 export type SessionRow = {

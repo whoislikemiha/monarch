@@ -14,11 +14,12 @@
 
 use dashmap::DashMap;
 use parking_lot::Mutex as PlMutex;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::db::{Database, MessageRow};
+use crate::db::{Database, MessageRow, SaveClassificationPayload};
 use crate::error::MonarchError;
 use crate::persistence::write_attachment_bytes;
 use crate::sidecar_protocol::InnerEvent;
@@ -37,6 +38,17 @@ use super::WsBroadcast;
 pub(super) struct PendingAttachment {
     pub data_base64: String,
     pub mime_type: String,
+}
+
+/// MON-82: per-consumer state that survives between `PersistCommand`s.
+/// Required because the classifier round-trip (~1.5 s on Haiku) usually
+/// lands AFTER Pi's user `message_end` in the pipeline, so the
+/// `SaveAssistantMessage` apply stashes the pending (classification_id →
+/// message_id) pair here and `SaveClassification`'s apply consumes it
+/// when the classification row is finally inserted.
+#[derive(Default)]
+pub(super) struct PersistContext {
+    pending_classification_links: HashMap<String, i64>,
 }
 
 /// A persistence effect to apply in FIFO order by the single consumer.
@@ -63,6 +75,10 @@ pub(super) enum PersistCommand {
         agent_id: String,
         message: MessageRow,
         attachments: Vec<PendingAttachment>,
+        /// MON-82: only set for user-role messages paired with an in-flight
+        /// classification. Backfilled inline after the insert yields
+        /// `message_id` so the FK lands in the same apply call.
+        pending_classification_id: Option<String>,
     },
     /// Persist a `tool_execution_end` as a synthesized `toolResult` row.
     SaveToolResult {
@@ -86,6 +102,12 @@ pub(super) enum PersistCommand {
         tool_name: String,
         is_error: bool,
     },
+    /// MON-82: persist a classifier result. Insert only — the row's
+    /// `message_id` stays NULL and is filled in by the `SaveAssistantMessage`
+    /// apply when the paired user message lands.
+    SaveClassification {
+        payload: SaveClassificationPayload,
+    },
 }
 
 impl PersistCommand {
@@ -97,10 +119,15 @@ impl PersistCommand {
             | Self::IncrementAgentStats { agent_id, .. }
             | Self::IncrementAgentTurns { agent_id, .. }
             | Self::RecordToolUsage { agent_id, .. } => agent_id,
+            Self::SaveClassification { payload } => &payload.agent_id,
         }
     }
 
-    async fn apply(self, db: &Database) -> Result<(), MonarchError> {
+    async fn apply(
+        self,
+        db: &Database,
+        ctx: &mut PersistContext,
+    ) -> Result<(), MonarchError> {
         match self {
             Self::LogEvent {
                 agent_id,
@@ -120,12 +147,45 @@ impl PersistCommand {
             Self::SaveAssistantMessage {
                 message,
                 attachments,
+                pending_classification_id,
                 ..
             } => {
                 let session_id = message.session_id.clone();
                 let tokens = message.tokens;
                 let cost = message.cost;
                 let message_id = db.save_message_internal(&message).await?;
+                // MON-82: pair the just-saved user row with its paired
+                // classification. Two orderings are possible:
+                //
+                // - Classifier beat us here (rare — Haiku is usually ~1.5 s,
+                //   Pi's user `message_end` is instant): row already exists,
+                //   backfill its `message_id` now.
+                // - Classifier still pending (common): stash the mapping on
+                //   the consumer context; `SaveClassification`'s apply picks
+                //   it up when the row finally lands.
+                //
+                // Both paths are best-effort — a failure here shouldn't drop
+                // the message; it's a display/analytics tag, not core data.
+                if let Some(cid) = pending_classification_id {
+                    match db
+                        .backfill_classification_message_id(&cid, message_id)
+                        .await
+                    {
+                        Ok(rows) if rows == 0 => {
+                            ctx.pending_classification_links
+                                .insert(cid, message_id);
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            eprintln!(
+                                "[monarch] classifier backfill failed for {}: {:?}",
+                                cid, e
+                            );
+                            ctx.pending_classification_links
+                                .insert(cid, message_id);
+                        }
+                    }
+                }
                 // MON-75: write image attachments to disk and link them
                 // back to the row we just inserted. A failure here should
                 // not roll back the message — the text still persists and
@@ -184,6 +244,22 @@ impl PersistCommand {
                 db.record_tool_usage(&agent_id, &tool_name, is_error)
                     .await
             }
+            Self::SaveClassification { mut payload } => {
+                // MON-82: if `SaveAssistantMessage` already stashed a
+                // message_id for this classification (the common case —
+                // classifier returns ~1.5 s after the user row saved),
+                // take it so the INSERT lands with a valid FK and no
+                // follow-up UPDATE is needed.
+                let linked = ctx.pending_classification_links.remove(&payload.id);
+                db.save_classification_internal(&payload).await?;
+                if let Some(mid) = linked {
+                    db.backfill_classification_message_id(&payload.id, mid)
+                        .await?;
+                }
+                // Suppress unused-mut warning when `linked` is None.
+                let _ = &mut payload;
+                Ok(())
+            }
         }
     }
 }
@@ -233,7 +309,10 @@ pub(super) fn build_persist_commands(
     };
 
     match event {
-        InnerEvent::MessageEnd { message } => {
+        InnerEvent::MessageEnd {
+            message,
+            classification_id,
+        } => {
             let role = if message.role.is_empty() {
                 "unknown".to_string()
             } else {
@@ -259,6 +338,16 @@ pub(super) fn build_persist_commands(
                 None => (0, 0.0),
             };
 
+            // MON-82: if this is the user turn and the sidecar paired a
+            // classification with it, attach the id so the apply body can
+            // backfill `classifications.message_id` right after the insert
+            // (no deferred UPDATE, no race with the pipeline).
+            let pending_classification_id = if role == "user" {
+                classification_id.clone()
+            } else {
+                None
+            };
+
             cmds.push(PersistCommand::SaveAssistantMessage {
                 agent_id: agent_id.to_string(),
                 message: MessageRow {
@@ -274,6 +363,7 @@ pub(super) fn build_persist_commands(
                     attachments: Vec::new(),
                 },
                 attachments,
+                pending_classification_id,
             });
 
             // MON-63: increment per-agent lifetime stats
@@ -445,9 +535,10 @@ pub(super) async fn run_persist_consumer(
     ws_tx: broadcast::Sender<WsBroadcast>,
     app_handle: Arc<PlMutex<Option<AppHandle>>>,
 ) {
+    let mut ctx = PersistContext::default();
     while let Some(cmd) = rx.recv().await {
         let agent_id = cmd.agent_id().to_string();
-        let err: String = match cmd.apply(&db).await {
+        let err: String = match cmd.apply(&db, &mut ctx).await {
             Ok(()) => continue,
             Err(e) => e.to_string(),
         };

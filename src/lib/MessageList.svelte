@@ -2,9 +2,11 @@
   import AssistantMessageComp from "./AssistantMessage.svelte";
   import ToolGroup from "./ToolGroup.svelte";
   import AttachmentThumb from "./AttachmentThumb.svelte";
+  import ClassificationPill from "./ClassificationPill.svelte";
   import { formatCost, formatDuration } from "./format";
   import type { DisplayItem, AssistantMessage } from "./types";
   import type { PendingImage } from "./ChatInput.svelte";
+  import type { ClassificationInfo } from "./classifierStore.svelte";
 
   let {
     items,
@@ -12,6 +14,7 @@
     nowMs,
     agentName = "Assistant",
     sentImages,
+    classifications,
     onimageclick,
   }: {
     items: DisplayItem[];
@@ -23,6 +26,8 @@
      * 0-based index among user messages in `items`. Owned by AgentView and
      * cleared whenever the bound session changes. */
     sentImages?: Map<number, PendingImage[]>;
+    /** MON-82: per-user-ordinal classifier output, drives the inline pill. */
+    classifications?: Map<number, ClassificationInfo>;
     onimageclick?: (src: string) => void;
   } = $props();
 
@@ -61,7 +66,12 @@
         persistedAttachments.length > 0 ||
         (ephemeralImgs && ephemeralImgs.length > 0)}
       <div class="message user-message">
-        <div class="message-label">You</div>
+        <div class="message-label">
+          You
+          {#if userIdx != null && classifications?.get(userIdx)}
+            <ClassificationPill info={classifications.get(userIdx)!} />
+          {/if}
+        </div>
         {#if item.content}
           <div class="message-content">{item.content}</div>
         {/if}

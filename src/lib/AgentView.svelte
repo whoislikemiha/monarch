@@ -3,6 +3,7 @@
   import { invoke, listen, type UnlistenFn } from "$lib/api";
   import { commands } from "$lib/bindings";
   import MessageList from "./MessageList.svelte";
+  import { classifierStore } from "./classifierStore.svelte";
   import ChatInput, { type PendingImage } from "./ChatInput.svelte";
   import AgentPortrait, { type PortraitCorner } from "./AgentPortrait.svelte";
   import ExtensionDialog from "./ExtensionDialog.svelte";
@@ -697,6 +698,7 @@
           {nowMs}
           agentName={agent.name}
           {sentImages}
+          classifications={classifierStore.ensure(agent.id).ordinalMap}
           onimageclick={(src) => (lightboxSrc = src)}
         />
 

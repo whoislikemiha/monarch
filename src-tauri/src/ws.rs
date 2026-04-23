@@ -537,6 +537,28 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             serde_json::to_value(events).map_err(MonarchError::from)
         }
 
+        // MON-82: Classifications (read-only over WS).
+        "db_list_classifications_for_agent" => {
+            let agent_id = str_field(&args, "agentId")?;
+            let limit = args.get("limit").and_then(|v| v.as_i64());
+            let rows = state
+                .db
+                .list_classifications_for_agent_internal(&agent_id, limit)
+                .await?;
+            serde_json::to_value(rows).map_err(MonarchError::from)
+        }
+        "db_get_classification_for_message" => {
+            let message_id = args
+                .get("messageId")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| MonarchError::invalid_input("messageId required"))?;
+            let row = state
+                .db
+                .get_classification_for_message_internal(message_id)
+                .await?;
+            serde_json::to_value(row).map_err(MonarchError::from)
+        }
+
         _ => Err(MonarchError::not_found(format!("command {}", cmd))),
     }
 }

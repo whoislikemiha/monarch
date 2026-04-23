@@ -120,6 +120,11 @@ If you add a new table, command, event channel, or convention — it belongs in 
 | Frontend | `src/lib/toolbox/liveAgentStore.svelte.ts` | Per-agent reactive state (SvelteMap + `$state`) |
 | Frontend | `src/lib/toolbox/questStore.svelte.ts` | Per-agent quest tree + event-log slice (MON-83) |
 | Frontend | `src/lib/toolbox/tools/QuestTimelineTool.svelte` | Read-only quest timeline + manual create form (MON-83) |
+| Frontend | `src/lib/classifierStore.svelte.ts` | Per-agent user-turn complexity classifications (MON-82) |
+| Frontend | `src/lib/ClassificationPill.svelte` | Read-only complexity pill shown beside each user message (MON-82) |
+| Frontend | `src/lib/toolbox/tools/ClassifierSettingsTool.svelte` | Global classifier config: primary/fallback models, timeout, prompt (MON-82) |
+| Rust | `src-tauri/src/classifier_config.rs` | `classifier.toml` loader + Tauri commands (MON-82) |
+| Sidecar | `sidecar/src/classifier.ts` | One-shot Haiku/LM Studio classifier invoked on every user turn (MON-82) |
 | Frontend | `src/lib/stores/agentStore.svelte.ts` | Active/saved agent list + selection state |
 | Frontend | `src/lib/stores/notificationsStore.svelte.ts` | App-wide error/warning toasts (MON-51) |
 | Frontend | `src/lib/NotificationStack.svelte` | Top-right overlay rendering notifications (MON-51) |
@@ -133,7 +138,7 @@ Full file reference: [ONBOARDING.md](./ONBOARDING.md) section 12.
 - **Tauri commands** are registered via `tauri::generate_handler![]` in `lib.rs`. Types auto-export to `bindings.ts` via tauri-specta. Max 10 args per command (Specta limit) — use request structs beyond that.
 - **IPC abstraction** — all frontend `invoke`/`listen` calls go through `src/lib/api.ts`, never import `@tauri-apps/api` directly. This keeps the WebSocket fallback working for browser-mode dev.
 - **Sidecar protocol** — JSONL over stdin/stdout. Commands: Rust-to-sidecar enums in `sidecar_protocol.rs`. Events: sidecar-to-Rust in `protocol.ts`.
-- **Event channels** — `agent-state-{id}` (Rust-assembled snapshots, canonical), `agent-event-{id}` (out-of-band signals only), `agent-exit-{id}`, `agent-stderr-{id}`.
+- **Event channels** — `agent-state-{id}` (Rust-assembled snapshots, canonical), `agent-event-{id}` (out-of-band signals only), `agent-exit-{id}`, `agent-stderr-{id}`, `agent-classification-{id}` (MON-82 per-turn classifier output).
 - **State flow** — Rust assembles `LiveAgentState` from sidecar events, emits snapshots on `agent-state-{id}` with 16ms debounce. Frontend pulls initial state via `get_agent_state()`, then subscribes. Reconcile by `stateVersion` — drop stale updates.
 - **Frontend never writes conversation history.** All `messages`/`sessions` writes happen inside Rust's sidecar event handler.
 
@@ -144,7 +149,9 @@ Full file reference: [ONBOARDING.md](./ONBOARDING.md) section 12.
 - **Session ancestry is canonical** — continuing a conversation creates a new session row with `parent_session_id`. `get_messages_with_ancestry` is the only correct way to load history.
 - **Sidecar is singleton** — one Node process hosts many agents, keyed by `agentId`. Not one process per agent.
 - **Legacy columns** — `sessions.pi_session_file` and `agents.custom_prompt` exist in the schema but are inert. Don't build on them.
-- **Schema evolves via `ALTER TABLE` migrations** — `db::init_schema` applies idempotent `ALTER TABLE` / `CREATE TABLE IF NOT EXISTS` blocks at the end of init. Never rewrite the base `CREATE TABLE` for columns added post-launch — add a new migration block. Current post-launch columns: `sessions.parent_session_id`, `agents.project_id`, `agents.context_window`, `agents.archived_at`, `agents.avatar_type`, `agents.avatar_path`, `agents.current_quest_id`, `messages.duration_ms`, `messages.quest_id`. Post-launch tables: `projects`, `agent_templates`, `ui_state`, `agent_stats`, `agent_tool_usage`, `message_attachments`, `quest_nodes`, `quest_events`.
+- **Schema evolves via `ALTER TABLE` migrations** — `db::init_schema` applies idempotent `ALTER TABLE` / `CREATE TABLE IF NOT EXISTS` blocks at the end of init. Never rewrite the base `CREATE TABLE` for columns added post-launch — add a new migration block. Current post-launch columns: `sessions.parent_session_id`, `agents.project_id`, `agents.context_window`, `agents.archived_at`, `agents.avatar_type`, `agents.avatar_path`, `agents.current_quest_id`, `messages.duration_ms`, `messages.quest_id`. Post-launch tables: `projects`, `agent_templates`, `ui_state`, `agent_stats`, `agent_tool_usage`, `message_attachments`, `quest_nodes`, `quest_events`, `classifications`.
+- **Classifier is advisory, per-user-turn** (MON-82) — the sidecar fires a one-shot `complete()` against Haiku (default) or LM Studio in parallel with every user turn, emits `agent-classification-{id}`, and annotates the forwarded user `message_end` with `classification_id` so Rust can backfill the FK. Failures log a "failed" pill but never block the turn. No consumer of the label in Slice 1 — Slice 3 (Architect, MON-84) is the first reader. Config is global at `~/.config/monarch/classifier.toml`; the system prompt lives in `classifier_config.rs` (read-only in the settings UI).
+
 - **Quests are orthogonal to sessions** (MON-83) — a quest can span multiple sessions, a session can span multiple quests. Aggregation key for "what happened on this quest" is `quest_id`, not `session_id`. Slice 2 creates quests manually via the toolbox tool; Slice 3 (MON-84) adds automatic decomposition via the Architect. Don't couple the two concepts.
 - **Archive lifecycle** — `agents.archived_at IS NULL` means active; non-null means archived. Use `db_archive_agent` / `db_unarchive_agent`, not hard delete, unless the user explicitly asks.
 - **Attachments live on disk** — `message_attachments` is just an ordered reference; bytes go under `~/.config/monarch/attachments/{uuid}.{ext}`. Same pattern as prompts and avatars.

@@ -1,5 +1,6 @@
 mod agent;
 mod agent_state;
+mod classifier_config;
 mod db;
 mod error;
 mod mention;
@@ -47,6 +48,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         // MON-83: force QuestRow so `db_get_quest` (Option<QuestRow>) emits
         // a named type reference rather than an anonymous inline shape.
         .typ::<db::QuestRow>()
+        // MON-82: same reason for ClassificationRow
+        // (db_get_classification_for_message).
+        .typ::<db::ClassificationRow>()
         .commands(collect_commands![
         // Agent lifecycle (sidecar-based)
         agent::commands::spawn_agent,
@@ -112,6 +116,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         db::db_get_quest_tree_for_root,
         db::db_record_quest_event,
         db::db_list_quest_events,
+        // MON-82
+        db::db_list_classifications_for_agent,
+        db::db_get_classification_for_message,
         // Toolbox
         toolbox::toolbox_list_tools,
         toolbox::placeholder::toolbox_placeholder_ping,
@@ -120,6 +127,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         // Thinking defaults (MON-78)
         thinking_config::get_thinking_default,
         thinking_config::get_thinking_config_path,
+        classifier_config::classifier_get_config,
+        classifier_config::classifier_set_config,
+        classifier_config::classifier_get_config_path,
     ])
 }
 
@@ -257,6 +267,11 @@ pub fn run() {
             db::db_get_quest_tree_for_root,
             db::db_record_quest_event,
             db::db_list_quest_events,
+            db::db_list_classifications_for_agent,
+            db::db_get_classification_for_message,
+            classifier_config::classifier_get_config,
+            classifier_config::classifier_set_config,
+            classifier_config::classifier_get_config_path,
             toolbox::toolbox_list_tools,
             toolbox::placeholder::toolbox_placeholder_ping,
             zoom::set_zoom,

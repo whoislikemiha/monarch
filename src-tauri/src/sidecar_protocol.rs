@@ -47,6 +47,32 @@ pub struct LoadSessionMessage {
     pub model: Option<String>,
 }
 
+/// MON-82: per-turn classifier invocation mirrored on the sidecar side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassifierProvider {
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassifierInvocationConfig {
+    pub enabled: bool,
+    pub primary: ClassifierProvider,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<ClassifierProvider>,
+    pub timeout_ms: u32,
+    pub system_prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassifierInvocation {
+    pub id: String,
+    pub config: ClassifierInvocationConfig,
+}
+
 /// Commands the Rust backend sends to the Node sidecar over stdin. One
 /// variant per TS interface in `sidecar/src/protocol.ts`. Serialized via
 /// `serde_json::to_string` at the send site; the `?` on the resulting
@@ -81,6 +107,11 @@ pub enum SidecarCommand {
         /// Kept as `Value` so both shapes serialize transparently to the sidecar
         /// without Rust needing to mirror the full multimodal union.
         message: serde_json::Value,
+        /// MON-82: classifier invocation for this turn. Rust mints the id
+        /// and resolves the config from `classifier.toml` before sending.
+        /// `None` when the classifier is disabled.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        classifier: Option<ClassifierInvocation>,
     },
     Abort {
         agent_id: String,
@@ -168,6 +199,11 @@ pub enum InnerEvent {
     },
     MessageEnd {
         message: Message,
+        /// MON-82: present on user-role messages when a classification was
+        /// in flight for this turn. Sidecar pairs it with the Pi-emitted
+        /// user `message_end` so the persist pipeline can backfill
+        /// `classifications.message_id` inline after the user row saves.
+        classification_id: Option<String>,
     },
     ToolExecutionStart {
         tool_call_id: String,
@@ -218,6 +254,8 @@ enum KnownInnerEvent {
     },
     MessageEnd {
         message: Message,
+        #[serde(default)]
+        classification_id: Option<String>,
     },
     ToolExecutionStart {
         tool_call_id: String,
@@ -258,7 +296,13 @@ impl From<KnownInnerEvent> for InnerEvent {
             KnownInnerEvent::TurnEnd => Self::TurnEnd,
             KnownInnerEvent::MessageStart { message } => Self::MessageStart { message },
             KnownInnerEvent::MessageUpdate { message } => Self::MessageUpdate { message },
-            KnownInnerEvent::MessageEnd { message } => Self::MessageEnd { message },
+            KnownInnerEvent::MessageEnd {
+                message,
+                classification_id,
+            } => Self::MessageEnd {
+                message,
+                classification_id,
+            },
             KnownInnerEvent::ToolExecutionStart {
                 tool_call_id,
                 tool_name,
@@ -350,6 +394,21 @@ pub enum SidecarEvent {
         agent_id: String,
         error: String,
     },
+    /// MON-82: classifier output for a user turn. Emitted independently of
+    /// the Pi turn (see runtime-manager). `complexity`/metrics populated on
+    /// success; `error` populated on failure.
+    Classification {
+        agent_id: String,
+        id: String,
+        complexity: Option<String>,
+        confidence: Option<f64>,
+        rationale: Option<String>,
+        model: Option<String>,
+        tokens_in: Option<i32>,
+        tokens_out: Option<i32>,
+        latency_ms: Option<i32>,
+        error: Option<String>,
+    },
     Unknown {
         raw: Value,
     },
@@ -377,6 +436,26 @@ enum KnownSidecarEvent {
         agent_id: String,
         error: String,
     },
+    Classification {
+        agent_id: String,
+        id: String,
+        #[serde(default)]
+        complexity: Option<String>,
+        #[serde(default)]
+        confidence: Option<f64>,
+        #[serde(default)]
+        rationale: Option<String>,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        tokens_in: Option<i32>,
+        #[serde(default)]
+        tokens_out: Option<i32>,
+        #[serde(default)]
+        latency_ms: Option<i32>,
+        #[serde(default)]
+        error: Option<String>,
+    },
 }
 
 impl From<KnownSidecarEvent> for SidecarEvent {
@@ -395,6 +474,29 @@ impl From<KnownSidecarEvent> for SidecarEvent {
                 Self::ExtensionUiRequest { agent_id }
             }
             KnownSidecarEvent::Error { agent_id, error } => Self::Error { agent_id, error },
+            KnownSidecarEvent::Classification {
+                agent_id,
+                id,
+                complexity,
+                confidence,
+                rationale,
+                model,
+                tokens_in,
+                tokens_out,
+                latency_ms,
+                error,
+            } => Self::Classification {
+                agent_id,
+                id,
+                complexity,
+                confidence,
+                rationale,
+                model,
+                tokens_in,
+                tokens_out,
+                latency_ms,
+                error,
+            },
         }
     }
 }
@@ -405,6 +507,7 @@ const KNOWN_SIDECAR_TAGS: &[&str] = &[
     "event",
     "extension_ui_request",
     "error",
+    "classification",
 ];
 
 impl<'de> Deserialize<'de> for SidecarEvent {
@@ -549,7 +652,7 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                 ApplyOutcome::NoOp
             }
         }
-        InnerEvent::MessageEnd { message } => {
+        InnerEvent::MessageEnd { message, .. } => {
             if message.role == "assistant" {
                 let sm = streaming_from(message);
                 if let Some(usage) = sm.usage.clone() {
@@ -870,6 +973,7 @@ mod tests {
             },
             InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
+            classification_id: None,
             },
             InnerEvent::Unknown {
                 raw: json!({"type": "future_event"}),
@@ -1172,6 +1276,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
+            classification_id: None,
             },
         );
         assert_eq!(outcome, ApplyOutcome::EmitNow);
@@ -1188,6 +1293,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("user", None),
+            classification_id: None,
             },
         );
         assert_eq!(outcome, ApplyOutcome::EmitNow);
@@ -1227,6 +1333,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
+            classification_id: None,
             },
         );
         assert!(s.streaming_message.is_none());
@@ -1338,6 +1445,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
+            classification_id: None,
             },
         );
 
@@ -1356,6 +1464,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
+            classification_id: None,
             },
         );
 
@@ -1491,6 +1600,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
+            classification_id: None,
             },
         );
         apply_event(&mut s, &tool_start("tc1", "read_file"));
@@ -1513,6 +1623,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
+            classification_id: None,
             },
         );
 

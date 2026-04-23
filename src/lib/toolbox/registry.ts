@@ -2,6 +2,7 @@ import ContextInspectorTool from "./tools/ContextInspectorTool.svelte";
 import ShadowStatsTool from "./tools/ShadowStatsTool.svelte";
 import PlaceholderTool from "./tools/PlaceholderTool.svelte";
 import QuestTimelineTool from "./tools/QuestTimelineTool.svelte";
+import ClassifierSettingsTool from "./tools/ClassifierSettingsTool.svelte";
 import type { ToolDefinition } from "./types";
 
 /**
@@ -34,6 +35,15 @@ export const TOOLS: ToolDefinition[] = [
     // compass / map icon — quest tree navigation
     icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polygon points="16 8 14 14 8 16 10 10 16 8"/></svg>`,
     component: QuestTimelineTool,
+  },
+  {
+    id: "classifier-settings",
+    title: "Classifier",
+    order: 25,
+    hasBackend: true,
+    // tag icon — per-message labeling
+    icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41L13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>`,
+    component: ClassifierSettingsTool,
   },
   {
     id: "placeholder",

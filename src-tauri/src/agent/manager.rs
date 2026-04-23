@@ -431,7 +431,36 @@ impl AgentManager {
         if let Some(obj) = value.as_object_mut() {
             obj.insert("agentId".to_string(), serde_json::Value::String(id));
         }
-        let cmd: SidecarCommand = serde_json::from_value(value)?;
+        let mut cmd: SidecarCommand = serde_json::from_value(value)?;
+        // MON-82: on Prompt, attach the resolved classifier config + a minted
+        // classification id so the sidecar can fire the classifier in
+        // parallel with the Pi turn and Rust can backfill the FK when the
+        // user message row lands.
+        if let SidecarCommand::Prompt { classifier, .. } = &mut cmd {
+            if classifier.is_none() {
+                let resolved = crate::classifier_config::resolved().await;
+                if resolved.enabled {
+                    *classifier = Some(crate::sidecar_protocol::ClassifierInvocation {
+                        id: crate::util::uuid_v4_simple(),
+                        config: crate::sidecar_protocol::ClassifierInvocationConfig {
+                            enabled: true,
+                            primary: crate::sidecar_protocol::ClassifierProvider {
+                                provider: resolved.primary.provider,
+                                model: resolved.primary.model,
+                            },
+                            fallback: resolved.fallback.map(|f| {
+                                crate::sidecar_protocol::ClassifierProvider {
+                                    provider: f.provider,
+                                    model: f.model,
+                                }
+                            }),
+                            timeout_ms: resolved.timeout_ms,
+                            system_prompt: resolved.system_prompt,
+                        },
+                    });
+                }
+            }
+        }
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
             .await
     }
