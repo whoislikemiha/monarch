@@ -49,6 +49,68 @@ All agent actions flow through Monarch, making it the natural place for permissi
 
 Permissions are scoped by role. Trust by default, restrict by exception.
 
+## Quests
+
+A **Quest** is the atomic artifact of work in Monarch — the fractal primitive around which everything else organizes. A quest may be trivial (rename a variable) or vast (ship a new product). Quests contain sub-quests to arbitrary depth. Every significant action a shadow takes belongs to some quest.
+
+Quests unify what would otherwise be separate systems:
+
+- **Plan** — the quest tree is the plan
+- **Delegation graph** — sub-quests with assignees are delegation edges
+- **Execution log** — messages and tool calls carry `quest_id`, filterable per-quest
+- **Memory seed** — completed quests distill into memory entries
+- **Time Travel index** — the quest tree is the primary scrubbing interface
+
+### Fractal Structure
+
+Quests are scale-invariant. A one-line fix is a quest. An epic multi-month initiative is a quest. Quests nest with no depth limit. The shadow hierarchy mirrors the quest hierarchy — top-level quests go to orchestrators, sub-quests go to leads, atomic quests go to workers.
+
+### Grades
+
+Every quest has a grade mirroring the shadow grade system:
+
+- **E** — trivial atomic change
+- **D** — small, single function
+- **C** — routine feature
+- **B** — meaningful, crosses a module
+- **A** — architectural, deep tree
+- **S** — project-scale initiative
+
+The Architect assigns grade at decomposition; the Steward may re-grade as scope evolves. Grade drives EXP awarded on completion, routing hints, and visual evolution of the assignee's avatar.
+
+### Lifecycle
+
+```
+pending → in_progress → claimed_done ─┬─ verified → done
+                                      ├─ disputed (stays until resolved)
+                                      └─ ambiguous → judge → done | disputed
+```
+
+Terminal states: `done`, `abandoned`, `superseded` (a fork winner replaces this node).
+
+### Roles
+
+The Quest system introduces supporting roles alongside existing shadows:
+
+- **Classifier** — a small always-on model (local) that tags every user prompt with complexity. Gates everything downstream.
+- **Architect** — a heavy one-shot decomposer invoked when the classifier flags complexity. Has codebase + web tools.
+- **Steward** — a continuous lightweight observer that maintains the quest tree as reality unfolds. Handles status transitions, drift detection, scope expansion.
+- **Judge** — on-demand adjudicator when completion is contested.
+
+Existing shadows (orchestrator, lead, worker) execute the tree. They read quest state through context injection each turn, signal completion via `claim_complete`, and may call `request_replan` when the plan no longer fits reality.
+
+### Forks & Exploration
+
+A quest may be marked `explore_n=K` at decomposition — Monarch spawns K worker shadows in parallel, each in its own worktree with a different approach. Monarch picks the winner; losing forks are preserved as abandoned quests, worktrees archived not deleted. Nothing is lost — losing forks remain Time Travel anchors and Memory Keeper sources.
+
+### Context Injection
+
+Shadows don't remember which quest they're on — they read it each turn. A "you are here" block prepends every shadow turn with the current quest tree, the shadow's current node, and the available quest operations. The tree becomes the reasoning spine — drift is visible in the shadow's own context, not just in an external panel.
+
+### EXP
+
+Completing a quest awards EXP to the assigned shadow, scaled by grade (E=1, D=3, C=10, B=30, A=100, S=500 base) and modified by completion quality (disputes, drift, judge verdicts, fork outcomes). Parent shadows receive partial credit for delegated children. Losing forks still earn 30% of grade base — exploration has value. Total EXP drives avatar visual tiers and eligibility for grade promotion.
+
 ## Memory
 
 Each agent has persistent memory across sessions — who they are, what they've done, what they've learned, and their relationships within the fleet. Agents evolve over time. An agent that's done 50 auth-related tasks becomes your auth expert — not because you labeled it, but because it remembers all that work.
@@ -71,6 +133,12 @@ A dedicated background agent (or system process — implementation TBD) that mai
 - Merges duplicates, prunes contradictions
 - Promotes/demotes memories between layers based on relevance and recency
 - The fleet's librarian — observes the audit trail and keeps the books
+
+### Quests as Memory Seeds
+
+Completed quests are the primary distillation trigger for the Memory Keeper. When a quest reaches `done`, the Keeper reads its full transcript — messages and tool calls filtered by `quest_id` — and produces a graded memory entry. Memory is no longer ad-hoc: it inherits the structure of the work that produced it.
+
+Specialization score falls out directly: a shadow with 50 completed auth-related quests *is* the auth expert, no labels required. Warm memory surfacing uses quest-similarity (current quest title and description against past quest summaries) rather than just recency.
 
 ## Context Control
 
@@ -104,13 +172,13 @@ Think of it as two views into the same agent: one where work happens, one where 
 
 ## Time Travel
 
-Every agent action is atomic and documented — tool calls with full diffs, who triggered what, when. This makes the entire system rewindable:
+Every agent action is atomic and documented — tool calls with full diffs, who triggered what, when. Actions attach to quests, giving a structural index over history. This makes the entire system rewindable:
 
-- **Timeline view** — scrub through history, see the state of everything at any point
-- **Rollback** — revert to a previous state. Undo the last N actions, or go back to before a task started
-- **Branch from past** — go back to a checkpoint and try a different approach
+- **Quest Timeline** — quests laid out horizontally by start time, branches for forks. Click any quest to jump to its state.
+- **Rollback** — revert to a previous state. Undo the last N actions, or go back to before a quest started.
+- **Branch from Quest** — right-click any completed quest to fork from there. New worktree, new shadow, new quest lineage — original preserved.
 
-The data model already supports session ancestry and branching. The vision is a full DAG of agent activity where any node is a rewindable, branchable state.
+The quest tree IS the rewind index. Session ancestry and quest branching compose: the vision is a full DAG of quests where any node is rewindable, branchable, and preserved even when abandoned.
 
 ## Git Worktree Support
 
@@ -178,19 +246,22 @@ Avatars respond to user interaction via Rive listeners:
 
 Every shadow accumulates stats over its lifetime, tracked in the DB and surfaced visually:
 
-- **Task breakdown** — frontend: 30, backend: 10, testing: 15, docs: 5
-- **Token usage** — total input/output tokens, cost, average per task
+- **Total EXP** — accumulated from completed quests, grade-weighted (E=1, D=3, C=10, B=30, A=100, S=500 base) with modifiers for disputes, drift, judge verdicts, and fork outcomes
+- **Grade breakdown** — per-grade completion counts, indicating capability ceiling and growth trajectory
+- **Quest breakdown** — frontend: 30, backend: 10, testing: 15, docs: 5 (by domain)
+- **Token usage** — total input/output tokens, cost, average per quest
 - **Session stats** — total sessions, average duration, longest streak
 - **Tool usage** — most-used tools, tool call counts, success rates
-- **Performance** — tasks completed, error rate, average time-to-completion
-- **Specialization score** — derived from task history, shows what the shadow is becoming (auth expert, frontend specialist, test writer)
+- **Performance** — quests completed, error rate, average time-to-completion, dispute rate
+- **Specialization score** — derived from quest history, shows what the shadow is becoming (auth expert, frontend specialist, test writer)
 
 Stats feed back into the avatar system:
 
-- A shadow with 80% frontend tasks could gain paint-splash particle effects
+- EXP thresholds unlock visual tiers (base silhouette → minor glow → particle effects → grade promotion eligibility → named shadow candidacy)
+- A shadow with 80% frontend quests could gain paint-splash particle effects
 - A heavy test writer gets a shield motif
-- High error rate shows battle scars
-- More experience = more imposing presence
+- High dispute or error rate shows battle scars
+- More EXP = more imposing presence
 
 ### Shadow Art Direction
 
