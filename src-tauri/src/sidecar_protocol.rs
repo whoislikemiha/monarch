@@ -47,6 +47,32 @@ pub struct LoadSessionMessage {
     pub model: Option<String>,
 }
 
+/// MON-82: per-turn classifier invocation mirrored on the sidecar side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassifierProvider {
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassifierInvocationConfig {
+    pub enabled: bool,
+    pub primary: ClassifierProvider,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<ClassifierProvider>,
+    pub timeout_ms: u32,
+    pub system_prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassifierInvocation {
+    pub id: String,
+    pub config: ClassifierInvocationConfig,
+}
+
 /// Commands the Rust backend sends to the Node sidecar over stdin. One
 /// variant per TS interface in `sidecar/src/protocol.ts`. Serialized via
 /// `serde_json::to_string` at the send site; the `?` on the resulting
@@ -81,6 +107,11 @@ pub enum SidecarCommand {
         /// Kept as `Value` so both shapes serialize transparently to the sidecar
         /// without Rust needing to mirror the full multimodal union.
         message: serde_json::Value,
+        /// MON-82: classifier invocation for this turn. Rust mints the id
+        /// and resolves the config from `classifier.toml` before sending.
+        /// `None` when the classifier is disabled.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        classifier: Option<ClassifierInvocation>,
     },
     Abort {
         agent_id: String,

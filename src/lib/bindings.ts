@@ -204,6 +204,9 @@ export const commands = {
 	setZoom: (level: number) => typedError<number, ErrorDto>(__TAURI_INVOKE("set_zoom", { level })),
 	getThinkingDefault: (provider: string, model: string) => typedError<string, ErrorDto>(__TAURI_INVOKE("get_thinking_default", { provider, model })),
 	getThinkingConfigPath: () => typedError<string, ErrorDto>(__TAURI_INVOKE("get_thinking_config_path")),
+	classifierGetConfig: () => typedError<ResolvedClassifierConfig, ErrorDto>(__TAURI_INVOKE("classifier_get_config")),
+	classifierSetConfig: (config: ClassifierConfig) => typedError<ResolvedClassifierConfig, ErrorDto>(__TAURI_INVOKE("classifier_set_config", { config })),
+	classifierGetConfigPath: () => typedError<string, ErrorDto>(__TAURI_INVOKE("classifier_get_config_path")),
 };
 
 /* Types */
@@ -298,6 +301,18 @@ export type ClassificationRow = {
 	latencyMs: number | null,
 	error: string | null,
 	createdAt: string,
+};
+
+export type ClassifierConfig = {
+	enabled?: boolean | null,
+	primary?: ClassifierProvider | null,
+	fallback?: ClassifierProvider | null,
+	timeoutMs?: number | null,
+};
+
+export type ClassifierProvider = {
+	provider: string,
+	model: string,
 };
 
 export type Cost = {
@@ -537,6 +552,15 @@ export type RecordQuestEventPayload = {
 	eventType: string,
 	actor: string | null,
 	payloadJson: string | null,
+};
+
+// Resolved view — all fields filled in, ready to ship to the sidecar.
+export type ResolvedClassifierConfig = {
+	enabled: boolean,
+	primary: ClassifierProvider,
+	fallback: ClassifierProvider | null,
+	timeoutMs: number,
+	systemPrompt: string,
 };
 
 export type SessionRow = {

@@ -53,7 +53,7 @@ async function handleCommand(cmd: SidecarCommand): Promise<void> {
 			await manager.destroySession(cmd.agentId);
 			break;
 		case "prompt":
-			await manager.prompt(cmd.agentId, cmd.message);
+			await manager.prompt(cmd.agentId, cmd.message, cmd.classifier);
 			break;
 		case "abort":
 			await manager.abort(cmd.agentId);

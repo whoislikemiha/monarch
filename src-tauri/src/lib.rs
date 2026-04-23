@@ -1,5 +1,6 @@
 mod agent;
 mod agent_state;
+mod classifier_config;
 mod db;
 mod error;
 mod mention;
@@ -126,6 +127,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         // Thinking defaults (MON-78)
         thinking_config::get_thinking_default,
         thinking_config::get_thinking_config_path,
+        classifier_config::classifier_get_config,
+        classifier_config::classifier_set_config,
+        classifier_config::classifier_get_config_path,
     ])
 }
 
@@ -265,6 +269,9 @@ pub fn run() {
             db::db_list_quest_events,
             db::db_list_classifications_for_agent,
             db::db_get_classification_for_message,
+            classifier_config::classifier_get_config,
+            classifier_config::classifier_set_config,
+            classifier_config::classifier_get_config_path,
             toolbox::toolbox_list_tools,
             toolbox::placeholder::toolbox_placeholder_ping,
             zoom::set_zoom,

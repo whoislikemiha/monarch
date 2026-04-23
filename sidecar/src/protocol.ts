@@ -35,10 +35,27 @@ export type PromptContentPart =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string };
 
+// MON-82: Rust ships the resolved classifier config on each `prompt`. The
+// sidecar is stateless WRT classifier configuration — settings live in
+// ~/.config/monarch/classifier.toml and Rust mints the per-turn
+// `classificationId` so the user-message row can be linked inline during
+// persistence.
+export interface ClassifierInvocation {
+  id: string;
+  config: {
+    enabled: boolean;
+    primary: { provider: string; model: string };
+    fallback?: { provider: string; model: string } | null;
+    timeoutMs: number;
+    systemPrompt: string;
+  };
+}
+
 export interface PromptCommand {
   type: "prompt";
   agentId: string;
   message: string | PromptContentPart[];
+  classifier?: ClassifierInvocation | null;
 }
 
 export interface AbortCommand {

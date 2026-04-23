@@ -14,7 +14,13 @@ import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { Api, ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
 import { buildSystemPrompt } from "./shadow-oath.js";
 import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
-import type { CreateSessionCommand, LoadSessionCommand, PromptContentPart } from "./protocol.js";
+import type {
+	ClassifierInvocation,
+	CreateSessionCommand,
+	LoadSessionCommand,
+	PromptContentPart,
+} from "./protocol.js";
+import { classify } from "./classifier.js";
 
 interface ManagedSession {
 	session: AgentSession;
@@ -187,9 +193,34 @@ function resolveModel(
 export class RuntimeManager {
 	private sessions = new Map<string, ManagedSession>();
 	private emit: EmitFn;
+	/**
+	 * MON-82: per-agent FIFO of classification ids awaiting their paired
+	 * user `message_end`. Push on `prompt()` when the classifier is
+	 * enabled; pop on the first user-role `message_end` for that agent so
+	 * the forwarded event carries `classificationId` and Rust can backfill
+	 * `classifications.message_id` inline.
+	 */
+	private pendingClassifications = new Map<string, string[]>();
 
 	constructor(emit: EmitFn) {
 		this.emit = emit;
+	}
+
+	private pushPendingClassification(agentId: string, id: string): void {
+		const existing = this.pendingClassifications.get(agentId);
+		if (existing) {
+			existing.push(id);
+		} else {
+			this.pendingClassifications.set(agentId, [id]);
+		}
+	}
+
+	private popPendingClassification(agentId: string): string | undefined {
+		const existing = this.pendingClassifications.get(agentId);
+		if (!existing || existing.length === 0) return undefined;
+		const id = existing.shift();
+		if (existing.length === 0) this.pendingClassifications.delete(agentId);
+		return id;
 	}
 
 	async createSession(cmd: CreateSessionCommand): Promise<void> {
@@ -294,10 +325,29 @@ export class RuntimeManager {
 		const emit = this.emit;
 
 		const listener: AgentSessionEventListener = (event) => {
+			// MON-82: if Pi just echoed the user turn, pair it with the
+			// in-flight classification id so the persist pipeline on the
+			// Rust side can backfill `classifications.message_id` inline
+			// once the user row saves.
+			let forwarded: Record<string, unknown> = event as unknown as Record<
+				string,
+				unknown
+			>;
+			if (
+				forwarded.type === "message_end" &&
+				typeof forwarded.message === "object" &&
+				forwarded.message !== null &&
+				(forwarded.message as { role?: string }).role === "user"
+			) {
+				const cid = this.popPendingClassification(agentId);
+				if (cid) {
+					forwarded = { ...forwarded, classificationId: cid };
+				}
+			}
 			emit({
 				type: "event",
 				agentId,
-				event: event as unknown as Record<string, unknown>,
+				event: forwarded,
 			});
 
 			// MON-51: retry exhaustion is the provider-unreachable path Pi
@@ -353,9 +403,55 @@ export class RuntimeManager {
 		this.emit({ type: "session_destroyed", agentId });
 	}
 
-	async prompt(agentId: string, message: string | PromptContentPart[]): Promise<void> {
+	async prompt(
+		agentId: string,
+		message: string | PromptContentPart[],
+		classifier?: ClassifierInvocation | null,
+	): Promise<void> {
 		const managed = this.getSession(agentId);
 		if (!managed) return;
+
+		// MON-82: fork the classifier alongside the Pi turn. It resolves
+		// independently and emits its own event; the Pi turn is never
+		// blocked on classification. Push the id so the next user
+		// `message_end` carries the pairing.
+		if (classifier?.config.enabled) {
+			this.pushPendingClassification(agentId, classifier.id);
+			const cid = classifier.id;
+			const cfg = classifier.config;
+			void (async () => {
+				const result = await classify(managed.session, message, {
+					enabled: cfg.enabled,
+					primary: cfg.primary,
+					fallback: cfg.fallback ?? null,
+					timeoutMs: cfg.timeoutMs,
+					systemPrompt: cfg.systemPrompt,
+				});
+				if ("error" in result) {
+					this.emit({
+						type: "classification",
+						agentId,
+						id: cid,
+						model: result.model,
+						latencyMs: result.latencyMs,
+						error: result.error,
+					});
+				} else {
+					this.emit({
+						type: "classification",
+						agentId,
+						id: cid,
+						complexity: result.complexity,
+						confidence: result.confidence,
+						rationale: result.rationale,
+						model: result.model,
+						tokensIn: result.tokensIn,
+						tokensOut: result.tokensOut,
+						latencyMs: result.latencyMs,
+					});
+				}
+			})();
+		}
 
 		try {
 			if (typeof message === "string") {
