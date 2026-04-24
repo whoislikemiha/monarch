@@ -98,23 +98,23 @@ Keep each binary small; orthogonal binaries are easier to iterate than a mega-bi
 
 Spike crate stays on this branch as forensic context — do not delete in the same PR. The production ticket that implements `memories` / HNSW sidecar references this plan + notes file, and the spike crate can be archived or deleted once the production implementation lands. Branch merges to `master` to capture the measurements and recommendation; the `spike/` directory is understood as non-production.
 
-## Open questions
+## Resolved decisions
 
-1. **Where exactly does the spike crate live?** Proposal: `spike/MON-91-storage/` at repo root, outside the Tauri app, with its own `Cargo.toml` so it does not interact with `src-tauri/`'s build. Alternative: a sibling directory at `../monarch-spike-MON-91/` kept entirely out of the repo (matches the "throwaway" framing more literally). **Preference for in-repo** so the crate + notes file land in one PR and the next person can run the benchmarks. Confirm before starting.
+1. **Spike crate location.** `spike/MON-91-storage/` at repo root, outside `src-tauri/`'s build, with its own `Cargo.toml`. Crate + notes file land in one PR.
 
-2. **Tauri bundle measurement — integrated or separate binary?** The spike can either (a) add the deps to `src-tauri/` temporarily and run `npm run tauri build` to measure the real bundle impact, or (b) build a standalone Tauri app inside `spike/MON-91-storage/` with the same deps. (a) is more representative; (b) is cleaner. **Preference for (a)**, with the dep additions reverted before merge (captured in commit history only). Confirm.
+2. **Tauri bundle measurement.** Add deps to `src-tauri/Cargo.toml` temporarily on this branch, run `npm run tauri build`, compare to a baseline build. Dep additions get reverted before merge (captured in commit history for forensic context, not in the final tree).
 
-3. **Synthetic vs real vectors for the 1M benchmark.** Synthetic random gaussian vectors generate instantly and stress HNSW's graph structure fairly; real embeddings have different neighborhood density that can swing recall @ fixed params. **Proposal:** run the headline 1M measurement on synthetic for speed, then a 10k subset on real `bge-small` embeddings to validate recall holds up. Flag this prominently in the notes. Confirm or push back.
+3. **Synthetic vs real vectors.** Split the load: headline 1M-scale latency + p99 benchmark runs on synthetic Gaussian vectors (fast to generate, stresses HNSW graph structure). Recall@10 validation runs on real `bge-small-en-v1.5` embeddings over a smaller subset (~10k). Notes file makes the split explicit.
 
-4. **One HNSW crate or a bake-off?** `instant-distance` vs `hnsw_rs` are both viable. **Proposal:** pick one (whichever has fresher maintenance + clearer docs at spike time), only bake off if the first one fails latency or recall bars. Confirm preference for single vs bake-off.
+4. **HNSW crate.** Single crate. Pick whichever of `instant-distance` / `hnsw_rs` has fresher maintenance + clearer docs at spike start. Fall back to the other only if the first fails p99 or recall bars.
 
-5. **Float32 vs int8-quantized ONNX model.** `bge-small-en-v1.5` has quantized exports that cut the file size substantially at a small recall cost. **Proposal:** headline measurement uses float32 (keeps recall a clean signal), secondary row captures quantized model file size for the bundle criterion. Confirm.
+5. **Embedding model precision.** Float32 `bge-small-en-v1.5` for all recall + latency measurements. Quantized variant not benchmarked in this spike.
 
-6. **macOS / Windows verification.** Dev machine is Linux; no mac / win build hardware is set up. **Proposal:** spike confirms Linux end-to-end, and captures cross-platform risk via documentation review of `ort` + chosen HNSW crate (packaging model, prebuilt binaries, system dependencies). Actual mac / win bundle verification is a follow-up ticket once hardware or CI exists. The issue's acceptance criterion "builds cleanly on all three platforms" is accepted as "builds cleanly on Linux + documented-credible path on mac / win". Confirm this downgrade or push back.
+6. **macOS / Windows verification.** Linux end-to-end (primary) + macOS laptop end-to-end (confirms `ort` packaging, HNSW build, SQLite BLOB path on Apple silicon). Windows remains documentation-review-only; captured as a follow-up risk in the notes rather than blocking the spike.
 
-7. **Timebox.** Spikes are timeboxed by convention. **Proposal:** 2–3 working days, with the notes file drafted continuously so the end state is always at least "here is what we measured so far." Confirm target.
+7. **Timebox.** 1 day, single session. Notes file drafted continuously so the stop state is always "here is what we measured so far." If the 1M-scale run doesn't fit, scale down to the largest N that fits and flag the gap in the recommendation.
 
-8. **Benchmark hardware baseline.** Measurements depend heavily on disk + CPU. **Proposal:** record exact hostname / CPU model / disk kind in the notes, run every measurement on the same machine, and explicitly flag p99 targets as valid-on-this-hardware rather than absolute. Confirm the machine to benchmark on (dev laptop fine? dedicated?).
+8. **Benchmark hardware.** Linux desktop (primary) + macOS laptop (cross-platform check). Notes file records exact CPU / disk / RAM for each machine and reports numbers per-machine. p99 claims flagged "valid on this hardware" rather than universal.
 
 ## Out of scope reminders
 
