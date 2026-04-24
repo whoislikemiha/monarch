@@ -304,7 +304,7 @@ Branching is therefore *git for the cognitive substrate*: code, working state, a
 
 ## Implications for the data model
 
-> The schema sketches below are **illustrative, not prescriptive.** They show *roughly* what the model implies, not what we will build. Real shapes (column choices, table boundaries, whether to use JSON blobs vs decomposed columns, etc.) get worked out in implementation tickets after a spike. Storage choices in particular — SQLite vs alternatives, how vectors are indexed, whether L2 is a row or a blob — remain open and may shift as we prototype.
+> The schema sketches below are **illustrative, not prescriptive.** They show *roughly* what the model implies, not what we will build. Real shapes (column choices, table boundaries, whether to use JSON blobs vs decomposed columns, etc.) get worked out in implementation tickets. The underlying storage stack (SQLite + Rust-side HNSW + ONNX-shipped embedding model) is **validated by [MON-91](../../spike/MON-91-storage/) — see [`thoughts/spike/MON-91-storage.md`](../spike/MON-91-storage.md)**; remaining openness is about row-shape choices above that stack, not about the stack itself.
 
 - `captain` table (singleton, id=1). Holds captain row + pointer to current identity version.
 - `captain_identity_versions` table. Row-per-version with supersedes chain.
@@ -313,7 +313,7 @@ Branching is therefore *git for the cognitive substrate*: code, working state, a
 - `agent_working_memory` storage. Either column on `agents` (JSON blob) or sibling table; decided in implementation.
 - `memories` table redesign per `distillation.md`. Includes `parent_id` (tree edge), `scope` (self|project|captain|global), `project_id`, `supersedes_id`, `archived_at`, `file_refs`, `embedding_model_id`, etc.
 - `memories_fts` virtual table (FTS5).
-- Vector index: SQLite BLOBs + Rust-side HNSW sidecar file (`instant-distance` or equivalent). Storage choice locked here; implementation in a sibling spike.
+- Vector index: SQLite BLOBs + Rust-side HNSW sidecar file via `instant-distance`. Rebuildable from BLOBs on cold start. **Validated by [MON-91](../spike/MON-91-storage.md)** — at 1M synthetic vectors, p99 query = 5.8 ms, binary +25 MiB; at 10k real embeddings from `bge-small-en-v1.5`, recall@10 = 1.000.
 - Forks: a `quest_nodes.fork_parent_id` (or sibling table) for parallel-attempt subquest groupings. Worktree path stored on quest.
 
 ## What this document does not cover
@@ -329,7 +329,7 @@ By design, the following are out of scope and live in sibling docs:
 
 ## Working assumptions captured here
 
-These are the conceptual positions the doc currently rests on, listed so sibling docs and later conversations can reference them by number. **Treat them as the current direction, not as final calls.** Any of them can be revisited — most likely candidates for revision are #11 and #12 (tech choices), and #6 (taxonomy is locked *for v1*, not forever).
+These are the conceptual positions the doc currently rests on, listed so sibling docs and later conversations can reference them by number. **Treat them as the current direction, not as final calls.** Any of them can be revisited — most likely candidate for revision is #6 (taxonomy is locked *for v1*, not forever). #12 is no longer tentative after MON-91.
 
 1. **Four layers:** L1 identity, L2 working memory, L3 tree, L4 search-as-access-pattern over L3.
 2. **Captain is a singleton in v1**, first-class evolution preserved.
@@ -342,4 +342,4 @@ These are the conceptual positions the doc currently rests on, listed so sibling
 9. **Stale-flagging is annotation, never auto-archive.**
 10. **Branching is shared L1, forked L2, shared-read + fork-local-write L3, plus git worktrees for code.**
 11. **One tree, one set of indices, two read paths** (tree-walk + search). No separate cold tier.
-12. **Tentative tech direction:** SQLite stays canonical, vector index as a Rust-side HNSW sidecar file rebuildable from SQLite BLOBs. *Subject to revision.* Alternatives discussed in the design conversation (Kùzu for graph-native, LanceDB for vector-first, SurrealDB for unified) remain on the table if prototyping reveals friction with the current direction.
+12. **Storage stack (validated by [MON-91](../spike/MON-91-storage.md)):** SQLite canonical, vector index as a Rust-side HNSW sidecar file via `instant-distance` rebuildable from SQLite BLOBs, embeddings via `bge-small-en-v1.5` through the `ort` crate. Alternatives (Kùzu, LanceDB, SurrealDB) considered and rejected — the spike confirmed the simpler SQLite-plus-sidecar path clears every bar.
