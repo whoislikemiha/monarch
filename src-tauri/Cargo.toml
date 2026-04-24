@@ -37,5 +37,17 @@ toml = "0.8"
 ignore = "0.4"
 nucleo-matcher = "0.3"
 
+# --- MON-91 bundle-probe (temporary; reverted before merge) ---
+# These deps exist only so `npm run tauri build` measures the bundle-size
+# impact of the shadow-memory storage stack. The _spike_bundle_probe module
+# references each one so the linker cannot prune them.
+instant-distance = { version = "0.6", features = ["with-serde"] }
+bincode = "1"
+ort = { version = "2.0.0-rc.10", features = ["download-binaries", "ndarray"] }
+ndarray = "0.17"
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+bytemuck = "1"
+# --- /MON-91 bundle-probe ---
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
