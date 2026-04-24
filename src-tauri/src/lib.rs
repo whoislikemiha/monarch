@@ -1,4 +1,3 @@
-mod _spike_bundle_probe; // MON-91; reverted before merge
 mod agent;
 mod agent_state;
 mod classifier_config;
