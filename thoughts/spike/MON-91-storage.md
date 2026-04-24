@@ -107,12 +107,16 @@ ls -la src-tauri/target/release/monarch
 # 3. Record the delta here:
 ```
 
-| Artifact | Baseline | With storage deps | Delta |
+| Artifact | Baseline (commit 6b7cc07) | With storage deps (commit 363d5fd) | Delta |
 |---|---|---|---|
-| `monarch` binary (stripped) | _pending_ | _pending_ | _pending_ |
-| `.deb` package | _pending_ | _pending_ | _pending_ |
-| ONNX model (asset to ship separately) | 0 | 127 MiB | +127 MiB |
-| **Total app+model** | _pending_ | _pending_ | _target < 200 MiB_ |
+| `monarch` release binary | 30,901,072 B (29.47 MiB) | 55,517,896 B (52.95 MiB) | **+24.62 MiB** |
+| `.deb` package | n/a — no bundle section in `tauri.conf.json`; only the raw binary is produced | n/a | — |
+| ONNX model (asset; lazy-downloaded on first memory write) | 0 | 127 MiB | +127 MiB |
+| **Total binary + model** | 29.47 MiB | 179.95 MiB | **+151.48 MiB** |
+
+**Under target.** The 200 MiB bar accommodates both the statically-linked ONNX Runtime (binary grows ~25 MiB — the `download-binaries` feature grabbed a `.a` and LTO folded it in; no `libonnxruntime.so` at runtime) and the 127 MiB model file. **Recommendation: ship the binary; lazy-download the model on first memory write to `~/.config/monarch/models/`.** That keeps the installer at +25 MiB and defers the 127 MiB fetch to the first user who actually opts into shadow memory.
+
+Baseline was built in a throwaway `git worktree` on commit `6b7cc07` to avoid polluting the active tree; worktree removed after measurement.
 
 The 127 MiB ONNX model is *not* linked into the binary (we ship it under `~/.config/monarch/models/`
 or bundle as a Tauri resource). Whether it counts toward the "bundle size" budget depends on
@@ -178,8 +182,7 @@ serialized" model in `distillation.md`.
 ## Outstanding
 
 - [x] **1M synthetic** — done: p99 = 5.81 ms, 52.8 min build. Numbers in the table above.
-- [ ] **Bundle size** — user runs the `tauri build` recipe above, captures the baseline +
-      with-deps sizes, fills the delta table.
+- [x] **Bundle size** — done: binary +24.62 MiB, total +151 MiB including model. Under the 200 MiB bar.
 - [ ] **macOS run** — user runs `cargo build --release` + `./fetch_model.sh` + the same
       generate/build/bench pipeline on the mac laptop. Attaches numbers here.
 - [ ] **Revert commit** — once bundle numbers are captured, revert `src-tauri/Cargo.toml` and
