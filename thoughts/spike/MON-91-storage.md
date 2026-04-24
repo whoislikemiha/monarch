@@ -6,7 +6,7 @@ Crate: [`spike/MON-91-storage/`](../../spike/MON-91-storage/)
 
 ## TL;DR
 
-**Recommendation: confirm the stack.** SQLite BLOB + `instant-distance` HNSW + `ort` running `bge-small-en-v1.5` clears every functional bar the design called for at 10k real embeddings and at 100k synthetic vectors. The only caveat is build time on single-threaded graph construction at large N; this is an index-build concern, not a query-path concern, and is straightforward to mitigate (parallel builds, async rebuilds, quantized vectors).
+**Recommendation: confirm the stack.** SQLite BLOB + `instant-distance` HNSW + `ort` running `bge-small-en-v1.5` clears every functional bar the design called for, measured at 1M synthetic vectors (p99 = 5.81 ms) and 10k real embeddings (recall@10 = 1.000). The only caveat is HNSW build time at large N (~53 min for 1M on default params); this is an index-build concern, not a query-path concern, and is straightforward to mitigate via incremental insert + background rebuilds rather than synchronous full rebuilds.
 
 Query latency, recall on real data, embedding stability, and storage footprint all came in comfortably under target. Bundle-size impact pending (user-run `npm run tauri build`; recipe below). macOS pending (user-run; recipe below). See § Outstanding for the gaps.
 
@@ -65,19 +65,23 @@ The authoritative recall measurement.
 
 ### 1M synthetic Gaussian vectors
 
-_Running at notes-file draft time. Filled in below once the background build completes._
+The headline scale test.
 
 | Metric | Value | Target | Notes |
 |---|---|---|---|
-| Insert rate (rows/s) | _pending_ | — | |
-| DB size | ~1.96 GiB | — | Observed mid-run: 2,053,160,960 bytes |
-| HNSW build time | _pending_ | — | Multi-core during build (~13× CPU utilisation observed) |
-| HNSW persist size | _pending_ | — | |
-| Reload-from-sidecar | _pending_ | — | |
-| Resident after build | _pending_ | — | Observed mid-run: ~3.4 GiB RSS during construction |
-| Query p50 | _pending_ | — | |
-| **Query p99** | _pending_ | **< 50 ms** | |
-| Recall@10 (synthetic) | _pending_ | — | Expected to track 100k synthetic (known Gaussian artifact) |
+| Insert rate (rows/s) | 203,207 | — | 4.92 s total for 1M inserts |
+| DB size | 1,958.05 MiB | — | 2,053,160,960 bytes on-disk |
+| Load-from-SQLite (all rows) | 1.22 s | — | Cold path for the "rebuild HNSW from BLOBs on load" invariant |
+| HNSW build time | 3,171 s (52.8 min) | — | ef_construction=200, multi-threaded (~14× CPU during build) |
+| HNSW persist size | 1,769.93 MiB | — | bincode serialised graph |
+| Reload-from-sidecar | 1.58 s | — | |
+| Resident after build | 3,315.2 MiB | — | ~1.8 GiB attributable to the graph |
+| HNSW load (bench start) | 2.09 s | — | Warm-file deserialise |
+| Query p50 | 3.47 ms | — | In-distribution queries |
+| Query p95 | 5.13 ms | — | |
+| **Query p99** | **5.81 ms** | **< 50 ms** | **PASS** — 8.6× under target |
+| Mean query | 3.73 ms | — | |
+| Recall@10 (synthetic) | 0.208 | — | Expected Gaussian-distribution collapse; real embeddings remain the authoritative 1.000 |
 
 ## Bundle-size probe (pending user run)
 
@@ -154,8 +158,8 @@ are `ort` prebuilt binary availability on the specific mac arch and Rust toolcha
 
 ## Build-time concerns
 
-The 100k synthetic build took **4.8 min** single-threaded (on the variant that ran single-threaded)
-and 1M ran multi-threaded (~13× CPU utilisation) at **~3.4 GiB RSS peak**. For production:
+100k build: **4.8 min**. 1M build: **52.8 min** multi-threaded (~14× CPU utilisation) at
+**~3.4 GiB RSS peak during construction**. For production:
 
 - **Reads are fast and cheap.** Every shadow-memory read path (both the always-on tree-walk and
   the `memory_search` tool) goes through the HNSW query path, which is well under the p99 target.
@@ -173,8 +177,7 @@ serialized" model in `distillation.md`.
 
 ## Outstanding
 
-- [ ] **1M synthetic** — build still running at notes-draft time. Fill in the table row above
-      once the background task completes.
+- [x] **1M synthetic** — done: p99 = 5.81 ms, 52.8 min build. Numbers in the table above.
 - [ ] **Bundle size** — user runs the `tauri build` recipe above, captures the baseline +
       with-deps sizes, fills the delta table.
 - [ ] **macOS run** — user runs `cargo build --release` + `./fetch_model.sh` + the same
