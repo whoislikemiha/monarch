@@ -1,0 +1,19 @@
+loaded 10000 vectors (dim 384) from SQLite in 0.04s
+sanity: zero-query nearest id = Some(305)
+reload-from-sidecar took 0.03s (bytes 18555400)
+{
+  "binary": "build_index",
+  "n": 10000,
+  "dim": 384,
+  "m": 16,
+  "ef_construction": 200,
+  "load_from_sqlite_secs": 0.041,
+  "build_secs": 13.724,
+  "persist_secs": 0.031,
+  "persist_bytes": 18555400,
+  "persist_mib": 17.70,
+  "rss_start_mib": 3.2,
+  "rss_after_load_mib": 21.9,
+  "rss_after_build_mib": 40.9,
+  "hnsw_resident_mib_approx": 18.9
+}

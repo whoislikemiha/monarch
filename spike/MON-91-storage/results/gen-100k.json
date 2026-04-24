@@ -1,0 +1,12 @@
+inserted 100000 / 100000 (196381 rows/s)
+{
+  "binary": "generate_data",
+  "n": 100000,
+  "dim": 384,
+  "insert_secs": 0.509,
+  "insert_rate_rows_per_sec": 196378,
+  "db_bytes": 205312000,
+  "db_mib": 195.80,
+  "rss_before_mib": 3.1,
+  "rss_after_mib": 7.1
+}

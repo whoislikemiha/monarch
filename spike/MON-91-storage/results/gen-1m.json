@@ -1,0 +1,21 @@
+inserted 100000 / 1000000 (201511 rows/s)
+inserted 200000 / 1000000 (202654 rows/s)
+inserted 300000 / 1000000 (203048 rows/s)
+inserted 400000 / 1000000 (203652 rows/s)
+inserted 500000 / 1000000 (203876 rows/s)
+inserted 600000 / 1000000 (204094 rows/s)
+inserted 700000 / 1000000 (204274 rows/s)
+inserted 800000 / 1000000 (204107 rows/s)
+inserted 900000 / 1000000 (203508 rows/s)
+inserted 1000000 / 1000000 (203207 rows/s)
+{
+  "binary": "generate_data",
+  "n": 1000000,
+  "dim": 384,
+  "insert_secs": 4.921,
+  "insert_rate_rows_per_sec": 203206,
+  "db_bytes": 2053160960,
+  "db_mib": 1958.05,
+  "rss_before_mib": 3.1,
+  "rss_after_mib": 7.1
+}
