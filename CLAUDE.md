@@ -6,7 +6,7 @@ Monarch manages a fleet of AI coding agents called shadows. SQLite is the canoni
 
 **Mental model:** Rust owns state, the frontend displays it, the sidecar operates on it. When in doubt, read `src-tauri/src/agent/` and `sidecar/src/runtime-manager.ts` side by side — they're the contract.
 
-For the product vision, see [VISION.md](./VISION.md). For the full architecture walkthrough, data model, lifecycle details, and protocol reference, see [ONBOARDING.md](./ONBOARDING.md).
+For the product vision, see [VISION.md](./VISION.md). For the full architecture walkthrough, data model, lifecycle details, and protocol reference, see [ONBOARDING.md](./ONBOARDING.md). For ongoing design work on shadow cognition (memory, attention, distillation, interaction flows), see [`thoughts/design/shadow-cognition/`](./thoughts/design/shadow-cognition/) — start with the README in that folder.
 
 ## Build & Dev
 
