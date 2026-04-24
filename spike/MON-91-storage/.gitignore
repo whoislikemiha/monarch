@@ -1,0 +1,8 @@
+target/
+.assets/
+*.db
+*.db-wal
+*.db-shm
+*.hnsw
+Cargo.lock
+results/
