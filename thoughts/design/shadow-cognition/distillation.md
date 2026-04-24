@@ -349,7 +349,7 @@ The chat-shadow also can't write memories directly — same rule. Both organs pr
 
 ## Implications for the data model
 
-> Schema sketches are **illustrative**, not prescriptive. Real shapes get worked out in implementation tickets. Storage choices (SQLite + HNSW sidecar, alternatives) remain open per `substrate.md`.
+> Schema sketches are **illustrative**, not prescriptive. Real shapes get worked out in implementation tickets. The underlying storage stack (SQLite BLOB + HNSW sidecar via `instant-distance` + `bge-small-en-v1.5` via `ort`) is **validated by [MON-91](../spike/MON-91-storage.md)**; remaining openness is about row shape above that stack.
 
 **`memories` table** — the L3 leaves.
 
@@ -383,7 +383,7 @@ CREATE TABLE memories (
 
 **`memories_fts`** — FTS5 virtual table on title + summary + content.
 
-**`memory_index`** — Rust-side HNSW sidecar file (e.g., `instant-distance` or similar), keyed by memory id, rebuildable from `embedding` BLOBs. Per `substrate.md` storage discussion.
+**`memory_index`** — Rust-side HNSW sidecar file via `instant-distance`, keyed by memory id, rebuildable from `embedding` BLOBs. Validated by [MON-91](../spike/MON-91-storage.md).
 
 **`memory_keeper_runs`** — provenance for every Keeper invocation.
 

@@ -1,0 +1,25 @@
+loading HNSW from /tmp/mon91-synth-1m.hnsw
+hnsw load took 2.09s, RSS now 3574 MiB
+db has 1000000 rows at dim 384
+loading all vectors for brute-force ground truth...
+loaded 1000000 rows in 1.2s
+{
+  "binary": "bench_query",
+  "n_in_index": 1000000,
+  "dim": 384,
+  "queries": 1000,
+  "k": 10,
+  "gaussian_queries": false,
+  "hnsw_load_secs": 2.086,
+  "p50_us": 3467,
+  "p95_us": 5128,
+  "p99_us": 5811,
+  "mean_us": 3731.2,
+  "p50_ms": 3.467,
+  "p99_ms": 5.811,
+  "recall_at_10_mean": 0.2080,
+  "recall_sample_size": 50,
+  "rss_start_mib": 3.1,
+  "rss_after_load_mib": 3573.5,
+  "rss_end_mib": 3631.4
+}
