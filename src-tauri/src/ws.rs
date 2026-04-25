@@ -370,7 +370,7 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
 
         // ---- DB: Memories (MON-99) ----
         "db_list_memories_for_agent" => {
-            let agent_id = req_str(&args, "agentId")?;
+            let agent_id = str_field(&args, "agentId")?;
             let memories = state.db.list_memories_for_agent_internal(&agent_id).await?;
             serde_json::to_value(memories).map_err(MonarchError::from)
         }
@@ -582,6 +582,23 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             let payload = if req.payload.is_empty() { None } else { Some(req.payload) };
             state.agent_mgr.refresh_shadow_identity(&req.agent_id, payload).await?;
             Ok(Value::Null)
+        }
+
+        // ---- MON-99: Memory config ----
+        "memory_get_config" => {
+            let cfg = crate::memory_config::resolved().await;
+            serde_json::to_value(cfg).map_err(MonarchError::from)
+        }
+        "memory_set_config" => {
+            let raw: crate::memory_config::MemoryConfig = serde_json::from_value(args)
+                .map_err(|e| MonarchError::invalid_input(format!("Invalid memory config: {}", e)))?;
+            let resolved = crate::memory_config::resolve(raw.clone());
+            crate::memory_config::write_raw_ws(&raw).await?;
+            serde_json::to_value(resolved).map_err(MonarchError::from)
+        }
+        "memory_get_config_path" => {
+            let path = crate::memory_config::config_path_ws()?;
+            Ok(Value::String(path))
         }
 
         _ => Err(MonarchError::not_found(format!("command {}", cmd))),

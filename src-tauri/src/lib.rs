@@ -3,6 +3,8 @@ mod agent_state;
 mod classifier_config;
 mod db;
 mod error;
+mod memory_config;
+mod memory_index;
 mod mention;
 mod models;
 mod persistence;
@@ -18,6 +20,7 @@ pub use error::MonarchError;
 
 use agent::AgentManager;
 use db::Database;
+use memory_index::MemoryIndex;
 use models::ModelCache;
 use std::sync::Arc;
 use std::time::Duration;
@@ -134,6 +137,12 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         classifier_config::classifier_get_config,
         classifier_config::classifier_set_config,
         classifier_config::classifier_get_config_path,
+        // Memory config + embedding index (MON-99)
+        memory_config::memory_get_config,
+        memory_config::memory_set_config,
+        memory_config::memory_get_config_path,
+        memory_index::memory_index_status,
+        memory_index::memory_download_and_init,
     ])
 }
 
@@ -199,6 +208,10 @@ pub fn run() {
     );
     let agent_mgr = Arc::new(AgentManager::new(database.clone()));
     let model_cache = Arc::new(ModelCache::new());
+    let memory_index = Arc::new({
+        let cfg = tauri::async_runtime::block_on(memory_config::resolved());
+        MemoryIndex::new(cfg.models_dir)
+    });
 
     // Clones for the WS server
     let ws_db = database.clone();
@@ -217,6 +230,7 @@ pub fn run() {
         .manage(agent_mgr)
         .manage(model_cache)
         .manage(database)
+        .manage(memory_index)
         .invoke_handler(tauri::generate_handler![
             agent::commands::spawn_agent,
             agent::commands::send_command,
@@ -250,8 +264,8 @@ pub fn run() {
             db::db_save_message,
             db::db_get_messages,
             db::db_get_messages_with_ancestry,
-            db::db_save_memory,
-            db::db_get_memories,
+            db::db_list_memories_for_agent,
+            db::db_get_memory,
             db::db_log_event,
             db::db_list_agent_templates,
             db::db_save_agent_template,
@@ -280,6 +294,11 @@ pub fn run() {
             classifier_config::classifier_get_config,
             classifier_config::classifier_set_config,
             classifier_config::classifier_get_config_path,
+            memory_config::memory_get_config,
+            memory_config::memory_set_config,
+            memory_config::memory_get_config_path,
+            memory_index::memory_index_status,
+            memory_index::memory_download_and_init,
             toolbox::toolbox_list_tools,
             toolbox::placeholder::toolbox_placeholder_ping,
             zoom::set_zoom,

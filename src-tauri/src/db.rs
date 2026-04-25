@@ -1707,8 +1707,9 @@ impl Database {
                      WHERE agent_id = ?1 AND archived_at IS NULL
                      ORDER BY created_at DESC",
                 )?;
-                stmt.query_map(params![agent_id], map_memory)?
-                    .collect::<rusqlite::Result<Vec<_>>>()
+                let rows = stmt.query_map(params![agent_id], map_memory)?
+                    .collect::<rusqlite::Result<Vec<_>>>();
+                rows
             })
             .await?)
     }
@@ -1753,10 +1754,11 @@ impl Database {
                     Ok(s) => s,
                     Err(_) => return Ok(vec![]),
                 };
-                stmt.query_map(params![query, agent_id, limit], |row| {
+                let rows = stmt.query_map(params![query, agent_id, limit], |row| {
                     Ok(FtsMemoryResult { memory_id: row.get(0)?, rank: row.get(1)? })
                 })?
-                .collect::<rusqlite::Result<Vec<_>>>()
+                .collect::<rusqlite::Result<Vec<_>>>();
+                rows
             })
             .await?)
     }
@@ -1775,10 +1777,11 @@ impl Database {
                     "SELECT id, embedding FROM memories
                      WHERE agent_id = ?1 AND archived_at IS NULL AND embedding IS NOT NULL",
                 )?;
-                stmt.query_map(params![agent_id], |row| {
+                let rows = stmt.query_map(params![agent_id], |row| {
                     Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
                 })?
-                .collect::<rusqlite::Result<Vec<_>>>()
+                .collect::<rusqlite::Result<Vec<_>>>();
+                rows
             })
             .await?)
     }
