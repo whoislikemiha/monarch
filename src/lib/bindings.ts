@@ -85,6 +85,17 @@ export const commands = {
 	switchAgentSession: (agentId: string, sessionId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("switch_agent_session", { agentId, sessionId })),
 	// Forward extension UI response from frontend to sidecar
 	respondExtensionUi: (req: ExtensionUiResponseRequest) => typedError<null, ErrorDto>(__TAURI_INVOKE("respond_extension_ui", { req })),
+	getCaptainIdentity: () => typedError<CaptainIdentityRow, ErrorDto>(__TAURI_INVOKE("get_captain_identity")),
+	upsertCaptainIdentity: (req: UpsertCaptainIdentityRequest) => typedError<null, ErrorDto>(__TAURI_INVOKE("upsert_captain_identity", { req })),
+	getShadowIdentity: (agentId: string) => typedError<{
+	id: number,
+	agentId: string,
+	payload: string,
+	createdAt: string,
+	supersedesId: number | null,
+	editNote: string | null,
+} | null, ErrorDto>(__TAURI_INVOKE("get_shadow_identity", { agentId })),
+	upsertShadowIdentity: (req: UpsertShadowIdentityRequest) => typedError<null, ErrorDto>(__TAURI_INVOKE("upsert_shadow_identity", { req })),
 	getModels: (provider: string, forceRefresh: boolean | null) => typedError<ModelInfo[], ErrorDto>(__TAURI_INVOKE("get_models", { provider, forceRefresh })),
 	getProviderAuthStatus: (provider: string) => typedError<ProviderAuthStatus, ErrorDto>(__TAURI_INVOKE("get_provider_auth_status", { provider })),
 	getAgentPrompt: (agentId: string) => typedError<string | null, ErrorDto>(__TAURI_INVOKE("get_agent_prompt", { agentId })),
@@ -286,6 +297,15 @@ export type AgentUpdatePayload = {
 };
 
 export type AuthMode = "none" | "subscription" | "apiKey" | "both";
+
+// MON-98: Current captain identity (L1a). Returned by `get_captain_identity`.
+export type CaptainIdentityRow = {
+	name: string,
+	currentVersionId: number | null,
+	payload: string,
+	createdAt: string | null,
+	editNote: string | null,
+};
 
 export type ClassificationRow = {
 	id: string,
@@ -577,6 +597,16 @@ export type SessionRow = {
 	parentSessionId: string | null,
 };
 
+// MON-98: Current shadow identity version (L1b). Returned by `get_shadow_identity`.
+export type ShadowIdentityRow = {
+	id: number,
+	agentId: string,
+	payload: string,
+	createdAt: string,
+	supersedesId: number | null,
+	editNote: string | null,
+};
+
 /**
  *  Shadow identity block carried inside `SpawnAgentRequest`. Mirrors the
  *  frontend's nested `config.shadow` object (name/title/grade), which the
@@ -684,6 +714,18 @@ export type UpdateQuestPayload = {
 	startedAt: string | null,
 	completedAt: string | null,
 	abandonedAt: string | null,
+};
+
+export type UpsertCaptainIdentityRequest = {
+	name: string,
+	payload: string,
+	editNote: string | null,
+};
+
+export type UpsertShadowIdentityRequest = {
+	agentId: string,
+	payload: string,
+	editNote: string | null,
 };
 
 export type Usage = {

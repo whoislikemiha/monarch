@@ -23,10 +23,7 @@ mod sidecar;
 // etc. keep working for ws.rs. Tauri command fns themselves stay addressed
 // as `agent::commands::X` because `#[tauri::command]` emits a paired
 // `__cmd__<name>` helper that must share the fn's module.
-pub use commands::{
-    ExtensionUiResponseRequest, SpawnAgentRequest, UpsertCaptainIdentityRequest,
-    UpsertShadowIdentityRequest,
-};
+pub use commands::{ExtensionUiResponseRequest, SpawnAgentRequest};
 pub use manager::AgentManager;
 
 /// MON-83: cross-module access to the dual (Tauri + WS) emit helper so
