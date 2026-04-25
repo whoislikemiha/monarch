@@ -368,21 +368,17 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             serde_json::to_value(messages).map_err(MonarchError::from)
         }
 
-        // ---- DB: Memories ----
-        "db_save_memory" => {
-            let memory = serde_json::from_value(args.get("memory").cloned().unwrap_or(args.clone()))
-                .map_err(|e| MonarchError::invalid_input(format!("Invalid memory: {}", e)))?;
-            let id = state.db.save_memory_internal(&memory).await?;
-            Ok(Value::Number(id.into()))
-        }
-        "db_get_memories" => {
-            let agent_id = opt_str(&args, "agentId");
-            let layer = opt_str(&args, "layer");
-            let memories = state
-                .db
-                .get_memories_internal(agent_id.as_deref(), layer.as_deref())
-                .await?;
+        // ---- DB: Memories (MON-99) ----
+        "db_list_memories_for_agent" => {
+            let agent_id = req_str(&args, "agentId")?;
+            let memories = state.db.list_memories_for_agent_internal(&agent_id).await?;
             serde_json::to_value(memories).map_err(MonarchError::from)
+        }
+        "db_get_memory" => {
+            let id: i64 = args.get("id").and_then(|v| v.as_i64())
+                .ok_or_else(|| MonarchError::invalid_input("missing id"))?;
+            let memory = state.db.get_memory_internal(id).await?;
+            serde_json::to_value(memory).map_err(MonarchError::from)
         }
 
         // ---- DB: Events ----

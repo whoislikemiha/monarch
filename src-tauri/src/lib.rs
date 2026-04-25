@@ -88,8 +88,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         db::db_save_message,
         db::db_get_messages,
         db::db_get_messages_with_ancestry,
-        db::db_save_memory,
-        db::db_get_memories,
+        db::db_list_memories_for_agent,
+        db::db_get_memory,
         db::db_log_event,
         // Agent templates
         db::db_list_agent_templates,
