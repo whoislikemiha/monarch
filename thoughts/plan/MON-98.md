@@ -97,17 +97,17 @@ After all Rust commands are registered, run `cargo run -- --export-bindings` fro
 
 ---
 
-## Open questions
+## Decisions (open questions resolved)
 
-1. **Where does captain identity payload render in the prompt?** The design says L1a before L1b before L2, and behavior section after both. The current `buildSystemPrompt` puts personality/permissions right after the header — should captain identity come *before* or *after* the grade/permissions block? Suggest: after the shadow identity header (name/title/grade) but before the behavior section, so the captain context sits at the top of "context provided to the shadow" rather than between structural identity markers.
+1. **Prompt slot** — captain identity renders *after* the grade/permissions/personality block, before the behavior section. Order in `buildSystemPrompt`: header → grade/permissions/personality → `## Captain` (L1a) → `## Shadow` (L1b payload) → behavior → tools → guidelines → metadata.
 
-2. **Plain text vs structured payload?** `substrate.md` describes the payload as free-text markdown. Is there any structured metadata (name, preferred_name, etc.) beyond the free-text blob that the identity tool should surface as distinct fields? Or is it purely a textarea + the `captain.name` column? Keeping it as a single markdown blob is simpler and more flexible; structured fields add validation complexity. Recommend starting with blob + name only.
+2. **Payload shape** — pure markdown blob + `captain.name` column only. No structured fields beyond name in P1.
 
-3. **Shadow identity default content?** Today `shadow-oath.ts` hardcodes grade descriptions, permissions, and personality directives per grade. Should the initial `shadow_identity_versions` seed row for a new agent include this content pre-populated (so the captain sees it and can edit it), or start empty (leaving the hardcoded sections untouched in the prompt)? Recommend: seed with empty payload; existing hardcoded sections remain as-is and are orthogonal to the versioned identity payload. The L1b section adds *on top of*, not replacing, the existing grade/personality block. This keeps the blast radius small for P1.
+3. **Shadow identity seed** — empty payload on agent creation. Existing hardcoded grade/personality sections in `shadow-oath.ts` remain untouched; the L1b block appends additional captain-authored context on top of them.
 
-4. **Auto-migration of auto-memory?** The roadmap marks this as optional for P1. Decision: include it as a stretch goal (a button in the Identity tool that reads `~/.claude/projects/.../memory/` and pre-fills the captain payload) or defer entirely to P2? Recommend defer — it's not needed for the acceptance criteria and adds scope risk.
+4. **Auto-memory migration** — deferred entirely. Both auto-memory and L1 coexist; no migration tooling in P1.
 
-5. **Token budget enforcement?** The substrate spec calls for a hard cap of ~3000 tokens across captain + shadow L1. Should P1 enforce this (truncate or warn in the UI) or defer budget enforcement? Recommend soft enforcement: display a character/token estimate in the editor UI with a warning if approaching the cap, but no server-side truncation in P1.
+5. **Token budget** — soft enforcement: the Identity tool UI shows a live token counter (estimate via character heuristic: chars ÷ 4). Display a warning indicator when approaching the 3000-token combined cap. No server-side truncation.
 
 ---
 
