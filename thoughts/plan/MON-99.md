@@ -76,13 +76,13 @@ So the back-end half of Slice A is essentially done. What remains is the front-e
 - Run `memory_smoke_insert` (via the dev shell, devtools console, or a temporary debug button — pick at impl time). Inspector refreshes (or re-open it) and shows the memory with provenance.
 - Restart the app cold. Memory still present (DB-persisted). HNSW rebuilds on cold start once embedder is initialised.
 
-## Open questions
+## Decisions locked
 
-- **Q1 — Settings vs toolbox for the Memory config UI.** The classifier precedent has both: a settings panel **and** a toolbox `ClassifierSettingsTool.svelte`. Memory is global config (matches classifier), so a Settings tab is the safer default. If we also want a toolbox shortcut to jump to the Memory settings panel, that can live behind a button in the Inspector ("Configure Keeper…") rather than its own tool.
-- **Q2 — Smoke command lifetime.** Keep the debug-gated smoke command permanently? Useful for repro after launch (insert a known memory, verify Inspector + later retrieval). Or strip it once Slice C lands and we can verify retrieval through the natural path? Leaning **keep** — `#[cfg(debug_assertions)]` keeps it out of release builds either way.
-- **Q3 — Memory-to-agent ownership keying.** The existing DB internals expose `db_list_memories_for_agent(agent_id)`. Confirm by reading `db.rs` whether the `memories` row carries `agent_id` directly or via a join — this affects the Inspector load query and the smoke insert. (Answered at implementation time by reading the schema; not blocking ticket scope.)
-- **Q4 — Embedding-model download UX.** Should saving the Memory tab block until the model has been downloaded? Or download lazily on first Keeper run (MON-100)? Recommendation: surface a "Download model" button in the Memory tab (this slice), do not gate save on it, but make MON-100's quest-close trigger lazy-download as a fallback.
-- **Q5 — Inspector grouping fidelity.** Tree by `parent_id` → `scope` → `kind` is the intended structure. With 0–10 memories at the start, even a flat list is acceptable. Decide at impl time whether to go straight to tree or ship a flat list now and tree-ify later (the data model supports both).
+- **D1 (was Q1) — Memory config lives in the Settings dialog, not a toolbox tool.** Matches the classifier precedent. The Inspector can later expose a "Configure Keeper…" shortcut button if useful, but no separate toolbox config tool.
+- **D2 (was Q2) — Smoke command stays permanently behind `#[cfg(debug_assertions)]`.** Stripped from release builds; always available in dev for repro. The function signature stays always-compiled so the bindings emit consistently.
+- **D3 (was Q3) — Memory-to-agent ownership.** Verified at impl time by reading `db.rs` and the existing `db_list_memories_for_agent` internal — informs the smoke command's insert shape and the Inspector's load query.
+- **D4 (was Q4) — Memory tab gates save on the embedder being initialised.** No save button until the embedding model is downloaded and the embedder reports `memory_index_status == true`. Without an embedder we cannot embed memories at insert time, and the captain configuring the Keeper before the embedder is ready is a footgun. The Download Model button is the only available action while `status == false`.
+- **D5 (was Q5) — Memory Inspector ships the full tree from day one.** Group by `parent_id` → `scope` → `kind`. No interim flat list — the schema supports the tree and the additional component complexity is small.
 
 ## Out of scope for this slice
 
