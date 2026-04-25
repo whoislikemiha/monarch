@@ -77,7 +77,7 @@ async function handleCommand(cmd: SidecarCommand): Promise<void> {
 			manager.handleUIResponse(cmd.agentId, cmd.requestId, cmd.value);
 			break;
 		case "set_custom_prompt":
-			manager.setCustomPrompt(cmd.agentId, cmd.prompt, cmd.projectInstructions);
+			manager.setCustomPrompt(cmd.agentId, cmd.prompt, cmd.projectInstructions, cmd.captainIdentityPayload, cmd.shadowIdentityPayload);
 			break;
 		default:
 			process.stderr.write(

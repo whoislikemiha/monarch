@@ -559,6 +559,35 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             serde_json::to_value(row).map_err(MonarchError::from)
         }
 
+        // ---- MON-98: Captain / shadow identity ----
+        "get_captain_identity" => {
+            let row = state.db.get_captain_identity_internal().await?;
+            serde_json::to_value(row).map_err(MonarchError::from)
+        }
+        "upsert_captain_identity" => {
+            let req: crate::agent::commands::UpsertCaptainIdentityRequest =
+                serde_json::from_value(args)
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid request: {}", e)))?;
+            state.db.upsert_captain_identity_internal(&req.name, &req.payload, req.edit_note.as_deref()).await?;
+            let payload = if req.payload.is_empty() { None } else { Some(req.payload) };
+            state.agent_mgr.refresh_captain_identity(payload).await?;
+            Ok(Value::Null)
+        }
+        "get_shadow_identity" => {
+            let agent_id = str_field(&args, "agentId")?;
+            let row = state.db.get_shadow_identity_internal(&agent_id).await?;
+            serde_json::to_value(row).map_err(MonarchError::from)
+        }
+        "upsert_shadow_identity" => {
+            let req: crate::agent::commands::UpsertShadowIdentityRequest =
+                serde_json::from_value(args)
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid request: {}", e)))?;
+            state.db.upsert_shadow_identity_internal(&req.agent_id, &req.payload, req.edit_note.as_deref()).await?;
+            let payload = if req.payload.is_empty() { None } else { Some(req.payload) };
+            state.agent_mgr.refresh_shadow_identity(&req.agent_id, payload).await?;
+            Ok(Value::Null)
+        }
+
         _ => Err(MonarchError::not_found(format!("command {}", cmd))),
     }
 }

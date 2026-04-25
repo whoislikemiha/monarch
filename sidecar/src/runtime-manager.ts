@@ -29,6 +29,10 @@ interface ManagedSession {
 	shadow?: CreateSessionCommand["shadow"];
 	cwd: string;
 	projectInstructions?: string | null;
+	/** MON-98: Stored captain identity payload (L1a). Updated by setCustomPrompt. */
+	captainIdentityPayload?: string | null;
+	/** MON-98: Stored shadow identity payload (L1b). Updated by setCustomPrompt. */
+	shadowIdentityPayload?: string | null;
 	/** Live system prompt. Mutated by setCustomPrompt; the loader override closes over this ref. */
 	promptRef: { current: string };
 }
@@ -234,7 +238,7 @@ export class RuntimeManager {
 		const initialPrompt =
 			cmd.customPrompt?.trim() ||
 			(cmd.shadow
-				? buildSystemPrompt(cmd.shadow, cmd.cwd, cmd.projectInstructions)
+				? buildSystemPrompt(cmd.shadow, cmd.cwd, cmd.projectInstructions, cmd.captainIdentityPayload, cmd.shadowIdentityPayload)
 				: cmd.projectInstructions?.trim() || "");
 		const promptRef = { current: initialPrompt };
 
@@ -381,6 +385,8 @@ export class RuntimeManager {
 			shadow: cmd.shadow,
 			cwd: cmd.cwd,
 			projectInstructions: cmd.projectInstructions,
+			captainIdentityPayload: cmd.captainIdentityPayload,
+			shadowIdentityPayload: cmd.shadowIdentityPayload,
 			promptRef,
 		});
 
@@ -628,27 +634,32 @@ export class RuntimeManager {
 		agentId: string,
 		prompt?: string | null,
 		projectInstructions?: string | null,
+		captainIdentityPayload?: string | null,
+		shadowIdentityPayload?: string | null,
 	): void {
 		const managed = this.sessions.get(agentId);
 		if (!managed) return;
 
-		// Update stored project instructions if provided
 		if (projectInstructions !== undefined) {
 			managed.projectInstructions = projectInstructions;
+		}
+		// MON-98: update stored identity payloads when provided. `undefined`
+		// means "leave unchanged"; an empty string clears the section.
+		if (captainIdentityPayload !== undefined) {
+			managed.captainIdentityPayload = captainIdentityPayload || null;
+		}
+		if (shadowIdentityPayload !== undefined) {
+			managed.shadowIdentityPayload = shadowIdentityPayload || null;
 		}
 
 		const next =
 			prompt?.trim() ||
 			(managed.shadow
-				? buildSystemPrompt(managed.shadow, managed.cwd, managed.projectInstructions)
+				? buildSystemPrompt(managed.shadow, managed.cwd, managed.projectInstructions, managed.captainIdentityPayload, managed.shadowIdentityPayload)
 				: managed.projectInstructions?.trim() || "");
 		if (!next) return;
 
-		// Update the ref so any future _rebuildSystemPrompt (tool changes, etc.)
-		// pulls the new prompt from the loader override.
 		managed.promptRef.current = next;
-		// Also patch the live state so the current/next turn uses the new prompt
-		// without waiting for a rebuild.
 		managed.session.agent.state.systemPrompt = next;
 	}
 
