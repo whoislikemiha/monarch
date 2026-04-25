@@ -387,6 +387,9 @@ impl AgentManager {
             None => crate::thinking_config::default_for(&effective_provider, &effective_model).await,
         };
 
+        let captain_payload = db.get_captain_identity_payload_internal().await.ok().flatten();
+        let shadow_payload = db.get_shadow_identity_payload_internal(&id).await.ok().flatten();
+
         let cmd = SidecarCommand::CreateSession {
             agent_id: id.clone(),
             cwd: effective_cwd,
@@ -397,6 +400,8 @@ impl AgentManager {
             custom_prompt,
             project_instructions,
             context_window: effective_context_window,
+            captain_identity_payload: captain_payload,
+            shadow_identity_payload: shadow_payload,
         };
 
         self.send_to_sidecar(&serde_json::to_string(&cmd)?).await?;
@@ -463,6 +468,49 @@ impl AgentManager {
         }
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
             .await
+    }
+
+    /// MON-98: Push an updated captain identity payload to all live agent
+    /// sessions. Each agent's `setCustomPrompt` will update its stored captain
+    /// payload and rebuild the system prompt so the next turn uses the new
+    /// identity. `payload = None` clears the captain section.
+    pub async fn refresh_captain_identity(
+        &self,
+        payload: Option<String>,
+    ) -> Result<(), MonarchError> {
+        let agent_ids: Vec<String> = {
+            let inner = self.inner.lock();
+            inner.agents.keys().cloned().collect()
+        };
+        for agent_id in agent_ids {
+            let cmd = SidecarCommand::SetCustomPrompt {
+                agent_id: agent_id.clone(),
+                prompt: None,
+                project_instructions: None,
+                captain_identity_payload: Some(payload.clone().unwrap_or_default()),
+                shadow_identity_payload: None,
+            };
+            let _ = self.send_to_sidecar(&serde_json::to_string(&cmd)?).await;
+        }
+        Ok(())
+    }
+
+    /// MON-98: Push an updated shadow identity payload to a single live agent
+    /// session. `payload = None` clears the shadow section.
+    pub async fn refresh_shadow_identity(
+        &self,
+        agent_id: &str,
+        payload: Option<String>,
+    ) -> Result<(), MonarchError> {
+        let cmd = SidecarCommand::SetCustomPrompt {
+            agent_id: agent_id.to_string(),
+            prompt: None,
+            project_instructions: None,
+            captain_identity_payload: None,
+            shadow_identity_payload: Some(payload.unwrap_or_default()),
+        };
+        let _ = self.send_to_sidecar(&serde_json::to_string(&cmd)?).await;
+        Ok(())
     }
 
     pub async fn kill(&self, id: &str) -> Result<(), MonarchError> {

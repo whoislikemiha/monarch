@@ -24,6 +24,10 @@ export interface CreateSessionCommand {
   projectInstructions?: string | null;
   /** User-supplied context window (tokens). Currently only honoured for lmstudio. */
   contextWindow?: number | null;
+  /** MON-98: L1a captain identity payload. Absent = no captain section. */
+  captainIdentityPayload?: string | null;
+  /** MON-98: L1b shadow identity payload. Absent = no shadow identity section. */
+  shadowIdentityPayload?: string | null;
 }
 
 export interface DestroySessionCommand {
@@ -110,6 +114,10 @@ export interface SetCustomPromptCommand {
   agentId: string;
   prompt?: string | null;
   projectInstructions?: string | null;
+  /** MON-98: When present, replaces the stored captain identity payload and rebuilds the prompt. */
+  captainIdentityPayload?: string | null;
+  /** MON-98: When present, replaces the stored shadow identity payload and rebuilds the prompt. */
+  shadowIdentityPayload?: string | null;
 }
 
 export type SidecarCommand =

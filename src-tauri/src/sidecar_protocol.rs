@@ -97,6 +97,10 @@ pub enum SidecarCommand {
         custom_prompt: Option<String>,
         project_instructions: Option<String>,
         context_window: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        captain_identity_payload: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shadow_identity_payload: Option<String>,
     },
     DestroySession {
         agent_id: String,
@@ -145,6 +149,10 @@ pub enum SidecarCommand {
         agent_id: String,
         prompt: Option<String>,
         project_instructions: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        captain_identity_payload: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shadow_identity_payload: Option<String>,
     },
 }
 

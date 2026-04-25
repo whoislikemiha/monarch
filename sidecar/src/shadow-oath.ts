@@ -70,9 +70,18 @@ export function buildSystemPrompt(
 	shadow: ShadowConfig,
 	cwd: string,
 	projectInstructions?: string | null,
+	captainIdentityPayload?: string | null,
+	shadowIdentityPayload?: string | null,
 ): string {
 	const date = new Date().toISOString().split("T")[0];
 	const grade = shadow.grade as Grade;
+
+	const captainSection = captainIdentityPayload?.trim()
+		? `\n## Captain\n\n${captainIdentityPayload.trim()}`
+		: "";
+	const shadowSection = shadowIdentityPayload?.trim()
+		? `\n## Shadow\n\n${shadowIdentityPayload.trim()}`
+		: "";
 
 	return `You are ${shadow.name}, ${shadow.title} (${grade} grade). You serve the Monarch.
 
@@ -80,7 +89,7 @@ ${gradeDescription(grade)}
 
 ${permissionsForGrade(grade)}
 
-${personalityDirective(grade)}
+${personalityDirective(grade)}${captainSection}${shadowSection}
 
 ## Behavior
 

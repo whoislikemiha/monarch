@@ -11,7 +11,7 @@ use serde::Deserialize;
 use tauri::AppHandle;
 
 use crate::agent_state::LiveAgentState;
-use crate::db::Database;
+use crate::db::{CaptainIdentityRow, Database, ShadowIdentityRow};
 use crate::error::MonarchError;
 
 use super::AgentManager;
@@ -186,6 +186,67 @@ pub async fn switch_agent_session(
     session_id: String,
 ) -> Result<(), MonarchError> {
     state.switch_session(&app, &db, agent_id, session_id).await
+}
+
+// ---- MON-98: Captain / shadow identity commands ----
+
+#[derive(Debug, Clone, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct UpsertCaptainIdentityRequest {
+    pub name: String,
+    pub payload: String,
+    pub edit_note: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct UpsertShadowIdentityRequest {
+    pub agent_id: String,
+    pub payload: String,
+    pub edit_note: Option<String>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_captain_identity(
+    db: tauri::State<'_, Arc<Database>>,
+) -> Result<CaptainIdentityRow, MonarchError> {
+    db.get_captain_identity_internal().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn upsert_captain_identity(
+    state: tauri::State<'_, Arc<AgentManager>>,
+    db: tauri::State<'_, Arc<Database>>,
+    req: UpsertCaptainIdentityRequest,
+) -> Result<(), MonarchError> {
+    db.upsert_captain_identity_internal(&req.name, &req.payload, req.edit_note.as_deref())
+        .await?;
+    let payload = if req.payload.is_empty() { None } else { Some(req.payload) };
+    state.refresh_captain_identity(payload).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_shadow_identity(
+    db: tauri::State<'_, Arc<Database>>,
+    agent_id: String,
+) -> Result<Option<ShadowIdentityRow>, MonarchError> {
+    db.get_shadow_identity_internal(&agent_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn upsert_shadow_identity(
+    state: tauri::State<'_, Arc<AgentManager>>,
+    db: tauri::State<'_, Arc<Database>>,
+    req: UpsertShadowIdentityRequest,
+) -> Result<(), MonarchError> {
+    db.upsert_shadow_identity_internal(&req.agent_id, &req.payload, req.edit_note.as_deref())
+        .await?;
+    let payload = if req.payload.is_empty() { None } else { Some(req.payload) };
+    state.refresh_shadow_identity(&req.agent_id, payload).await
 }
 
 /// Forward extension UI response from frontend to sidecar
