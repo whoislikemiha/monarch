@@ -117,13 +117,13 @@ Add a renderer for `compaction_tick` event type: shows the compaction summary fr
 
 ---
 
-## Open questions
+## Decisions locked
 
-1. **Memory retrieval on `prompt()`**: Retrieval currently envisioned as a sidecar-side call — but the HNSW index lives in Rust (in-process). The sidecar needs to ask Rust for relevant memories via a new IPC round-trip before forwarding the user message. This adds latency. Alternative: the sidecar caches the top-K from the last retrieval and refreshes it on each turn. Needs a decision before implementation: **round-trip IPC per turn, or cached?**
+1. **Retrieval round-trip** — IPC round-trip per turn (Rust owns the HNSW index, sidecar asks before forwarding the user message). Latency is acceptable.
 
-2. **suggest_memory tool**: The executor proposes a memory via a Pi tool call. The tool call lands as a sidecar event. Does the sidecar queue it directly to the Keeper (all in-sidecar), or does it forward to Rust which re-sends a `keeper_run` command? The all-sidecar path is simpler but means the Keeper runs independently of the Rust persistence pipeline. The Rust-round-trip path preserves the single-writer guarantee cleanly.
+2. **suggest_memory routing** — Rust round-trip. Sidecar emits the executor's proposal as a `memory_suggestion` quest event to Rust. Rust writes it as a regular `quest_events` row. At quest-close the Keeper sees it in the event slice naturally — durable, auditable, no special routing.
 
-3. **Memory config in sidecar**: The `memory.toml` config lives in Rust. The sidecar needs the Keeper model config to make LLM calls. How is it delivered: on `create_session`, via a separate `set_memory_config` command, or via the existing `set_custom_prompt` extension pattern? Recommend a dedicated `set_memory_config` sidecar command sent on startup and on config change.
+3. **Memory config delivery** — Dedicated `set_memory_config` sidecar command at manager level, not per-session. Sent once on startup and on config change. `RuntimeManager` holds it globally; `ManagedSession` does not carry it.
 
 4. **Retrieval scope for P2**: Retrieved memories are keyed by `agentId` (shadow's own memories only). Project-scoped and captain-scoped memories are deferred to P9. This should be confirmed so the retrieval query is scoped correctly from day one without over-fetching.
 
