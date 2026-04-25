@@ -5,6 +5,7 @@ mod db;
 mod error;
 mod memory_config;
 mod memory_index;
+mod memory_smoke;
 mod mention;
 mod models;
 mod persistence;
@@ -143,6 +144,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         memory_config::memory_get_config_path,
         memory_index::memory_index_status,
         memory_index::memory_download_and_init,
+        memory_smoke::memory_smoke_insert,
     ])
 }
 
@@ -217,6 +219,7 @@ pub fn run() {
     let ws_db = database.clone();
     let ws_agent_mgr = agent_mgr.clone();
     let ws_model_cache = model_cache.clone();
+    let ws_memory_index = memory_index.clone();
     let ws_broadcast = agent_mgr.ws_broadcast.clone();
 
     // Note: specta_builder() is used purely for type export (cargo test).
@@ -299,6 +302,7 @@ pub fn run() {
             memory_config::memory_get_config_path,
             memory_index::memory_index_status,
             memory_index::memory_download_and_init,
+            memory_smoke::memory_smoke_insert,
             toolbox::toolbox_list_tools,
             toolbox::placeholder::toolbox_placeholder_ping,
             zoom::set_zoom,
@@ -312,6 +316,7 @@ pub fn run() {
                 db: ws_db,
                 agent_mgr: ws_agent_mgr,
                 model_cache: ws_model_cache,
+                memory_index: ws_memory_index,
                 broadcast_rx: ws_broadcast,
             });
             std::thread::spawn(move || {

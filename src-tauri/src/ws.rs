@@ -11,6 +11,7 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::agent::{AgentManager, WsBroadcast};
 use crate::db::Database;
 use crate::error::MonarchError;
+use crate::memory_index::MemoryIndex;
 use crate::models::ModelCache;
 
 /// Shared state passed to each WebSocket connection handler
@@ -18,6 +19,7 @@ pub struct WsState {
     pub db: Arc<Database>,
     pub agent_mgr: Arc<AgentManager>,
     pub model_cache: Arc<ModelCache>,
+    pub memory_index: Arc<MemoryIndex>,
     pub broadcast_rx: broadcast::Sender<WsBroadcast>,
 }
 
@@ -599,6 +601,50 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
         "memory_get_config_path" => {
             let path = crate::memory_config::config_path_ws()?;
             Ok(Value::String(path))
+        }
+        "memory_index_status" => {
+            Ok(Value::Bool(state.memory_index.is_initialized()))
+        }
+        "memory_download_and_init" => {
+            state.memory_index.ensure_model_downloaded().await?;
+            state.memory_index.init_embedder().await?;
+            Ok(Value::Null)
+        }
+        "memory_smoke_insert" => {
+            if !cfg!(debug_assertions) {
+                return Err(MonarchError::persistence(
+                    "memory_smoke_insert is only available in debug builds",
+                ));
+            }
+            let agent_id = str_field(&args, "agentId")?;
+            let title = str_field(&args, "title")?;
+            let content = str_field(&args, "content")?;
+            let cfg = crate::memory_config::resolved().await;
+            let text = format!("{title}\n\n{content}");
+            let embedding = state.memory_index.embed_to_blob(&text).await?;
+            let payload = crate::db::InsertMemoryPayload {
+                agent_id: Some(agent_id.clone()),
+                scope: "self".to_string(),
+                project_id: None,
+                parent_id: None,
+                layer: "leaf".to_string(),
+                kind: Some("claim".to_string()),
+                title: title.clone(),
+                summary: title,
+                content: Some(content),
+                source_quest_id: None,
+                source_session_id: None,
+                source_events: None,
+                file_refs: None,
+                supersedes_id: None,
+            };
+            let new_id = state
+                .db
+                .insert_memory_internal(payload, Some(embedding), Some(cfg.embedding_model_id))
+                .await?;
+            let pairs = state.db.load_embeddings_for_agent_internal(&agent_id).await?;
+            state.memory_index.rebuild(pairs).await?;
+            Ok(Value::Number(new_id.into()))
         }
 
         _ => Err(MonarchError::not_found(format!("command {}", cmd))),
