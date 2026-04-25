@@ -1,147 +1,98 @@
-# MON-99 — P2: First memory, end-to-end
+# MON-99 — P2 Slice A: Memory substrate + Inspector v0
+
+> **Sibling slices:** [MON-100](https://linear.app/monarch-commander/issue/MON-100) (Slice B — Keeper write path) and [MON-101](https://linear.app/monarch-commander/issue/MON-101) (Slice C — retrieval read path) together complete the P2 phase from `thoughts/design/shadow-cognition/roadmap.md`. This slice (A) lays the substrate and the browse-only Inspector; B writes memories at quest-close; C surfaces them on user turns. Each slice is independently testable per the roadmap's phase rule.
 
 ## Summary
 
-P2 ships the full write → store → retrieve → inject loop for shadow memory. When a quest closes (status → `done`), a Keeper worker fires: it reads the quest's raw event stream, calls a configured LLM to extract atomic claims, embeds them with `bge-small-en-v1.5` (lazy-downloaded to `~/.config/monarch/models/`), and persists them in a new `memories` table backed by FTS5 (BM25) and an in-process HNSW index (`instant-distance`). On each user turn, hybrid retrieval pulls the top-K memories relevant to the incoming message and injects them into the prompt as a `## Relevant Memories` section. The captain can browse the tree in a new Memory Inspector toolbox tool. The Keeper model is configured via a new Memory tab in the Settings dialog; if unconfigured, memory formation is silently skipped. The storage stack (instant-distance + ort + bge-small-en-v1.5) was fully validated by MON-91.
+Slice A ships everything required for memories to **exist and be inspected**, with nothing yet writing or reading them on the agent loop. That means: the SQLite schema (`memories`, `memories_fts`, `memory_keeper_runs`), the embedding pipeline (`bge-small-en-v1.5` via ONNX, lazy-downloaded), the in-process HNSW index (`instant-distance`), the `memory.toml` configuration loader, a Memory tab in the Settings dialog, a browse-only Memory Inspector toolbox tool, and a debug-only smoke-test command that lets the captain insert a memory by hand to verify the substrate end-to-end. The substrate has been validated by the MON-91 spike (recall@10 = 1.000, p99 query latency < 6 ms at 1 M vectors).
 
----
+## Status (already committed on this branch)
+
+The substrate is in flight. The two feature commits already on `mihabubnjevic/mon-99-p2-first-memory-end-to-end` are:
+
+- `c87eeb8 feat(mon-99): memories schema, keeper_runs, FTS5 triggers, DB internals` — `db.rs` schema + DB internals (`insert_memory_internal`, `list_memories_for_agent_internal`, `get_memory_internal`, `insert_keeper_run_internal`, `fts_search_memories_internal`, `update_memory_access_internal`).
+- `be39295 feat(mon-99): memory_config.rs, memory_index.rs, Cargo deps` — global config loader + Tauri commands, HNSW + ONNX embedder + Tauri commands, `Cargo.toml` deps (`instant-distance`, `ort` with `download-binaries`, `ndarray`, `tokenizers`).
+
+Wiring already in `lib.rs`:
+
+- `MemoryIndex` constructed in `run()` (reads `models_dir` from `memory_config::resolved()`) and registered with `.manage(memory_index)`.
+- All five new Tauri commands registered in both `specta_builder()` and the runtime `tauri::generate_handler!`: `memory_get_config`, `memory_set_config`, `memory_get_config_path`, `memory_index_status`, `memory_download_and_init`.
+- `db::db_list_memories_for_agent` and `db::db_get_memory` already registered for the Inspector to consume.
+
+So the back-end half of Slice A is essentially done. What remains is the front-end (Memory tab + Inspector tool), one debug command, and verification.
 
 ## Relevant files and areas
 
-### Spike validation
-- `thoughts/impl/MON-91.md` — confirmed stack: `instant-distance` HNSW, `ort` with `download-binaries` (statically linked ORT), `bge-small-en-v1.5` lazy-downloaded to `~/.config/monarch/models/`. p99 query latency 5.81 ms at 1M vectors, recall@10 = 1.000 on real embeddings. Binary delta: +25 MiB (ORT) + 127 MiB model (lazy). No pivot needed.
-- `thoughts/spike/MON-91-storage.md` — raw benchmark results.
+### Already authored
+- `src-tauri/src/db.rs` — schema migrations + DB internals for `memories`, `memories_fts`, `memory_keeper_runs`. New table columns include `parent_id`, `scope`, `kind`, `summary`, `content`, `embedding`, `embedding_model_id`, `supersedes_id`, `archived_at`, `source_quest_id`, `source_events`, `file_refs`, `access_count`, `last_accessed_at`, `created_at`. FTS5 mirror has insert/update/delete triggers.
+- `src-tauri/src/memory_config.rs` — `MemoryConfig` (raw) + `ResolvedMemoryConfig`, TOML at `~/.config/monarch/memory.toml`. Tauri commands `memory_get_config`, `memory_set_config`, `memory_get_config_path`. `enabled` flag derived from `keeper.is_some()`.
+- `src-tauri/src/memory_index.rs` — `MemoryIndex` owning `Mutex<Option<Embedder>>` and `Mutex<Option<IndexState>>`. Methods: `ensure_model_downloaded`, `init_embedder`, `embed_text`, `embed_to_blob`, `rebuild`, `query`. Tauri commands `memory_index_status`, `memory_download_and_init`. CLS-pooled, L2-normalised embeddings.
+- `src-tauri/Cargo.toml` — deps added.
 
-### Database
-- `src-tauri/src/db.rs` — all schema migrations live here as idempotent `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE` blocks appended to `init_schema()`. Existing tables relevant: `quest_nodes` (has `status` column), `quest_events` (id, quest_id, event_type, actor, payload_json, created_at). New tables needed: `memories`, `memories_fts` (FTS5 virtual), `memory_keeper_runs`.
+### To touch in this slice
+- `src/lib/SettingsDialog.svelte` — has a `categories` array (currently General, Appearance, Agent Defaults, Keybindings). Add `{ id: "memory", label: "Memory" }` and route to a new panel component.
+- `src/lib/MemorySettings.svelte` (new) — settings panel. Pattern reference: `src/lib/toolbox/tools/ClassifierSettingsTool.svelte` (load on mount, dirty tracking, save on submit). Form fields: Keeper provider+model (dropdown sourced from `models::get_models`), embedding model ID (read-only display + status), download-and-init button (calls `memory_download_and_init`), top-K input.
+- `src/lib/toolbox/tools/MemoryInspectorTool.svelte` (new) — toolbox tool. Reference: `src/lib/toolbox/tools/IdentityTool.svelte` for shape; `src/lib/toolbox/tools/ContextInspectorTool.svelte` for live-state read patterns. Two-pane layout (tree + detail).
+- `src/lib/toolbox/registry.ts` — register the Inspector with `id: "memory-inspector"`, `order: 6` (between Identity at 5 and Context at 10).
+- `src-tauri/src/lib.rs` — register the new debug smoke-test command (and gate its body behind `#[cfg(debug_assertions)]` if we want it stripped in release).
+- `src/lib/bindings.ts` — regenerated automatically by `cargo run -- --export-bindings`.
 
-### Configuration pattern
-- `src-tauri/src/classifier_config.rs` — the direct model for `memory_config.rs`. Reads from `~/.config/monarch/memory.toml`, exposes Tauri commands (`memory_get_config`, `memory_set_config`), has a `ResolvedMemoryConfig` type that the sidecar receives. Follow this pattern exactly.
-- `src/lib/SettingsDialog.svelte` — has a `categories` array (currently: General, Appearance, Agent Defaults, Keybindings). Add a `{ id: "memory", label: "Memory" }` entry and a corresponding panel component.
-
-### Persistence pipeline
-- `src-tauri/src/agent/persist.rs` — MON-37 single-consumer bounded channel. `PersistCommand` enum is the extension point. New variants needed: `SaveMemory`, `SaveKeeperRun`, `RecordQuestEvent` (for `compaction_tick`). Follow the `SaveClassification` pattern.
-
-### Sidecar
-- `sidecar/src/runtime-manager.ts` — `ManagedSession` interface, `prompt()` method (fires per user turn — this is where retrieval injection goes). `destroySession()` is one candidate hook for quest-close, but the actual trigger should be quest status change, not session destruction.
-- `sidecar/src/protocol.ts` — all command/event types. New commands needed: `keeper_run` (Rust → sidecar, fires at quest-close), `set_memory_config` (deliver config to sidecar on startup/change). New events: `keeper_result` (sidecar → Rust, structured JSON), `memory_search_result`.
-- `sidecar/src/classifier.ts` — the structural model for the Keeper worker: a one-shot LLM call (not an interactive Pi session), fires on a trigger, returns structured JSON, fails gracefully without blocking the main turn.
-
-### Quest system
-- `src-tauri/src/agent/commands.rs` — Tauri command for quest status updates. The quest-done transition needs to enqueue a Keeper run.
-- `src/lib/toolbox/questStore.svelte.ts` — per-agent quest state; `eventsByQuest` map already exists but event rendering is skeletal.
-- `src/lib/toolbox/tools/QuestTimelineTool.svelte` — needs a `compaction_tick` event kind renderer. Currently renders quest nodes only.
-
-### System prompt builder
-- `sidecar/src/shadow-oath.ts` — `buildSystemPrompt()` already accepts identity payloads. Retrieval injection does **not** go here (system prompt is static per session). Retrieved memories are prepended to the user message text in `prompt()` instead, so they're contextually adjacent to the turn they're relevant to.
-
-### Frontend toolbox
-- `src/lib/toolbox/registry.ts` — add Memory Inspector entry (order 6, between Identity at 5 and Context at 10).
-- `src/lib/toolbox/tools/IdentityTool.svelte` — reference for toolbox tool structure.
-
----
+### Reference (do not modify in this slice)
+- `src-tauri/src/agent/persist.rs` — `PersistCommand` enum extension point. Memory persist variants land in MON-100, not here.
+- `sidecar/src/runtime-manager.ts`, `sidecar/src/keeper.ts` (does not exist yet) — Slice B / MON-100 territory.
+- `sidecar/src/protocol.ts` — `keeper_run` / `keeper_result` types land in MON-100.
+- `src/lib/toolbox/tools/QuestTimelineTool.svelte` — `compaction_tick` renderer is MON-100.
 
 ## What needs to change
 
-### 1. Rust: `src-tauri/Cargo.toml`
-Add `instant-distance`, `ort` (with `download-binaries` feature), and `ndarray` (for embedding vector math). These were temporarily probed in MON-91 and reverted — now they land for real.
+### 1. Settings: Memory tab (frontend)
+- Add the `{ id: "memory", label: "Memory" }` entry to the `categories` array in `SettingsDialog.svelte`.
+- Create `src/lib/MemorySettings.svelte`. Mounts call `memory_get_config` to populate state. Form supports: Keeper provider dropdown + model ID (text or autocomplete), embedding model status (a check vs `memory_index_status` plus a "Download model" button calling `memory_download_and_init` — show progress / disable while pending), top-K input (default 5).
+- Save button serializes back into the `MemoryConfig` shape and calls `memory_set_config`. After save, reflect the resolved view (`enabled` flag, etc.) in the UI.
+- Empty / unconfigured state: clearly communicate that no Keeper model means memory formation is disabled (relevant to MON-100, but worth surfacing now so the captain isn't surprised later).
 
-### 2. Rust: `src-tauri/src/db.rs`
-Add three schema blocks to `init_schema()`:
-- `memories` table — full tree-structured schema (parent_id, scope, kind, title, summary, content, embedding BLOB, embedding_model_id, supersedes_id, archived_at, source_quest_id, source_events, file_refs, access_count, last_accessed_at, created_at)
-- `memories_fts` — FTS5 virtual table on (title, summary, content), with `content='memories'` and triggers to keep it in sync on insert/update/delete
-- `memory_keeper_runs` — provenance table (shadow_id, trigger, started_at, completed_at, raw event range, tokens, model_id, output_summary, outcome)
+### 2. Memory Inspector toolbox tool (frontend)
+- New component at `src/lib/toolbox/tools/MemoryInspectorTool.svelte`, accepts `{ agentContext }: ToolProps`.
+- Register in `src/lib/toolbox/registry.ts` with stable `id` (`memory-inspector`), title (`Memory`), an SVG icon, `order: 6`.
+- Two-pane layout: left pane is a tree of memories grouped by `parent_id` → `scope` (`self` / `project` / `captain`) → `kind`. Right pane shows the selected memory's detail: title, summary, content, kind/scope badges, provenance (source quest id link, keeper run id), `file_refs` list, `supersedes_id` chain (display the chain by chasing `supersedes_id` across rows already loaded), `created_at`.
+- Data source: `db_list_memories_for_agent(agentId)` for the tree, `db_get_memory(memoryId)` for the detail when needed (or just read from the listed rows if the list returns full bodies — pick at implementation time based on shape).
+- Read-only — no edit / archive / promote affordances (those are P12).
+- Empty state: helpful copy explaining that memories appear after the Keeper runs (forward-reference MON-100), and mentioning the smoke-test command for hand-testing.
 
-Add DB internal functions: `insert_memory_internal`, `list_memories_for_agent_internal`, `get_memory_internal`, `insert_keeper_run_internal`, `fts_search_memories_internal`, `update_memory_access_internal`.
+### 3. Smoke-test Tauri command (backend)
+- New command in either `memory_config.rs` or a new tiny module (`memory_smoke.rs`?). Signature roughly `memory_smoke_insert(agent_id: String, title: String, content: String) -> Result<i64>` (returns the memory id).
+- Implementation: ensure embedder initialised, `embed_to_blob(content)`, `db::insert_memory_internal(...)` with sensible defaults (`scope = "self"`, `kind = "claim"`, `parent_id = None`, etc.), then call `memory_index.rebuild` with the freshly fetched `(id, blob)` set.
+- Gate the body behind `#[cfg(debug_assertions)]` so the release binary does not expose it. The function signature can stay always-compiled so bindings emit consistently.
+- Register in `lib.rs` (both `specta_builder` and runtime handler).
 
-### 3. Rust: `src-tauri/src/memory_config.rs` (new file)
-Mirror of `classifier_config.rs`. Reads `~/.config/monarch/memory.toml`. Config shape:
-- Keeper model: provider + model ID (same provider enum as classifier)
-- Embedding model ID (default: `bge-small-en-v1.5`)
-- Model download path (default: `~/.config/monarch/models/`)
-- Top-K for retrieval (default: 5)
-- Keeper enabled flag (derived: true only if keeper model is configured)
+### 4. Bindings regeneration
+- After the smoke command lands, run `cargo run -- --export-bindings` from `src-tauri/`. Verify `src/lib/bindings.ts` includes the new command and reroutes through `./api`.
 
-Expose Tauri commands: `memory_get_config`, `memory_set_config`, `memory_get_config_path`.
+### 5. Verification pass
+- `cargo check` from `src-tauri/` — clean.
+- `npx svelte-check` from repo root — clean.
+- `npm run build:sidecar && npm run tauri dev`. Open Settings → Memory. Configure a Keeper model (any provider you have credentials for; the model is not exercised in this slice). Click Download model — observe `~/.config/monarch/models/bge-small-en-v1.5.onnx` (+ tokenizer json) appear and `memory_index_status` flip to `true`.
+- Open Memory Inspector. Empty state visible.
+- Run `memory_smoke_insert` (via the dev shell, devtools console, or a temporary debug button — pick at impl time). Inspector refreshes (or re-open it) and shows the memory with provenance.
+- Restart the app cold. Memory still present (DB-persisted). HNSW rebuilds on cold start once embedder is initialised.
 
-### 4. Rust: `src-tauri/src/memory_index.rs` (new file)
-Owns the in-process HNSW index as a `Mutex<Option<HnswIndex>>`. Responsibilities:
-- Model download: check `~/.config/monarch/models/bge-small-en-v1.5.onnx`, lazy-fetch from HF Hub if missing
-- Embed: accept text, return `Vec<f32>` (normalized)
-- Build: load all `memories.embedding` BLOBs from DB, build HNSW index, store in memory
-- Query: given a query string, embed it, search HNSW for top-K, return memory IDs
-- Rebuild: full rebuild from DB (called on startup and after each Keeper run for P2)
+## Open questions
 
-The index is ephemeral (in-process), rebuilt from the DB. P3c adds background rebuild + atomic swap.
+- **Q1 — Settings vs toolbox for the Memory config UI.** The classifier precedent has both: a settings panel **and** a toolbox `ClassifierSettingsTool.svelte`. Memory is global config (matches classifier), so a Settings tab is the safer default. If we also want a toolbox shortcut to jump to the Memory settings panel, that can live behind a button in the Inspector ("Configure Keeper…") rather than its own tool.
+- **Q2 — Smoke command lifetime.** Keep the debug-gated smoke command permanently? Useful for repro after launch (insert a known memory, verify Inspector + later retrieval). Or strip it once Slice C lands and we can verify retrieval through the natural path? Leaning **keep** — `#[cfg(debug_assertions)]` keeps it out of release builds either way.
+- **Q3 — Memory-to-agent ownership keying.** The existing DB internals expose `db_list_memories_for_agent(agent_id)`. Confirm by reading `db.rs` whether the `memories` row carries `agent_id` directly or via a join — this affects the Inspector load query and the smoke insert. (Answered at implementation time by reading the schema; not blocking ticket scope.)
+- **Q4 — Embedding-model download UX.** Should saving the Memory tab block until the model has been downloaded? Or download lazily on first Keeper run (MON-100)? Recommendation: surface a "Download model" button in the Memory tab (this slice), do not gate save on it, but make MON-100's quest-close trigger lazy-download as a fallback.
+- **Q5 — Inspector grouping fidelity.** Tree by `parent_id` → `scope` → `kind` is the intended structure. With 0–10 memories at the start, even a flat list is acceptable. Decide at impl time whether to go straight to tree or ship a flat list now and tree-ify later (the data model supports both).
 
-### 5. Rust: `src-tauri/src/agent/persist.rs`
-Add `PersistCommand::SaveMemory(MemoryPayload)` and `PersistCommand::SaveKeeperRun(KeeperRunPayload)` variants. Add `PersistCommand::RecordCompactionTick { quest_id, keeper_run_id }` to write the `compaction_tick` quest event. Route all through the existing single-consumer loop — no new channels.
+## Out of scope for this slice
 
-### 6. Sidecar: `sidecar/src/protocol.ts`
-New commands (Rust → sidecar):
-- `keeper_run` — fires at quest-close: `{ agentId, questId, eventSlice: QuestEvent[], memoryConfig: KeeperModelConfig }`
-- `set_memory_config` — delivers config to sidecar on startup or config change
-
-New events (sidecar → Rust):
-- `keeper_result` — `{ agentId, questId, keeperRunId, claims: AtomicClaim[], compactionSummary, error? }`
-
-### 7. Sidecar: `sidecar/src/keeper.ts` (new file)
-Mirrors `classifier.ts` structurally: one-shot LLM call, returns structured JSON, never blocks the user turn. Responsibilities:
-- Receive the event slice + relevant tree slice (passed in from Rust)
-- Build the Keeper prompt (event context + existing memories + extraction instructions)
-- Call the configured model via Pi's `complete()` API
-- Parse structured JSON output: `{ claims: AtomicClaim[], compaction_summary: string }`
-- Return result; error → emit `keeper_result` with `error` field, never throw
-
-### 8. Sidecar: `sidecar/src/runtime-manager.ts`
-- On `prompt()`: before forwarding the user message to Pi, run hybrid retrieval (FTS5 via Rust IPC + HNSW via the new `memory_search` command). Prepend a `## Relevant Memories` section to the user message text if results are non-empty.
-- Add `keeper_run` command dispatch: receive command, call `keeper.ts`, emit `keeper_result`.
-- Add `suggest_memory` as an available Pi tool in the executor session (tool schema injected into system prompt). Tool calls to `suggest_memory` are forwarded to Rust as a sidecar event for queuing to the Keeper.
-
-### 9. Rust: `src-tauri/src/agent/commands.rs` + `manager.rs`
-- When quest status is set to `done`, send a `keeper_run` command to the sidecar with the quest's event slice (fetched from `quest_events`).
-- Handle `keeper_result` event: write claims to `memories` via persist pipeline, write `memory_keeper_runs` row, emit `compaction_tick` quest event, trigger HNSW rebuild.
-
-### 10. Frontend: `src/lib/SettingsDialog.svelte` + new `MemorySettings.svelte`
-Add `{ id: "memory", label: "Memory" }` to the `categories` array. Create `src/lib/MemorySettings.svelte`: form for Keeper model (provider dropdown + model ID text field), embedding model path display, top-K slider, save button. Follows the same pattern as `ClassifierSettingsTool.svelte` (load on mount, dirty tracking, save on submit).
-
-### 11. Frontend: `src/lib/toolbox/tools/MemoryInspectorTool.svelte` (new file)
-Toolbox tool (order 6). Per-agent view. Two-pane layout:
-- Left: topic tree (grouped by `parent_id` → scope → kind). Clicking a node selects it.
-- Right: memory detail panel — title, summary, content, kind badge, scope badge, provenance (source quest link, keeper run ID), file_refs list, supersedes chain, created_at.
-- Load: `memory_list_for_agent(agentId)` Tauri command.
-- Read-only for P2 (no edit/archive/promote).
-
-### 12. Frontend: `src/lib/toolbox/tools/QuestTimelineTool.svelte`
-Add a renderer for `compaction_tick` event type: shows the compaction summary from the Keeper run, styled distinctly (e.g., with a memory icon and muted border).
-
----
-
-## Decisions locked
-
-1. **Retrieval round-trip** — IPC round-trip per turn (Rust owns the HNSW index, sidecar asks before forwarding the user message). Latency is acceptable.
-
-2. **suggest_memory routing** — Rust round-trip. Sidecar emits the executor's proposal as a `memory_suggestion` quest event to Rust. Rust writes it as a regular `quest_events` row. At quest-close the Keeper sees it in the event slice naturally — durable, auditable, no special routing.
-
-3. **Memory config delivery** — Dedicated `set_memory_config` sidecar command at manager level, not per-session. Sent once on startup and on config change. `RuntimeManager` holds it globally; `ManagedSession` does not carry it.
-
-4. **Retrieval scope for P2**: Retrieved memories are keyed by `agentId` (shadow's own memories only). Project-scoped and captain-scoped memories are deferred to P9. This should be confirmed so the retrieval query is scoped correctly from day one without over-fetching.
-
----
-
-## Out of scope reminders
-
-- Eval harness / recall@5 (P3a — MON-94)
-- Reranker (P3b — MON-93)
-- Background HNSW rebuild worker (P3c — MON-96)
-- Incremental HNSW insert (P3d — MON-97)
-- FTS5 wiring as a standalone ticket (MON-95 — subsumed into P2 since retrieval needs it)
-- L2 working memory (P4)
-- Chat-shadow (P7)
-- Project-scoped memory sharing (P9)
-- First-person quest reports as Keeper input (P6)
-- Captain edit / archive / promote in Memory Inspector (P12)
-- Continuous and idle compaction triggers
-- Inner-node summary regeneration
-- Stale-flagging via `file_refs` anchor_sha (P11)
-- Merge/supersede logic at cosine threshold (deferred — P2 Keeper always inserts; merge/supersede calibrated after eval in P3a)
+- Quest-close trigger, sidecar Keeper worker, structured-JSON claim extraction (MON-100 / Slice B).
+- `compaction_tick` event kind in `quest_events` and its `QuestTimelineTool` renderer (MON-100).
+- `suggest_memory` executor tool (MON-100).
+- Hybrid retrieval (FTS5 + HNSW) on user turn, IPC round-trip Rust ⇄ sidecar, `## Relevant Memories` injection (MON-101 / Slice C).
+- Project / captain scoping for retrieval (P9).
+- Eval harness (P3a / MON-94), reranker (P3b / MON-93), background HNSW rebuild + atomic swap (P3c / MON-96), incremental HNSW insert (P3d / MON-97).
+- L2 working memory (P4), chat-shadow (P7), forking (P10), stale-flagging via `file_refs.anchor_sha` (P11).
+- Captain edit / archive / promote / supersede in Memory Inspector (P12).
+- Inner-node summary regeneration (P12).
+- Continuous and idle compaction triggers (post-P2).
