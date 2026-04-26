@@ -14,14 +14,21 @@
 
   let {
     onsend,
+    onabort,
     onthumbclick,
-    disabled = false,
+    streaming = false,
     placeholder: customPlaceholder,
     cwd,
   }: {
     onsend: (message: string, images: PendingImage[]) => void;
+    onabort?: () => void;
     onthumbclick?: (src: string) => void;
-    disabled?: boolean;
+    /**
+     * True while the agent is producing a turn (MON-104). The composer stays
+     * editable so the operator can stage the next prompt; the primary action
+     * button swaps from Send to Stop and dispatches `onabort` instead.
+     */
+    streaming?: boolean;
     placeholder?: string;
     /**
      * Working directory used as the anchor for @-mention file suggestions
@@ -147,6 +154,12 @@
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
+      // While the agent is working, swallow Enter so a stray keypress can't
+      // queue or fire send. Stop must be a deliberate click on the button.
+      if (streaming) {
+        e.preventDefault();
+        return;
+      }
       e.preventDefault();
       send();
     }
@@ -154,7 +167,8 @@
 
   function send() {
     const trimmed = text.trim();
-    if ((!trimmed && images.length === 0) || disabled) return;
+    if (!trimmed && images.length === 0) return;
+    if (streaming) return;
     onsend(trimmed, images);
     text = "";
     images = [];
@@ -170,7 +184,7 @@
   }
 </script>
 
-<div class="chat-input" class:disabled>
+<div class="chat-input">
   {#if images.length > 0}
     <div class="image-strip">
       {#each images as img (img.id)}
@@ -197,7 +211,7 @@
     <button
       class="attach-btn"
       onclick={() => fileInputEl.click()}
-      disabled={disabled || images.length >= MAX_IMAGES}
+      disabled={images.length >= MAX_IMAGES}
       title="Attach image"
       aria-label="Attach image"
     >
@@ -212,21 +226,34 @@
       onkeydown={handleKeydown}
       oninput={autoResize}
       onpaste={handlePaste}
-      placeholder={customPlaceholder || (disabled ? "Agent is working..." : "Message...")}
-      {disabled}
+      placeholder={customPlaceholder || "Message..."}
       rows="1"
     ></textarea>
 
     <MentionAutocomplete {textareaEl} {cwd} bind:text />
 
 
-    <button
-      class="send-btn"
-      onclick={send}
-      disabled={disabled || (!text.trim() && images.length === 0)}
-    >
-      Send
-    </button>
+    {#if streaming}
+      <button
+        class="stop-btn"
+        onclick={() => onabort?.()}
+        title="Stop the agent"
+        aria-label="Stop the agent"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <rect x="6" y="6" width="12" height="12" rx="1.5"/>
+        </svg>
+        <span>Stop</span>
+      </button>
+    {:else}
+      <button
+        class="send-btn"
+        onclick={send}
+        disabled={!text.trim() && images.length === 0}
+      >
+        Send
+      </button>
+    {/if}
   </div>
 
   <input
@@ -244,10 +271,6 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-  }
-
-  .chat-input.disabled {
-    opacity: 0.6;
   }
 
   .image-strip {
@@ -387,6 +410,35 @@
     background: var(--bg-panel-3);
     color: var(--text-muted);
     cursor: not-allowed;
+  }
+
+  .stop-btn {
+    background: var(--error, #eb5757);
+    color: var(--bg-panel);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.15s, transform 0.05s;
+    white-space: nowrap;
+  }
+
+  .stop-btn:hover {
+    background: color-mix(in srgb, var(--error, #eb5757) 88%, black);
+  }
+
+  .stop-btn:active {
+    transform: translateY(1px);
+  }
+
+  .stop-btn svg {
+    flex-shrink: 0;
   }
 
   .hidden-input {
