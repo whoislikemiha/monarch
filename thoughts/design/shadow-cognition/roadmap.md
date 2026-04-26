@@ -4,6 +4,17 @@
 >
 > **Sibling docs:** the four design docs above. Read those for the *what* and *why*; this doc is *what order, what tickets, what's testable at end of phase*.
 
+## How to use this roadmap
+
+Before opening a ticket in any phase, **read the design docs the phase references**. The "Read first" lines under each phase point to specific doc sections — they carry conceptual context (premises, working assumptions, alternatives considered and rejected) that is not duplicated here. The roadmap is *what to build, in what order, to what end*; the design docs are *why those choices, what they imply*. Skipping the design read produces drifted implementations — Slice B's first plan is a worked example.
+
+**Reference docs (read in order on first pass):**
+
+1. [`substrate.md`](./substrate.md) — Four-layer self (L1 identity, L2 working memory, L3 knowledge tree, L4 search). Captain layer. Project memory as shared substrate. Branching. Per-turn context loading.
+2. [`attention.md`](./attention.md) — One shadow, two organs. Quest tree as temporal spine. Two surfaces (chat + execution timeline). Coherent atomic actions. Event taxonomy. Tool taxonomy by thread. Routing captain input.
+3. [`distillation.md`](./distillation.md) — The Keeper. Three-layer record (raw / first-person report / third-person claims). Compaction triggers (continuous / semantic / idle). Atomic claims. Merge / supersede / insert / archive logic. Stale-flagging. Memory poisoning firewall.
+4. [`flows.md`](./flows.md) — Per-turn loops (chat-shadow + executor). Conversation entry conditions. Environment snapshot. Coordination patterns. Idle behavior. Death and resurrection.
+
 ## The phase rule
 
 A phase is a phase only if, at the end of it, you can sit down with the running app and tell whether it works *without* needing the next phase. Two consequences worth being explicit about:
@@ -20,11 +31,13 @@ Two corollaries:
 
 | Surface | Status |
 |---------|--------|
-| Storage stack viability | [MON-91](https://linear.app/monarch-commander/issue/MON-91) — validated. No production code yet. |
+| Storage stack viability | [MON-91](https://linear.app/monarch-commander/issue/MON-91) — validated. Production stack live as of MON-99. |
 | Quest tree (data) | [MON-83](https://linear.app/monarch-commander/issue/MON-83) — `quest_nodes`, `quest_events`, `agents.current_quest_id`. Read-only timeline tool, manual create. Skeletal. |
 | Execution timeline (UI) | MON-83 `QuestTimelineTool` (toolbox tool, read-only). |
 | Per-turn classifier | [MON-82](https://linear.app/monarch-commander/issue/MON-82) — Slice 1 advisory. First reader (Architect, [MON-84](https://linear.app/monarch-commander/issue/MON-84)) not built. |
-| Auto-memory (the proxy for L1) | Anthropic-side per-project memory in `~/.claude/projects/.../memory/`. De-facto stand-in until P1 ships in-app L1. |
+| Captain identity (L1) | [MON-98](https://linear.app/monarch-commander/issue/MON-98) — captain + shadow identity payloads in DB, settings UI, wired into `shadow-oath.ts` system prompt. P1 territory; shipped early. |
+| Memory substrate (L3 storage) | [MON-99](https://linear.app/monarch-commander/issue/MON-99) — `memories` schema, FTS5 mirror, `memory_keeper_runs`, embedding pipeline (`bge-small-en-v1.5` via ONNX), HNSW index (`instant-distance`), Memory Inspector v0 (browse-only), debug-only `memory_smoke_insert`. P2 Slice A. **No reader or writer wired yet** — that's MON-100 / MON-101. |
+| Auto-memory (the proxy for L1) | Anthropic-side per-project memory in `~/.claude/projects/.../memory/`. Co-exists with MON-98's in-app L1; deprecate when L1 has been in production long enough. |
 
 Everything else implied by the design docs (in-app L1, L2, L3, Keeper, two-organ split, project sharing, forking, stale-flagging, Memory Inspector) is unbuilt.
 
@@ -83,6 +96,8 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 
 ### P1 — Captain identity, end-to-end
 
+**Read first.** [`substrate.md`](./substrate.md) § L1 (captain layer + shadow layer + storage and editing).
+
 **Goal.** Captain edits identity once in-app; every shadow reads it next turn.
 
 **Test scenario.** Captain opens Identity tool, edits "I prefer terse responses." Closes the tool. Spawns a new shadow. Asks it for a status. Response is terse — and the L1 captain layer rendered into the system prompt contains the new line. Roll back the edit; next turn, the shadow reverts.
@@ -104,30 +119,31 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 
 ### P2 — First memory, end-to-end
 
-**Goal.** A shadow forms a memory at quest-close, the captain browses it, and the next turn that memory surfaces in retrieval.
+**Read first.** [`distillation.md`](./distillation.md) (whole doc — load-bearing for this phase, especially § Premise, § The Keeper, § Compaction triggers, § Memory poisoning firewall). [`substrate.md`](./substrate.md) § L3 + § "Loading the substrate for a turn" + § "Project memory as shared substrate" (for what we are *not* shipping yet — single-shadow private subtree only).
 
-**Test scenario.** Captain runs a multi-turn task with a shadow. Marks the quest done. Keeper fires at quest-close, writes one or more atomic claims into the shadow's private subtree. `compaction_tick` event appears in the existing `QuestTimelineTool`. Captain opens Memory Inspector, sees the new memories with provenance. Starts a new task on a related topic; the shadow's tree-walk surfaces the relevant memory in its agent context.
+**Goal.** A shadow forms structured memories continuously as it works. Compaction (forming memories) is the same operation as context shrinkage — every ~30k tokens of executor activity, the Keeper distills the recent stream into atomic claims and resets the executor's raw context window. The captain browses memories in the Inspector and watches them form via `compaction_tick` events. The next turn after a memory forms surfaces it in retrieval (sequenced through MON-101).
+
+**Test scenario.** Captain runs a long-running multi-turn task with a shadow. After ~30k tokens of conversation + tool activity, a Keeper tick fires automatically — soft trigger looks for a natural breakpoint within the next ~5k tokens, hard trigger forces a clean cut at 30k. Atomic claims appear in the Memory Inspector with provenance (source quest id when present, source events, keeper run id). `compaction_tick` event lands on the QuestTimelineTool when the agent has a `current_quest_id`; otherwise the run is visible only via `memory_keeper_runs`. The executor's next turn proceeds with a *synthesized context*: the Keeper's compaction summary rendered as a one-shot user/assistant scaffold, plus L3 retrieval of relevant memories, plus the raw messages since the tick — not the full prior history. Captain starts a follow-up task on a related topic; the shadow's tree-walk surfaces the relevant memory in its context.
 
 **Tickets:**
-- [**MON-95**](https://linear.app/monarch-commander/issue/MON-95) — `memories_fts` (FTS5 mirror of title/summary/content). Lands inside this phase as part of "wire retrieval end-to-end."
-- *(new)* `memories` table per `distillation.md` § Implications-for-the-data-model. Includes `parent_id`, `scope`, `kind`, `summary`, `content`, `embedding`, `embedding_model_id`, `supersedes_id`, `archived_at`, `source_quest_id`, `source_events`, `file_refs`.
-- *(new)* `memory_keeper_runs` provenance table.
-- *(new)* HNSW sidecar file via `instant-distance` — minimal: full rebuild on cold start, no background rebuild worker (P3c), no incremental insert (P3d). At first-memory volumes brute-force is fine.
-- *(new)* Keeper sidecar worker. **Quest-close trigger only** for v1; continuous and idle triggers come later. Single shadow, private subtree only — no per-project serializer (P9).
-- *(new)* Hybrid retrieval (BM25 + brute-force vector top-K) read into agent context. **No reranker** (P3b); top-K from the merged pool goes straight to context.
-- *(new)* `compaction_tick` event kind in `quest_events`; rendered in existing `QuestTimelineTool`.
-- *(new)* Memory Inspector v0 — toolbox tool. Browse-only. Tree by topic, per-memory drill-in (provenance, source events, file refs). No edit (P12).
-- *(new)* `suggest_memory` tool for executor proposals (Keeper still decides — memory poisoning firewall preserved from day one).
+- [**MON-99**](https://linear.app/monarch-commander/issue/MON-99) — Slice A: substrate. **Shipped on master.** `memories` schema (incl. `parent_id`, `scope`, `kind`, `summary`, `content`, `embedding`, `embedding_model_id`, `supersedes_id`, `archived_at`, `source_quest_id`, `source_events`, `file_refs`), `memories_fts` FTS5 mirror, `memory_keeper_runs` provenance table, embedding pipeline (`bge-small-en-v1.5` via ONNX), HNSW sidecar file (`instant-distance` — full rebuild only; P3c/d defer background + incremental), Memory Inspector v0 (browse-only — no edit / archive / promote, those are P12), debug-only `memory_smoke_insert`. Subsumes the original MON-95 (`memories_fts` rolled in).
+- [**MON-100**](https://linear.app/monarch-commander/issue/MON-100) — Slice B: **token-pressure-triggered Keeper write path.** Continuous compaction loop. Token counter per agent (sums `usage.total_tokens` since last tick). Soft trigger at ~25k looking for next natural breakpoint within ~5k more; hard trigger at 30k. Sidecar Keeper worker (`sidecar/src/keeper.ts`, structurally mirrors `classifier.ts`). Structured-JSON claim extraction. Memory writes via the existing single-consumer pipeline (`PersistCommand` variants). HNSW rebuild after each successful run. `compaction_tick` on `quest_events` when `agents.current_quest_id` is set; otherwise visible only via `memory_keeper_runs`. Pi `state.messages` rewrite after the tick — synthesized [user: "previously summarized" + assistant: "ack" + raw-since-tick] scaffold replaces the pre-tick raw conversation. Silent no-op when no Keeper model configured.
+- [**MON-102**](https://linear.app/monarch-commander/issue/MON-102) — Executor `suggest_memory` tool. Memory-poisoning firewall input path (executor proposes via `quest_events` row; Keeper still decides at next tick). Independent of MON-100 at the produce side.
+- [**MON-101**](https://linear.app/monarch-commander/issue/MON-101) — Slice C: hybrid retrieval read path. On user turn, surfaces relevant memories via FTS5 + brute-force vector top-K (no reranker — P3b). Surfaces as `## Relevant Memories` adjacent to the new user message. `access_count` / `last_accessed_at` updated on retrieval.
+- *(deferred)* Quest-close *semantic* trigger. Per [`distillation.md`](./distillation.md) § Compaction triggers, quest-close fires a *deeper* distillation pass with optionally a different (cloud) model tier. Not gating P2's headline. Either rolls into a small follow-up ticket once MON-100 lands, or folds into P5 (when quest status transitions become first-class).
+- *(deferred)* Idle compaction trigger. Same — small follow-up after MON-100.
 
-**Tracks.** Backend (heavy) + Quest tree (light: one event kind + provenance FK) + Timeline (reuse existing) + UI/UX (Memory Inspector v0).
+**Tracks.** Backend (heavy: Keeper worker + token-pressure trigger + context-rewrite mechanism) + Quest tree (light: one event kind + provenance FK) + Timeline (reuse existing) + UI/UX (Memory Inspector v0 + observable compaction).
 
-**Depends on.** Nothing strictly; benefits from P1 if shipped first (so claims about captain preferences land cleanly).
+**Depends on.** P1 ([MON-98](https://linear.app/monarch-commander/issue/MON-98)) shipped — so captain preferences land cleanly into Keeper context.
 
-**Defers.** Eval harness (P3a). Reranker (P3b). Background rebuild + incremental insert (P3c, P3d). Continuous + idle triggers. Project subtree writes. First-person reports as Keeper input (P6 backfills this). Captain edit / archive / promote (P12).
+**Defers.** **L2 working memory** (P4 — Keeper consolidation in P2 lives only as text in `memory_keeper_runs.output_summary`; the structured `WorkingMemory` shape with `current_action` / `recent_actions` / `planned_actions` lands when P4 wires executor narration). Eval harness (P3a / [MON-94](https://linear.app/monarch-commander/issue/MON-94)). Reranker (P3b / [MON-93](https://linear.app/monarch-commander/issue/MON-93)). Background rebuild + incremental insert (P3c/d / [MON-96](https://linear.app/monarch-commander/issue/MON-96), [MON-97](https://linear.app/monarch-commander/issue/MON-97)). Quest-close + idle triggers (deferred above). Project subtree writes (P9). First-person reports as Keeper input (P6 backfills). Captain edit / archive / promote / supersede in Inspector (P12). Stale-flagging via `file_refs.anchor_sha` (P11). Two-tier Keeper (local / cloud) — P2 ships single-tier; tier split is a `memory.toml` extension, not a phase.
 
 ---
 
 ### P3a — Eval harness
+
+**Read first.** [`distillation.md`](./distillation.md) § "Open questions / current direction" — the eval harness premise. § "Merge / supersede / insert / archive logic" for what merge quality is being measured against.
 
 **Goal.** A recall@5 + merge-quality number we trust against a fixed seed.
 
@@ -148,6 +164,8 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 
 ### P3b — Reranker
 
+**Read first.** [`distillation.md`](./distillation.md) § "Open questions / current direction" — "Reranking the hybrid pool."
+
 **Goal.** Top-K=20 candidates from hybrid retrieval get reranked to top-K=5 before context injection. Recall@5 from P3a improves measurably.
 
 **Test scenario.** Run P3a's harness with reranker enabled vs disabled. Recall@5 with reranker > recall@5 without, by some material delta.
@@ -163,6 +181,8 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 
 ### P3c — Background HNSW rebuild + atomic swap
 
+**Read first.** [`substrate.md`](./substrate.md) § "Implications for the data model" (vector index notes). MON-91 spike for the validated stack.
+
 **Goal.** At realistic memory volumes (10k+), HNSW rebuilds happen in a background worker without blocking writes or reads.
 
 **Test scenario.** Seed 100k memories. Trigger rebuild. Observe: reads continue serving from the previous "last good index" throughout the rebuild. New index swaps in atomically when ready.
@@ -175,6 +195,8 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 ---
 
 ### P3d — Incremental HNSW insert
+
+**Read first.** Same as P3c.
 
 **Goal.** A new memory written by the Keeper becomes queryable in seconds, not after the next scheduled rebuild.
 
@@ -189,7 +211,11 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 
 ### P4 — Executor narration (coherent actions + L2 v0)
 
+**Read first.** [`substrate.md`](./substrate.md) § L2 (full section, including "Two writers, strict separation of concerns" and "Three layers of intention"). [`attention.md`](./attention.md) § "Coherent atomic actions" + § "Three self-reporting cadences" + § "Event taxonomy" (executor-activity events). [`flows.md`](./flows.md) § "The executor per-turn loop" + § "Environment snapshot".
+
 **Goal.** Executor declares intent before each chunk of work, executes nested tool calls, and closes with a one-line outcome. The captain reads the timeline at intent level. L2 working memory carries the live present.
+
+**Note.** P2 leaves L2 textual-only (Keeper consolidation lives in `memory_keeper_runs.output_summary`). P4 is the first phase that introduces structured `WorkingMemory` — `current_action`, `recent_actions`, `current_quest_id`, `current_quest_path`, `updated_at`. Promotes the Keeper's per-tick consolidation from a free-form string into named fields the executor and chat-shadow can read deterministically.
 
 **Test scenario.** Captain watches a quest run. The timeline shows a sequence of collapsible coherent actions ("Read failing test files", "Fix the off-by-one in `parser.rs`", "Run the test"), each expandable into its underlying tool calls. The agent view shows `current_action` + last few `recent_actions` from L2 — captain can answer "what is it doing right now?" without scrolling.
 
@@ -212,6 +238,8 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 
 ### P5 — Rich quest model + manual editor
 
+**Read first.** [`attention.md`](./attention.md) § "The quest tree is the spine" + § "Event taxonomy" (plan-manipulation events). [`substrate.md`](./substrate.md) § L2 "Three layers of intention" (quest vs internal plan vs coherent action distinction).
+
 **Goal.** Quests carry status, scope, current direction, rationale, grade, summary. Captain edits these manually. Plan-change events (`scope_change`, `direction_change`, `subtask_added`, `note`) appear on the timeline.
 
 **Test scenario.** Captain opens a quest detail panel. Edits scope ("expanded to also cover the auth refactor"), supplies rationale. The change persists, surfaces on the timeline as a `scope_change` event with rationale. Closes the quest by setting `status='done'`. Status transition is reflected in the agent view.
@@ -231,6 +259,8 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 ---
 
 ### P6 — First-person quest reports
+
+**Read first.** [`distillation.md`](./distillation.md) § "First-person quest report" + § "The three-layer record" (L0 / L1 / L2 framing — distinct from substrate L1/L2/L3 numbering).
 
 **Goal.** When a quest closes, the executor writes a structured first-person report. Captain reads it as a quest-close artifact. The Keeper consumes it as a high-quality input.
 
@@ -252,6 +282,8 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 ---
 
 ### P7 — chat-shadow read-only + dual surface
+
+**Read first.** [`attention.md`](./attention.md) (whole doc — load-bearing for this phase, especially § "The captain experience comes first", § "Two surfaces on the quest", § "Thread types", § "Tool taxonomy by thread"). [`flows.md`](./flows.md) § "The chat-shadow per-turn loop" + § "Coordination between chat and executor" + § "Conversation entry conditions".
 
 **Goal.** Captain talks to a chat-shadow that runs alongside the executor. Chat-shadow reads from substrate but takes no actions on the world. Chat surface stays clean (dialogue only); execution timeline is a sibling primary panel.
 
@@ -276,6 +308,8 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 
 ### P8 — chat-shadow full + routing classifier
 
+**Read first.** [`attention.md`](./attention.md) § "Routing captain input" + § "Tool taxonomy by thread" (chat-shadow plan-manipulation tools + pending-action mediation). [`flows.md`](./flows.md) § "Coordination between chat and executor".
+
 **Goal.** Captain types into chat; chat-shadow classifies intent and takes the appropriate action — adding to plan, expanding scope, redirecting, answering questions, mediating pending actions, speaking back. Subsumes the Architect ([MON-84](https://linear.app/monarch-commander/issue/MON-84)) as the auto-decomposer for high-complexity captain inputs.
 
 **Test scenario.** From the routing table in `attention.md`: captain says "after this also rename `verify` to `validate`" — `add_to_internal_plan`; executor picks up after current action. Captain says "now do Y instead" — `change_quest_direction`; executor switches at next boundary. Captain says "let's now also refactor the test suite" — Architect/auto-decomposer fires (high complexity classification from MON-82) → `add_subtask` with rationale. Captain answers a `question` event — typed `answer` flows back to executor.
@@ -296,6 +330,8 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 
 ### P9 — Project subtree sharing
 
+**Read first.** [`substrate.md`](./substrate.md) § "Project memory as shared substrate" (especially "Multi-writer discipline"). [`distillation.md`](./distillation.md) § "Multi-shadow project memory".
+
 **Goal.** Multiple shadows on the same project share `Projects/<P>/...` as living project knowledge. New shadows on a project don't start from zero.
 
 **Test scenario.** Shadow A on project Monarch finishes a task; Keeper writes a `Projects/Monarch/Architecture` claim ("Pi is execution engine, not session authority"). Shadow B (different shadow, same project) starts a related task next day; tree-walk surfaces A's claim into B's context.
@@ -310,6 +346,8 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 ---
 
 ### P10 — Forking with worktrees
+
+**Read first.** [`substrate.md`](./substrate.md) § "Branching the substrate" (the L1-shared / L2-forked / L3-shared-read+fork-local-write pattern). [`attention.md`](./attention.md) § "Branching as multi-thread + multi-quest".
 
 **Goal.** Captain forks a shadow ("try it two ways"); each fork has its own L2, fork-local L3, executor + chat-shadow, and git worktree. Captain picks a winner; merge promotes.
 
@@ -329,6 +367,8 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 
 ### P11 — Stale-flagging + organic re-verification
 
+**Read first.** [`substrate.md`](./substrate.md) § "Stale-flagging via git". [`distillation.md`](./distillation.md) § "Stale-flagging and organic re-verification".
+
 **Goal.** Memories that reference files know when their files have changed and surface that to the consumer. When the executor naturally verifies a stale claim, the Keeper updates anchor or supersedes.
 
 **Test scenario.** Keeper writes a memory referencing `src-tauri/src/agent/manager.rs` at commit `abc123`. Captain commits a change to that file; new commit `def456`. Next time the memory loads into agent context, it carries `stale: true`. Executor reads the file as part of natural work, observes the claim still holds, the Keeper re-anchors `file_refs.anchor_sha = def456`. Memory is fresh again.
@@ -346,6 +386,8 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 ---
 
 ### P12 — Memory Inspector polish + observability
+
+**Read first.** [`distillation.md`](./distillation.md) § "Captain can edit memories" + § "Compaction is observable" + § "Inner nodes and tree growth" (inner-node summary regeneration cadence).
 
 **Goal.** Captain has full inspect/edit/archive control over the memory tree, with rich provenance and live observability of compaction.
 
@@ -366,7 +408,7 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 | After | What changes for the captain |
 |-------|-------------------------------|
 | **P1** | Identity edits in-app; auto-memory pattern replaced by first-class L1. |
-| **P2** | First memory forms during work; `compaction_tick` events appear; Memory Inspector v0 browse. **First "the shadow remembered something" moment.** |
+| **P2** | First memory forms *continuously during work* (token-pressure-triggered, ~30k token cadence); compaction shrinks the executor's context as memories form; `compaction_tick` events appear when a quest is current; Memory Inspector v0 browse; retrieval surfaces relevant memories on follow-up turns. **First "the shadow remembered something" moment.** |
 | **P3a** | A trustworthy recall@5 number we can target. |
 | **P3b** | Recall@5 measurably improves. |
 | **P3c** | Memory works at 1M scale without blocking writes. |
