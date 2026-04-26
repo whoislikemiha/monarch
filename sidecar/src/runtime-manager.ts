@@ -244,6 +244,11 @@ export class RuntimeManager {
 
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: cmd.cwd,
+			// `agentDir` is where Pi expects agent-local extensions/skills/themes
+			// to live. Monarch disables all of those (`noExtensions`/etc.) and
+			// owns the system prompt directly, so the value is functionally
+			// unused — pass `cmd.cwd` as a safe valid path.
+			agentDir: cmd.cwd,
 			systemPromptOverride: () => promptRef.current,
 			noExtensions: true,
 			noSkills: true,
