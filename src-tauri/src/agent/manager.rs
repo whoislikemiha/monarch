@@ -22,9 +22,7 @@ use crate::db::{AgentRow, Database, MemoryRow, MessageRow};
 use crate::error::MonarchError;
 use crate::memory_index::MemoryIndex;
 use crate::persistence::read_agent_prompt_file;
-use crate::sidecar_protocol::{
-    KeeperConfig, LoadSessionMessage, ShadowConfig, SidecarCommand,
-};
+use crate::sidecar_protocol::{KeeperConfig, LoadSessionMessage, ShadowConfig, SidecarCommand};
 use crate::util::chrono_now;
 
 use super::commands::{ExtensionUiResponseRequest, SpawnAgentRequest};
@@ -107,6 +105,9 @@ pub(crate) enum InternalDispatch {
     /// Trigger one continuous-compaction Keeper run for the agent. No-op if
     /// the Keeper config is empty or a run is already in flight.
     KeeperRun { agent_id: String },
+    /// Send a manager-originated command to the sidecar. Used by inbound
+    /// request/response bridges that originate in `event_handler.rs`.
+    SendSidecarCommand { command: SidecarCommand },
 }
 
 /// MON-27 lock hierarchy:
@@ -167,6 +168,8 @@ pub struct AgentManager {
     /// `ensure_sidecar`) can pass a db handle to `handle_sidecar_event`
     /// without threading db through every call site of every Tauri command.
     pub(super) db: Arc<Database>,
+    /// Shared memory index used by Keeper writes and MON-101 retrieval.
+    pub(super) memory_index: Arc<MemoryIndex>,
 }
 
 impl AgentManager {
@@ -177,8 +180,7 @@ impl AgentManager {
         // the DB falls behind, back-pressure stalls the reader before we
         // queue unbounded memory. Not load-bearing — can be tuned.
         let (persist_tx, persist_rx) = mpsc::channel::<PersistCommand>(256);
-        let live_states: Arc<DashMap<String, Arc<AgentStateEntry>>> =
-            Arc::new(DashMap::new());
+        let live_states: Arc<DashMap<String, Arc<AgentStateEntry>>> = Arc::new(DashMap::new());
         let app_handle: Arc<PlMutex<Option<AppHandle>>> = Arc::new(PlMutex::new(None));
 
         // MON-37: manager-lifetime persistence consumer. Spawned once in
@@ -190,7 +192,7 @@ impl AgentManager {
         tauri::async_runtime::spawn(run_persist_consumer(
             persist_rx,
             db.clone(),
-            memory_index,
+            memory_index.clone(),
             live_states.clone(),
             ws_broadcast.clone(),
             app_handle.clone(),
@@ -211,6 +213,7 @@ impl AgentManager {
             dispatch_tx,
             dispatch_rx_slot: PlMutex::new(Some(dispatch_rx)),
             db,
+            memory_index,
         }
     }
 
@@ -229,10 +232,17 @@ impl AgentManager {
                 match d {
                     InternalDispatch::KeeperRun { agent_id } => {
                         if let Err(e) = mgr.dispatch_keeper_run(&db, &agent_id).await {
-                            eprintln!(
-                                "[monarch] keeper dispatch failed for {}: {:?}",
-                                agent_id, e
-                            );
+                            eprintln!("[monarch] keeper dispatch failed for {}: {:?}", agent_id, e);
+                        }
+                    }
+                    InternalDispatch::SendSidecarCommand { command } => {
+                        match serde_json::to_string(&command) {
+                            Ok(json) => {
+                                if let Err(e) = mgr.send_to_sidecar(&json).await {
+                                    eprintln!("[monarch] sidecar response send failed: {:?}", e);
+                                }
+                            }
+                            Err(e) => eprintln!("[monarch] sidecar response encode failed: {}", e),
                         }
                     }
                 }
@@ -564,7 +574,9 @@ impl AgentManager {
 
         let shadow = shadow_spec.as_ref().map(|_| ShadowConfig {
             name: shadow_name.clone().unwrap_or_else(|| "Shadow".to_string()),
-            title: shadow_title.clone().unwrap_or_else(|| "Shadow Soldier".to_string()),
+            title: shadow_title
+                .clone()
+                .unwrap_or_else(|| "Shadow Soldier".to_string()),
             grade: shadow_grade.clone().unwrap_or_else(|| "Knight".to_string()),
             id: id.clone(),
         });
@@ -579,11 +591,21 @@ impl AgentManager {
             .unwrap_or_else(|| "claude-sonnet-4-5".to_string());
         let effective_thinking = match thinking_level.clone() {
             Some(v) => v,
-            None => crate::thinking_config::default_for(&effective_provider, &effective_model).await,
+            None => {
+                crate::thinking_config::default_for(&effective_provider, &effective_model).await
+            }
         };
 
-        let captain_payload = db.get_captain_identity_payload_internal().await.ok().flatten();
-        let shadow_payload = db.get_shadow_identity_payload_internal(&id).await.ok().flatten();
+        let captain_payload = db
+            .get_captain_identity_payload_internal()
+            .await
+            .ok()
+            .flatten();
+        let shadow_payload = db
+            .get_shadow_identity_payload_internal(&id)
+            .await
+            .ok()
+            .flatten();
 
         let cmd = SidecarCommand::CreateSession {
             agent_id: id.clone(),
@@ -709,7 +731,9 @@ impl AgentManager {
     }
 
     pub async fn kill(&self, id: &str) -> Result<(), MonarchError> {
-        let cmd = SidecarCommand::DestroySession { agent_id: id.to_string() };
+        let cmd = SidecarCommand::DestroySession {
+            agent_id: id.to_string(),
+        };
         let _ = self.send_to_sidecar(&serde_json::to_string(&cmd)?).await;
 
         {
@@ -923,9 +947,8 @@ async fn rehydrate_user_content(
     // Parse the stored content as JSON. Strings and arrays are both
     // valid shapes depending on how the turn was captured; treat
     // anything else defensively as empty text.
-    let parsed: serde_json::Value = serde_json::from_str(content).unwrap_or_else(|_| {
-        serde_json::Value::Array(Vec::new())
-    });
+    let parsed: serde_json::Value =
+        serde_json::from_str(content).unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
     let mut blocks: Vec<serde_json::Value> = match parsed {
         serde_json::Value::Array(arr) => arr,
         serde_json::Value::String(s) => {
@@ -1018,15 +1041,9 @@ fn extract_text_from_stored_content(stored: &str) -> String {
             .iter()
             .filter_map(|b| match b.get("type").and_then(|t| t.as_str()) {
                 Some("text") => b.get("text").and_then(|t| t.as_str()).map(String::from),
-                Some("thinking") => b
-                    .get("thinking")
-                    .and_then(|t| t.as_str())
-                    .map(String::from),
+                Some("thinking") => b.get("thinking").and_then(|t| t.as_str()).map(String::from),
                 Some("toolCall") => {
-                    let name = b
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("tool");
+                    let name = b.get("name").and_then(|n| n.as_str()).unwrap_or("tool");
                     let args = b
                         .get("arguments")
                         .map(|a| serde_json::to_string(a).unwrap_or_default())
@@ -1110,8 +1127,12 @@ mod tests {
             inner
                 .agents
                 .insert("ws-kill".to_string(), seeded_agent_state("ws-kill", "s2"));
-            inner.session_map.insert("ipc-kill".to_string(), "s1".to_string());
-            inner.session_map.insert("ws-kill".to_string(), "s2".to_string());
+            inner
+                .session_map
+                .insert("ipc-kill".to_string(), "s1".to_string());
+            inner
+                .session_map
+                .insert("ws-kill".to_string(), "s2".to_string());
         }
 
         // IPC side: the Tauri command body is `state.kill(&id)`. Call the

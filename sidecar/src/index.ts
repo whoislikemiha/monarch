@@ -84,6 +84,9 @@ async function handleCommand(cmd: SidecarCommand): Promise<void> {
 			// the readline pump must stay free for in-flight prompts/aborts.
 			void manager.keeperRun(cmd);
 			break;
+		case "memory_search_response":
+			manager.handleMemorySearchResponse(cmd.agentId, cmd.requestId, cmd.results, cmd.error);
+			break;
 		default:
 			process.stderr.write(
 				`[sidecar] Unknown command type: ${(cmd as any).type}\n`,

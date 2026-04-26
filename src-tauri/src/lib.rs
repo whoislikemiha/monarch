@@ -5,6 +5,7 @@ mod db;
 mod error;
 mod memory_config;
 mod memory_index;
+mod memory_search;
 mod memory_smoke;
 mod mention;
 mod models;
@@ -144,6 +145,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         memory_config::memory_get_config_path,
         memory_index::memory_index_status,
         memory_index::memory_download_and_init,
+        memory_search::memory_search_for_agent,
         memory_smoke::memory_smoke_insert,
     ])
 }
@@ -306,6 +308,7 @@ pub fn run() {
             memory_config::memory_get_config_path,
             memory_index::memory_index_status,
             memory_index::memory_download_and_init,
+            memory_search::memory_search_for_agent,
             memory_smoke::memory_smoke_insert,
             toolbox::toolbox_list_tools,
             toolbox::placeholder::toolbox_placeholder_ping,

@@ -10,6 +10,7 @@ import {
 	type AgentSession,
 	type AgentSessionEventListener,
 } from "@mariozechner/pi-coding-agent";
+import { randomUUID } from "node:crypto";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { Api, ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
 import { buildSystemPrompt } from "./shadow-oath.js";
@@ -19,6 +20,7 @@ import type {
 	CreateSessionCommand,
 	KeeperRunCommand,
 	LoadSessionCommand,
+	MemorySearchResult,
 	PromptContentPart,
 } from "./protocol.js";
 import { classify } from "./classifier.js";
@@ -28,6 +30,12 @@ interface PendingKeeperRewrite {
 	runId: number;
 	summary: string;
 	tailAnchor: number;
+}
+
+interface MemorySearchResolver {
+	agentId: string;
+	resolve: (results: MemorySearchResult[]) => void;
+	timeout: NodeJS.Timeout;
 }
 
 interface ManagedSession {
@@ -208,6 +216,37 @@ function resolveModel(
 	);
 }
 
+function extractPromptText(message: string | PromptContentPart[]): string {
+	if (typeof message === "string") return message;
+	return message
+		.filter((p): p is { type: "text"; text: string } => p.type === "text")
+		.map((p) => p.text)
+		.join("\n");
+}
+
+function formatRelevantMemories(results: MemorySearchResult[]): string {
+	const lines = results
+		.slice(0, 8)
+		.map((result) => {
+			const memory = result.memory;
+			const title = oneLine(memory.title || `Memory #${memory.id}`, 90);
+			const summary = oneLine(memory.summary, 260);
+			const content = memory.content
+				? ` ${oneLine(memory.content, 220)}`
+				: "";
+			return `- ${title}: ${summary}${content}`;
+		})
+		.filter(Boolean);
+	if (lines.length === 0) return "";
+	return `## Relevant Memories\n${lines.join("\n")}`;
+}
+
+function oneLine(value: string, max: number): string {
+	const compact = value.replace(/\s+/g, " ").trim();
+	if (compact.length <= max) return compact;
+	return `${compact.slice(0, Math.max(0, max - 3)).trimEnd()}...`;
+}
+
 export class RuntimeManager {
 	private sessions = new Map<string, ManagedSession>();
 	private emit: EmitFn;
@@ -219,6 +258,7 @@ export class RuntimeManager {
 	 * `classifications.message_id` inline.
 	 */
 	private pendingClassifications = new Map<string, string[]>();
+	private memorySearchResolvers = new Map<string, MemorySearchResolver>();
 
 	constructor(emit: EmitFn) {
 		this.emit = emit;
@@ -440,6 +480,13 @@ export class RuntimeManager {
 		managed.unsubscribe();
 		managed.session.dispose();
 		managed.uiResolvers.clear();
+		for (const [requestId, resolver] of this.memorySearchResolvers) {
+			if (resolver.agentId === agentId) {
+				clearTimeout(resolver.timeout);
+				resolver.resolve([]);
+				this.memorySearchResolvers.delete(requestId);
+			}
+		}
 		this.sessions.delete(agentId);
 
 		this.emit({ type: "session_destroyed", agentId });
@@ -496,20 +543,24 @@ export class RuntimeManager {
 		}
 
 		try {
-			if (typeof message === "string") {
+			const outboundMessage = managed.session.isStreaming
+				? message
+				: await this.withRelevantMemories(agentId, message);
+
+			if (typeof outboundMessage === "string") {
 				// Plain-text path — preserve existing behaviour exactly.
 				if (managed.session.isStreaming) {
-					await managed.session.followUp(message);
+					await managed.session.followUp(outboundMessage);
 				} else {
-					await managed.session.prompt(message);
+					await managed.session.prompt(outboundMessage);
 				}
 			} else {
 				// Multimodal path — extract text and image parts separately.
-				const text = message
+				const text = outboundMessage
 					.filter((p): p is { type: "text"; text: string } => p.type === "text")
 					.map((p) => p.text)
 					.join("");
-				const images: ImageContent[] = message
+				const images: ImageContent[] = outboundMessage
 					.filter(
 						(p): p is { type: "image"; data: string; mimeType: string } =>
 							p.type === "image",
@@ -529,6 +580,68 @@ export class RuntimeManager {
 				error: `Prompt error: ${err instanceof Error ? err.message : String(err)}`,
 			});
 		}
+	}
+
+	private async withRelevantMemories(
+		agentId: string,
+		message: string | PromptContentPart[],
+	): Promise<string | PromptContentPart[]> {
+		const query = extractPromptText(message).trim();
+		if (!query) return message;
+
+		const started = Date.now();
+		const results = await this.requestMemorySearch(agentId, query);
+		const elapsed = Date.now() - started;
+		if (elapsed > 200) {
+			process.stderr.write(
+				`[sidecar] memory search for ${agentId} took ${elapsed}ms\n`,
+			);
+		}
+		if (results.length === 0) return message;
+
+		const prefix = formatRelevantMemories(results);
+		if (!prefix) return message;
+
+		if (typeof message === "string") {
+			return `${prefix}\n\n${message}`;
+		}
+
+		let injected = false;
+		const parts = message.map((part) => {
+			if (!injected && part.type === "text") {
+				injected = true;
+				return { ...part, text: `${prefix}\n\n${part.text}` };
+			}
+			return part;
+		});
+		if (!injected) {
+			return [{ type: "text", text: prefix }, ...parts];
+		}
+		return parts;
+	}
+
+	private requestMemorySearch(
+		agentId: string,
+		query: string,
+	): Promise<MemorySearchResult[]> {
+		return new Promise((resolve) => {
+			const requestId = randomUUID();
+			const timeout = setTimeout(() => {
+				this.memorySearchResolvers.delete(requestId);
+				resolve([]);
+			}, 200);
+			this.memorySearchResolvers.set(requestId, {
+				agentId,
+				resolve,
+				timeout,
+			});
+			this.emit({
+				type: "memory_search_request",
+				agentId,
+				requestId,
+				query,
+			});
+		});
 	}
 
 	async abort(agentId: string): Promise<void> {
@@ -808,6 +921,27 @@ export class RuntimeManager {
 		if (resolver) {
 			resolver(value);
 		}
+	}
+
+	handleMemorySearchResponse(
+		agentId: string,
+		requestId: string,
+		results: MemorySearchResult[],
+		error?: string | null,
+	): void {
+		const resolver = this.memorySearchResolvers.get(requestId);
+		if (!resolver || resolver.agentId !== agentId) return;
+
+		clearTimeout(resolver.timeout);
+		this.memorySearchResolvers.delete(requestId);
+		if (error) {
+			process.stderr.write(
+				`[sidecar] memory search response ${requestId} for ${agentId}: ${error}\n`,
+			);
+			resolver.resolve([]);
+			return;
+		}
+		resolver.resolve(Array.isArray(results) ? results : []);
 	}
 
 	setCustomPrompt(

@@ -16,7 +16,8 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::agent_state::{ApplyOutcome, DisplayItem, LiveAgentState};
 use crate::db::{Database, InsertMemoryPayload, RecordQuestEventPayload};
-use crate::sidecar_protocol::{apply_event, AtomicClaim, InnerEvent, SidecarEvent};
+use crate::memory_index::MemoryIndex;
+use crate::sidecar_protocol::{apply_event, AtomicClaim, InnerEvent, SidecarCommand, SidecarEvent};
 
 use super::manager::{AgentManagerInner, AgentStateEntry, InternalDispatch};
 use super::persist::{build_persist_commands, EventDurations, PersistCommand};
@@ -90,6 +91,7 @@ pub(super) async fn handle_sidecar_event(
     persist_tx: &mpsc::Sender<PersistCommand>,
     dispatch_tx: &mpsc::Sender<InternalDispatch>,
     db: &Arc<Database>,
+    memory_index: &Arc<MemoryIndex>,
     inner: &Arc<PlMutex<AgentManagerInner>>,
     live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
     ws_tx: &broadcast::Sender<WsBroadcast>,
@@ -204,7 +206,9 @@ pub(super) async fn handle_sidecar_event(
             // apply clears the turn anchor and writes the duration onto the
             // ToolExecution — peeking after would see the mutation.
             let durations = compute_event_durations(live_states, &agent_id, &inner_event).await;
-            for cmd in build_persist_commands(&agent_id, session_id, &inner_event, inner_raw, durations) {
+            for cmd in
+                build_persist_commands(&agent_id, session_id, &inner_event, inner_raw, durations)
+            {
                 if persist_tx.send(cmd).await.is_err() {
                     eprintln!("[monarch] persist consumer closed, dropping event");
                     break;
@@ -273,9 +277,7 @@ pub(super) async fn handle_sidecar_event(
                 .await
                 .is_err()
             {
-                eprintln!(
-                    "[monarch] persist consumer closed, dropping classification"
-                );
+                eprintln!("[monarch] persist consumer closed, dropping classification");
             }
             let event_name = format!("agent-classification-{}", agent_id);
             let out = serde_json::json!({
@@ -360,6 +362,45 @@ pub(super) async fn handle_sidecar_event(
             .await;
         }
 
+        SidecarEvent::MemorySearchRequest {
+            agent_id,
+            request_id,
+            query,
+            top_k,
+        } => {
+            let (results, error) = match crate::memory_search::search_memories_for_agent_internal(
+                db,
+                memory_index,
+                &agent_id,
+                &query,
+                top_k,
+            )
+            .await
+            {
+                Ok(results) => (results, None),
+                Err(e) => {
+                    eprintln!(
+                        "[monarch] memory search failed for {} request {}: {:?}",
+                        agent_id, request_id, e
+                    );
+                    (Vec::new(), Some(e.to_string()))
+                }
+            };
+            let command = SidecarCommand::MemorySearchResponse {
+                agent_id,
+                request_id,
+                results,
+                error,
+            };
+            if dispatch_tx
+                .send(InternalDispatch::SendSidecarCommand { command })
+                .await
+                .is_err()
+            {
+                eprintln!("[monarch] dispatcher closed, dropping memory search response");
+            }
+        }
+
         SidecarEvent::Unknown { raw } => {
             // Envelope-level unknown — the sidecar shipped a top-level
             // message type the Rust side doesn't recognize. Flip desync for
@@ -438,11 +479,9 @@ async fn maybe_trigger_keeper(
         return;
     }
 
-    if let Err(e) = dispatch_tx
-        .try_send(InternalDispatch::KeeperRun {
-            agent_id: agent_id.to_string(),
-        })
-    {
+    if let Err(e) = dispatch_tx.try_send(InternalDispatch::KeeperRun {
+        agent_id: agent_id.to_string(),
+    }) {
         // try_send avoids stalling the reader; the channel is bounded but
         // 32 is plenty for the worst-case rate (≤1 per turn). Failure
         // means the dispatcher is saturated or shutting down — log and
@@ -744,12 +783,7 @@ async fn apply_and_maybe_emit(
                     if let Some(snapshot) =
                         try_consume_debounce_snapshot(&entry_clone, arm_gen).await
                     {
-                        emit_state_event(
-                            &app_clone,
-                            &ws_tx_clone,
-                            &entry_clone.topic,
-                            &snapshot,
-                        );
+                        emit_state_event(&app_clone, &ws_tx_clone, &entry_clone.topic, &snapshot);
                     }
                 });
                 guard.debounce_handle = Some(handle);

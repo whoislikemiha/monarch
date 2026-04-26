@@ -78,7 +78,9 @@ impl Drop for SidecarProcess {
     /// We use `Mutex::get_mut` rather than `.lock()` because `&mut self` in
     /// `drop` gives us exclusive access without risking a poisoned-lock no-op.
     fn drop(&mut self) {
-        let Ok(child) = self.child.get_mut() else { return };
+        let Ok(child) = self.child.get_mut() else {
+            return;
+        };
         if matches!(child.try_wait(), Ok(Some(_))) {
             return;
         }
@@ -102,11 +104,21 @@ impl Drop for SidecarProcess {
 /// wired up yet — a dedicated packaging ticket owns that.
 fn resolve_sidecar_path() -> Result<String, MonarchError> {
     let candidates = [
-        std::env::var("MONARCH_SIDECAR_PATH").ok().map(std::path::PathBuf::from),
-        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("sidecar/dist/index.js"))),
-        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("../sidecar/dist/index.js"))),
-        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("../../sidecar/dist/index.js"))),
-        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("../../../sidecar/dist/index.js"))),
+        std::env::var("MONARCH_SIDECAR_PATH")
+            .ok()
+            .map(std::path::PathBuf::from),
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("sidecar/dist/index.js"))),
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("../sidecar/dist/index.js"))),
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("../../sidecar/dist/index.js"))),
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("../../../sidecar/dist/index.js"))),
     ];
 
     candidates
@@ -243,6 +255,7 @@ impl AgentManager {
         let persist_tx = self.persist_tx.clone();
         let dispatch_tx = self.dispatch_tx.clone();
         let db_clone = self.db.clone();
+        let memory_index_clone = self.memory_index.clone();
         tauri::async_runtime::spawn(async move {
             let mut lines = TokioBufReader::new(stdout).lines();
             loop {
@@ -253,6 +266,7 @@ impl AgentManager {
                             &persist_tx,
                             &dispatch_tx,
                             &db_clone,
+                            &memory_index_clone,
                             &inner_clone,
                             &live_states_clone,
                             &ws_tx,
@@ -343,9 +357,7 @@ impl AgentManager {
                         messages: messages
                             .iter()
                             .filter(|m| {
-                                m.role == "user"
-                                    || m.role == "assistant"
-                                    || m.role == "toolResult"
+                                m.role == "user" || m.role == "assistant" || m.role == "toolResult"
                             })
                             .map(|m| LoadSessionMessage {
                                 role: m.role.clone(),

@@ -20,6 +20,7 @@ use crate::agent_state::{
     ApplyOutcome, ContentBlocks, DisplayItem, LiveAgentState, StreamingMessage, ToolExecution,
     ToolStatus, Usage,
 };
+use crate::memory_search::MemorySearchResult;
 
 // ========================================================================
 // Outbound: SidecarCommand
@@ -97,7 +98,11 @@ pub struct ClassifierInvocation {
 /// `from_value::<SidecarCommand>` validates the shape against the
 /// canonical wire contract before reserializing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum SidecarCommand {
     CreateSession {
         agent_id: String,
@@ -178,6 +183,16 @@ pub enum SidecarCommand {
         run_id: i64,
         slice: String,
         config: KeeperConfig,
+    },
+    /// MON-101: Rust response to a sidecar `memory_search_request`. The
+    /// sidecar blocks the user turn briefly waiting for this, then proceeds
+    /// without injection on timeout or error.
+    MemorySearchResponse {
+        agent_id: String,
+        request_id: String,
+        results: Vec<MemorySearchResult>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
 }
 
@@ -273,7 +288,11 @@ pub enum InnerEvent {
 /// public enum lets `Unknown` carry a `serde_json::Value` payload —
 /// `#[serde(other)]` only supports unit variants.
 #[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 enum KnownInnerEvent {
     AgentStart,
     AgentEnd,
@@ -468,6 +487,14 @@ pub enum SidecarEvent {
         pre_length: i64,
         post_length: i64,
     },
+    /// MON-101: sidecar asks Rust to retrieve memories before forwarding a
+    /// user turn to Pi.
+    MemorySearchRequest {
+        agent_id: String,
+        request_id: String,
+        query: String,
+        top_k: Option<u32>,
+    },
     Unknown {
         raw: Value,
     },
@@ -489,7 +516,11 @@ pub struct AtomicClaim {
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 enum KnownSidecarEvent {
     SessionReady {
         agent_id: String,
@@ -555,6 +586,13 @@ enum KnownSidecarEvent {
         pre_length: i64,
         #[serde(default)]
         post_length: i64,
+    },
+    MemorySearchRequest {
+        agent_id: String,
+        request_id: String,
+        query: String,
+        #[serde(default)]
+        top_k: Option<u32>,
     },
 }
 
@@ -629,6 +667,17 @@ impl From<KnownSidecarEvent> for SidecarEvent {
                 pre_length,
                 post_length,
             },
+            KnownSidecarEvent::MemorySearchRequest {
+                agent_id,
+                request_id,
+                query,
+                top_k,
+            } => Self::MemorySearchRequest {
+                agent_id,
+                request_id,
+                query,
+                top_k,
+            },
         }
     }
 }
@@ -642,6 +691,7 @@ const KNOWN_SIDECAR_TAGS: &[&str] = &[
     "classification",
     "keeper_result",
     "keeper_rewrite_applied",
+    "memory_search_request",
 ];
 
 impl<'de> Deserialize<'de> for SidecarEvent {
@@ -719,8 +769,7 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
         InnerEvent::TurnEnd => {
             state.activity_status = "Processing response...".to_string();
             if let Some(idx) = state.current_tool_group_idx {
-                if let Some(DisplayItem::ToolGroup { turn_complete, .. }) =
-                    state.items.get_mut(idx)
+                if let Some(DisplayItem::ToolGroup { turn_complete, .. }) = state.items.get_mut(idx)
                 {
                     *turn_complete = true;
                 }
@@ -800,9 +849,8 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                         .saturating_add(usage.output)
                         .saturating_add(usage.cache_read)
                         .saturating_add(usage.cache_write);
-                    state.tokens_since_last_compaction = state
-                        .tokens_since_last_compaction
-                        .saturating_add(delta);
+                    state.tokens_since_last_compaction =
+                        state.tokens_since_last_compaction.saturating_add(delta);
                     state.last_usage = Some(usage);
                 }
                 // MON-71: seal remaining thinking blocks and compute turn
@@ -899,9 +947,7 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
             }
 
             if let Some(idx) = state.current_tool_group_idx {
-                if let Some(DisplayItem::ToolGroup { executions, .. }) =
-                    state.items.get_mut(idx)
-                {
+                if let Some(DisplayItem::ToolGroup { executions, .. }) = state.items.get_mut(idx) {
                     if let Some(exec) = executions
                         .iter_mut()
                         .find(|e| &e.tool_call_id == tool_call_id)
@@ -992,7 +1038,10 @@ fn now_ms() -> i64 {
 /// lifetime of a turn. Existing entries are never overwritten so we keep
 /// the earliest-observed start (the block's real start moment, not the
 /// latest update that carried more thinking text).
-fn record_new_thinking_blocks(starts: &mut std::collections::HashMap<usize, i64>, content: &[serde_json::Value]) {
+fn record_new_thinking_blocks(
+    starts: &mut std::collections::HashMap<usize, i64>,
+    content: &[serde_json::Value],
+) {
     let now = now_ms();
     for (i, block) in content.iter().enumerate() {
         if block.get("type").and_then(|t| t.as_str()) == Some("thinking") {
@@ -1120,7 +1169,7 @@ mod tests {
             },
             InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
-            classification_id: None,
+                classification_id: None,
             },
             InnerEvent::Unknown {
                 raw: json!({"type": "future_event"}),
@@ -1266,7 +1315,9 @@ mod tests {
         assert_eq!(outcome, ApplyOutcome::EmitNow);
         assert_eq!(count_items(&s, "user"), 1);
         match &s.items[0] {
-            DisplayItem::User { content, timestamp, .. } => {
+            DisplayItem::User {
+                content, timestamp, ..
+            } => {
                 assert_eq!(content, "hello world");
                 assert_eq!(*timestamp, Some(1000));
             }
@@ -1356,7 +1407,10 @@ mod tests {
         let outcome = apply_event(
             &mut s,
             &InnerEvent::MessageUpdate {
-                message: msg("assistant", Some(json!([{"type": "text", "text": "hello world"}]))),
+                message: msg(
+                    "assistant",
+                    Some(json!([{"type": "text", "text": "hello world"}])),
+                ),
             },
         );
         assert_eq!(outcome, ApplyOutcome::Debounce);
@@ -1423,7 +1477,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
-            classification_id: None,
+                classification_id: None,
             },
         );
         assert_eq!(outcome, ApplyOutcome::EmitNow);
@@ -1440,7 +1494,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("user", None),
-            classification_id: None,
+                classification_id: None,
             },
         );
         assert_eq!(outcome, ApplyOutcome::EmitNow);
@@ -1480,7 +1534,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
-            classification_id: None,
+                classification_id: None,
             },
         );
         assert!(s.streaming_message.is_none());
@@ -1592,7 +1646,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
-            classification_id: None,
+                classification_id: None,
             },
         );
 
@@ -1611,7 +1665,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
-            classification_id: None,
+                classification_id: None,
             },
         );
 
@@ -1648,10 +1702,7 @@ mod tests {
     #[test]
     fn compaction_start_without_reason() {
         let mut s = fresh_state();
-        apply_event(
-            &mut s,
-            &InnerEvent::CompactionStart { reason: None },
-        );
+        apply_event(&mut s, &InnerEvent::CompactionStart { reason: None });
         match &s.items[0] {
             DisplayItem::Status { text } => {
                 assert!(text.contains("unknown"));
@@ -1665,7 +1716,9 @@ mod tests {
         let mut s = fresh_state();
         apply_event(
             &mut s,
-            &InnerEvent::CompactionEnd { aborted: Some(false) },
+            &InnerEvent::CompactionEnd {
+                aborted: Some(false),
+            },
         );
         assert!(s.activity_status.is_empty());
         match &s.items[0] {
@@ -1679,7 +1732,9 @@ mod tests {
         let mut s = fresh_state();
         apply_event(
             &mut s,
-            &InnerEvent::CompactionEnd { aborted: Some(true) },
+            &InnerEvent::CompactionEnd {
+                aborted: Some(true),
+            },
         );
         match &s.items[0] {
             DisplayItem::Status { text } => assert_eq!(text, "Compaction aborted"),
@@ -1747,7 +1802,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
-            classification_id: None,
+                classification_id: None,
             },
         );
         apply_event(&mut s, &tool_start("tc1", "read_file"));
@@ -1770,7 +1825,7 @@ mod tests {
             &mut s,
             &InnerEvent::MessageEnd {
                 message: msg("assistant", assistant_content()),
-            classification_id: None,
+                classification_id: None,
             },
         );
 

@@ -1763,6 +1763,34 @@ impl Database {
             .await?)
     }
 
+    /// MON-101: mark retrieved memories as accessed. Best-effort callers may
+    /// pass an empty list; archived/missing rows are naturally ignored.
+    pub async fn mark_memories_accessed_internal(
+        &self,
+        memory_ids: Vec<i64>,
+    ) -> Result<(), MonarchError> {
+        if memory_ids.is_empty() {
+            return Ok(());
+        }
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let tx = conn.transaction()?;
+                for id in memory_ids {
+                    tx.execute(
+                        "UPDATE memories
+                         SET access_count = access_count + 1,
+                             last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                         WHERE id = ?1 AND archived_at IS NULL",
+                        params![id],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(())
+            })
+            .await?)
+    }
+
     /// MON-99: Load embedding BLOBs for all non-archived memories of an agent.
     /// Returns (id, embedding_bytes) pairs for HNSW index rebuild.
     pub async fn load_embeddings_for_agent_internal(
