@@ -208,12 +208,16 @@ pub fn run() {
         tauri::async_runtime::block_on(Database::new())
             .expect("Failed to initialize database"),
     );
-    let agent_mgr = Arc::new(AgentManager::new(database.clone()));
-    let model_cache = Arc::new(ModelCache::new());
     let memory_index = Arc::new({
         let cfg = tauri::async_runtime::block_on(memory_config::resolved());
         MemoryIndex::new(cfg.models_dir)
     });
+    let agent_mgr = Arc::new(AgentManager::new(database.clone(), memory_index.clone()));
+    // MON-100: kick the internal dispatcher so the event-handler path can
+    // enqueue Keeper runs through the shared `Arc<AgentManager>`. Must come
+    // after wrapping in `Arc::new`.
+    agent_mgr.start_dispatcher(database.clone());
+    let model_cache = Arc::new(ModelCache::new());
 
     // Clones for the WS server
     let ws_db = database.clone();

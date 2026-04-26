@@ -234,11 +234,15 @@ impl AgentManager {
         // Owns clones of everything the handler needs; no `self` captured.
         // MON-37: captures `persist_tx` instead of `db_clone` — the reader
         // enqueues PersistCommands rather than running blocking SQL inline.
+        // MON-100: also clones `dispatch_tx` (for trigger enqueue) and `db`
+        // (for the `keeper_result` arm's `current_quest_id` lookup).
         let app_clone = app.clone();
         let inner_clone = self.inner.clone();
         let live_states_clone = self.live_states.clone();
         let ws_tx = self.ws_broadcast.clone();
         let persist_tx = self.persist_tx.clone();
+        let dispatch_tx = self.dispatch_tx.clone();
+        let db_clone = self.db.clone();
         tauri::async_runtime::spawn(async move {
             let mut lines = TokioBufReader::new(stdout).lines();
             loop {
@@ -247,6 +251,8 @@ impl AgentManager {
                         handle_sidecar_event(
                             &app_clone,
                             &persist_tx,
+                            &dispatch_tx,
+                            &db_clone,
                             &inner_clone,
                             &live_states_clone,
                             &ws_tx,

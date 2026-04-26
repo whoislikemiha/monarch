@@ -18,10 +18,13 @@ use tauri::AppHandle;
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 use crate::agent_state::{display_items_from_messages, DisplayItem, LiveAgentState};
-use crate::db::{AgentRow, Database};
+use crate::db::{AgentRow, Database, MemoryRow, MessageRow};
 use crate::error::MonarchError;
+use crate::memory_index::MemoryIndex;
 use crate::persistence::read_agent_prompt_file;
-use crate::sidecar_protocol::{LoadSessionMessage, ShadowConfig, SidecarCommand};
+use crate::sidecar_protocol::{
+    KeeperConfig, LoadSessionMessage, ShadowConfig, SidecarCommand,
+};
 use crate::util::chrono_now;
 
 use super::commands::{ExtensionUiResponseRequest, SpawnAgentRequest};
@@ -95,6 +98,17 @@ pub struct AgentStateInner {
     pub debounce_handle: Option<TaskHandle>,
 }
 
+/// MON-100: internal dispatch channel for tasks that need `Arc<AgentManager>`
+/// (keeper runs, etc.) but originate from the event-handler path which only
+/// has access to `inner` + `live_states`. The event handler enqueues; a
+/// manager-owned consumer task spawned by `start_dispatcher` drains.
+#[derive(Debug)]
+pub(crate) enum InternalDispatch {
+    /// Trigger one continuous-compaction Keeper run for the agent. No-op if
+    /// the Keeper config is empty or a run is already in flight.
+    KeeperRun { agent_id: String },
+}
+
 /// MON-27 lock hierarchy:
 ///
 /// * `inner` (`parking_lot::Mutex<AgentManagerInner>`) — the only lock that
@@ -141,10 +155,22 @@ pub struct AgentManager {
     /// the channel so writes land in FIFO order; bounded capacity of 256
     /// provides back-pressure if SQLite stalls. Cheap to clone.
     pub(super) persist_tx: mpsc::Sender<PersistCommand>,
+    /// MON-100: producer handle for the internal-dispatch task. Cloned into
+    /// the reader's `handle_sidecar_event` so trigger checks can enqueue a
+    /// Keeper run without needing `Arc<AgentManager>` themselves. Drained by
+    /// the consumer spawned in `start_dispatcher`.
+    pub(super) dispatch_tx: mpsc::Sender<InternalDispatch>,
+    /// MON-100: stash for the dispatcher's receiver, taken once by
+    /// `start_dispatcher` after `Arc<Self>` is constructed.
+    dispatch_rx_slot: PlMutex<Option<mpsc::Receiver<InternalDispatch>>>,
+    /// MON-100: shared `Arc<Database>` so the reader-task spawn (in
+    /// `ensure_sidecar`) can pass a db handle to `handle_sidecar_event`
+    /// without threading db through every call site of every Tauri command.
+    pub(super) db: Arc<Database>,
 }
 
 impl AgentManager {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub fn new(db: Arc<Database>, memory_index: Arc<MemoryIndex>) -> Self {
         let (ws_broadcast, _) = broadcast::channel(256);
         // MON-37: bounded channel feeding the single-consumer persistence
         // task. 256 is well above the sidecar's human-scale event rate; if
@@ -159,13 +185,21 @@ impl AgentManager {
         // `new()`, not per sidecar respawn — we do not want to lose enqueued
         // commands when the sidecar crashes. Exits naturally when all
         // senders drop (process exit).
+        // MON-100: thread MemoryIndex through so InsertMemory can embed
+        // before insert and RebuildHnsw can call into the index.
         tauri::async_runtime::spawn(run_persist_consumer(
             persist_rx,
-            db,
+            db.clone(),
+            memory_index,
             live_states.clone(),
             ws_broadcast.clone(),
             app_handle.clone(),
         ));
+
+        // MON-100: dispatcher channel. Bounded — if the Keeper trigger
+        // saturates somehow, back-pressure stalls the reader rather than
+        // queuing unbounded work.
+        let (dispatch_tx, dispatch_rx) = mpsc::channel::<InternalDispatch>(32);
 
         Self {
             sidecar: PlMutex::new(None),
@@ -174,7 +208,156 @@ impl AgentManager {
             ws_broadcast,
             app_handle,
             persist_tx,
+            dispatch_tx,
+            dispatch_rx_slot: PlMutex::new(Some(dispatch_rx)),
+            db,
         }
+    }
+
+    /// MON-100: spawn the dispatcher task that owns `Arc<Self>` so the
+    /// event-handler path can enqueue work like Keeper runs without holding
+    /// a `Self` reference. Idempotent — the receiver is taken once; further
+    /// calls are no-ops. Call once after wrapping the manager in `Arc`.
+    pub fn start_dispatcher(self: &Arc<Self>, db: Arc<Database>) {
+        let Some(rx) = self.dispatch_rx_slot.lock().take() else {
+            return;
+        };
+        let mgr = self.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut rx = rx;
+            while let Some(d) = rx.recv().await {
+                match d {
+                    InternalDispatch::KeeperRun { agent_id } => {
+                        if let Err(e) = mgr.dispatch_keeper_run(&db, &agent_id).await {
+                            eprintln!(
+                                "[monarch] keeper dispatch failed for {}: {:?}",
+                                agent_id, e
+                            );
+                        }
+                    }
+                }
+            }
+            eprintln!("[monarch] dispatcher exited");
+        });
+    }
+
+    /// MON-100: assemble the slice + ship a `KeeperRun` command.
+    ///
+    /// Silent no-op when `memory.toml` has no Keeper model configured (the
+    /// captain hasn't opted in) OR when a run is already in flight for this
+    /// agent (debounces concurrent threshold crossings while the model is
+    /// answering). Errors propagate so the dispatcher logs them.
+    pub async fn dispatch_keeper_run(
+        &self,
+        db: &Arc<Database>,
+        agent_id: &str,
+    ) -> Result<Option<i64>, MonarchError> {
+        let cfg = crate::memory_config::resolved().await;
+        let Some(km) = cfg.keeper.clone() else {
+            return Ok(None);
+        };
+
+        // Guard against double dispatch. The flag is set inside this method
+        // and cleared by the event handler when `keeper_result` lands.
+        let entry = self.live_entry(agent_id);
+        {
+            let g = entry.inner.read().await;
+            if g.state.keeper_in_flight {
+                return Ok(None);
+            }
+        }
+
+        let model_id = format!("{}/{}", km.provider, km.model);
+
+        // Slice anchor: messages with timestamp > last successful run's
+        // completed_at. Empty for the first ever run → all messages.
+        let last_run = db
+            .last_successful_keeper_run_internal(agent_id)
+            .await
+            .ok()
+            .flatten();
+        let since: Option<String> = last_run.as_ref().and_then(|r| r.completed_at.clone());
+        let prior_summary: Option<String> = last_run.and_then(|r| r.output_summary);
+
+        let messages = db
+            .list_agent_messages_since_internal(agent_id, since.as_deref())
+            .await
+            .unwrap_or_default();
+
+        // Cap the slice to the most recent ~30k tokens to keep first-run
+        // distillations within the model's context window. Confirmed scope
+        // with the captain — first-time setup runs against fresh
+        // conversations, so worst-case clipping is rare.
+        let mut budget: i64 = 30_000;
+        let mut newest_first: Vec<MessageRow> = Vec::new();
+        for m in messages.into_iter().rev() {
+            budget = budget.saturating_sub(m.tokens.max(0) as i64);
+            newest_first.push(m);
+            if budget <= 0 {
+                break;
+            }
+        }
+        newest_first.reverse();
+        let kept = newest_first;
+
+        // BM25 top-K=5 over `memories_fts` keyed on the captain's most
+        // recent user prompt. Cheapest signal that lets the Keeper avoid
+        // re-claiming what's already known. Vector retrieval lands in
+        // MON-101.
+        let related_query = kept
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .map(|m| extract_text_from_stored_content(&m.content))
+            .unwrap_or_default();
+        let related = if related_query.trim().is_empty() {
+            Vec::new()
+        } else {
+            let hits = db
+                .fts_search_memories_internal(agent_id, &related_query, 5)
+                .await
+                .unwrap_or_default();
+            let mut out = Vec::new();
+            for h in hits {
+                if let Ok(Some(m)) = db.get_memory_internal(h.memory_id).await {
+                    out.push(m);
+                }
+            }
+            out
+        };
+
+        let slice = render_keeper_slice(prior_summary.as_deref(), &related, &kept);
+
+        let run_id = db
+            .insert_keeper_run_internal(agent_id, "continuous", None, &model_id)
+            .await?;
+
+        // Mark in-flight before shipping the command so any threshold
+        // crossing that lands while the model is answering observes the flag
+        // and skips dispatch.
+        {
+            let mut g = entry.inner.write().await;
+            g.state.keeper_in_flight = true;
+            g.state.state_version = g.state.state_version.saturating_add(1);
+        }
+
+        let cmd = SidecarCommand::KeeperRun {
+            agent_id: agent_id.to_string(),
+            run_id,
+            slice,
+            config: KeeperConfig {
+                provider: km.provider,
+                model: km.model,
+                system_prompt: cfg.keeper_system_prompt,
+            },
+        };
+        if let Err(e) = self.send_to_sidecar(&serde_json::to_string(&cmd)?).await {
+            // Roll back the in-flight flag so a future trigger can retry.
+            let mut g = entry.inner.write().await;
+            g.state.keeper_in_flight = false;
+            return Err(e);
+        }
+        Ok(Some(run_id))
     }
 
     /// Store the AppHandle after Tauri setup so WS commands can use it
@@ -249,6 +432,16 @@ impl AgentManager {
             }],
         };
 
+        // MON-100: seed the compaction-trigger counter from the DB so the
+        // running token sum survives Monarch restarts. Soft/hard threshold
+        // dispatch keeps working without needing the in-memory counter to
+        // outlive the process. Failures are non-fatal — an unseeded counter
+        // just means the next restart starts fresh.
+        let seeded_tokens = db
+            .tokens_since_last_keeper_run_internal(agent_id)
+            .await
+            .unwrap_or(0);
+
         let entry = self.live_entry(agent_id);
         // MON-30: bump before acquiring the inner write lock. This replaces
         // the assembled state wholesale, so any debounce task armed against
@@ -262,6 +455,8 @@ impl AgentManager {
         }
         guard.dirty = false;
         guard.state.reset_with_items(items);
+        guard.state.tokens_since_last_compaction = seeded_tokens;
+        guard.state.keeper_in_flight = false;
         // MON-38: clone + explicit drop before emit_state_event so the write
         // guard is released before any serialization runs.
         let snapshot = guard.state.clone();
@@ -764,6 +959,108 @@ async fn rehydrate_user_content(
     serde_json::to_string(&serde_json::Value::Array(blocks)).unwrap_or_else(|_| String::new())
 }
 
+/// MON-100: render the Keeper's input slice as plain text. The Keeper
+/// system prompt teaches the model the section structure (PRIOR SUMMARY /
+/// RELATED MEMORIES / RECENT ACTIVITY); this helper produces that layout
+/// verbatim so the prompt text and the rendering stay in lockstep.
+fn render_keeper_slice(
+    prior_summary: Option<&str>,
+    related: &[MemoryRow],
+    messages: &[MessageRow],
+) -> String {
+    let mut s = String::new();
+    if let Some(p) = prior_summary {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            s.push_str("## PRIOR SUMMARY (last compaction tick)\n\n");
+            s.push_str(trimmed);
+            s.push_str("\n\n");
+        }
+    }
+    if !related.is_empty() {
+        s.push_str("## RELATED MEMORIES (already known — do not re-claim)\n\n");
+        for m in related {
+            s.push_str(&format!("- {}: {}\n", m.title, m.summary));
+        }
+        s.push('\n');
+    }
+    s.push_str("## RECENT ACTIVITY\n\n");
+    for m in messages {
+        let body = extract_text_from_stored_content(&m.content);
+        let body = if body.trim().is_empty() {
+            m.content.clone()
+        } else {
+            body
+        };
+        s.push_str(&format!("[{} @ {}]\n{}\n\n", m.role, m.timestamp, body));
+    }
+    s
+}
+
+/// MON-100: pull plain text out of a stored `messages.content` value, which
+/// may be a JSON-encoded array of content blocks (assistant), a plain string
+/// (user, free-form), or a tool-result JSON blob. The Keeper benefits from
+/// reading text fluently; image data and binary blobs are skipped.
+fn extract_text_from_stored_content(stored: &str) -> String {
+    let trimmed = stored.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if !(trimmed.starts_with('[') || trimmed.starts_with('{') || trimmed.starts_with('"')) {
+        return stored.to_string();
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(stored) else {
+        return stored.to_string();
+    };
+    match value {
+        serde_json::Value::String(s) => s,
+        serde_json::Value::Array(blocks) => blocks
+            .iter()
+            .filter_map(|b| match b.get("type").and_then(|t| t.as_str()) {
+                Some("text") => b.get("text").and_then(|t| t.as_str()).map(String::from),
+                Some("thinking") => b
+                    .get("thinking")
+                    .and_then(|t| t.as_str())
+                    .map(String::from),
+                Some("toolCall") => {
+                    let name = b
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("tool");
+                    let args = b
+                        .get("arguments")
+                        .map(|a| serde_json::to_string(a).unwrap_or_default())
+                        .unwrap_or_default();
+                    Some(format!("<toolCall name=\"{}\">{}</toolCall>", name, args))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        serde_json::Value::Object(obj) => {
+            // Tool-result JSON: surface `result` + `toolName` so the Keeper
+            // can claim "tool X returned Y" without tripping on the JSON
+            // wrapper.
+            let name = obj
+                .get("toolName")
+                .and_then(|n| n.as_str())
+                .unwrap_or("tool");
+            let result = obj
+                .get("result")
+                .map(|r| {
+                    if let Some(s) = r.as_str() {
+                        s.to_string()
+                    } else {
+                        serde_json::to_string(r).unwrap_or_default()
+                    }
+                })
+                .unwrap_or_default();
+            format!("<toolResult name=\"{}\">{}</toolResult>", name, result)
+        }
+        _ => stored.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! Round-trip tests for MON-33's shared service layer. The goal is to
@@ -797,7 +1094,8 @@ mod tests {
     #[tokio::test]
     async fn kill_agent_round_trip_funnels_through_shared_method() {
         let db = Arc::new(Database::new_in_memory().await.expect("in-memory db"));
-        let mgr = Arc::new(AgentManager::new(db.clone()));
+        let memory_index_for_mgr = Arc::new(MemoryIndex::new(std::env::temp_dir()));
+        let mgr = Arc::new(AgentManager::new(db.clone(), memory_index_for_mgr));
         let model_cache = Arc::new(ModelCache::new());
         let (broadcast_tx, _rx) = broadcast::channel(16);
 

@@ -1811,6 +1811,122 @@ impl Database {
             .await?)
     }
 
+    /// MON-100: lookup `agents.current_quest_id`. Returns None when the
+    /// agent has no current quest, when the row is missing, or on read
+    /// error (caller treats those identically — record no quest event).
+    pub async fn get_agent_current_quest_id_internal(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<String>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let v: Option<String> = conn
+                    .query_row(
+                        "SELECT current_quest_id FROM agents WHERE id = ?1",
+                        params![agent_id],
+                        |row| row.get(0),
+                    )
+                    .ok()
+                    .flatten();
+                Ok(v)
+            })
+            .await?)
+    }
+
+    /// MON-100: Most recent successful Keeper run for an agent, or None.
+    /// Drives slice anchoring (we replay messages newer than this row's
+    /// `completed_at`) and the synthesized scaffold's prior summary (its
+    /// `output_summary`).
+    pub async fn last_successful_keeper_run_internal(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<KeeperRunRow>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, agent_id, trigger, quest_id, started_at, completed_at,
+                            tokens_input, tokens_output, model_id, output_summary, outcome
+                     FROM memory_keeper_runs
+                     WHERE agent_id = ?1 AND outcome = 'ok' AND completed_at IS NOT NULL
+                     ORDER BY completed_at DESC LIMIT 1",
+                )?;
+                let mut rows = stmt.query_map(params![agent_id], map_keeper_run)?;
+                if let Some(row) = rows.next() {
+                    Ok(Some(row?))
+                } else {
+                    Ok(None)
+                }
+            })
+            .await?)
+    }
+
+    /// MON-100: Messages across all of an agent's sessions newer than the
+    /// supplied timestamp (NULL = all). Ordered ascending by timestamp so
+    /// the rendered slice reads chronologically. Excludes the synthetic
+    /// `toolResult` rows? — no: the Keeper benefits from seeing tool output
+    /// inline so it can claim things like "Tool X returned Y", so we keep
+    /// every role.
+    pub async fn list_agent_messages_since_internal(
+        &self,
+        agent_id: &str,
+        since: Option<&str>,
+    ) -> Result<Vec<MessageRow>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        let since = since.map(|s| s.to_string());
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT m.id, m.session_id, m.role, m.content, m.model, m.tokens, m.cost,
+                            m.timestamp, m.duration_ms
+                     FROM messages m JOIN sessions s ON m.session_id = s.id
+                     WHERE s.agent_id = ?1 AND (?2 IS NULL OR m.timestamp > ?2)
+                     ORDER BY m.timestamp ASC, m.id ASC",
+                )?;
+                let rows = stmt.query_map(params![agent_id, since], map_message)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .await?)
+    }
+
+    /// MON-100: Sum of `messages.tokens` across the agent's sessions newer
+    /// than the last successful Keeper run. Used to seed
+    /// `LiveAgentState.tokens_since_last_compaction` on Monarch restart so
+    /// the trigger keeps working without requiring an in-memory counter to
+    /// survive process death.
+    pub async fn tokens_since_last_keeper_run_internal(
+        &self,
+        agent_id: &str,
+    ) -> Result<i64, MonarchError> {
+        let agent_id = agent_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let last: Option<String> = conn
+                    .query_row(
+                        "SELECT completed_at FROM memory_keeper_runs
+                         WHERE agent_id = ?1 AND outcome = 'ok' AND completed_at IS NOT NULL
+                         ORDER BY completed_at DESC LIMIT 1",
+                        params![agent_id],
+                        |row| row.get(0),
+                    )
+                    .ok();
+                let sum: i64 = conn.query_row(
+                    "SELECT COALESCE(SUM(m.tokens), 0) FROM messages m
+                     JOIN sessions s ON m.session_id = s.id
+                     WHERE s.agent_id = ?1 AND (?2 IS NULL OR m.timestamp > ?2)",
+                    params![agent_id, last],
+                    |row| row.get(0),
+                )?;
+                Ok(sum)
+            })
+            .await?)
+    }
+
     /// MON-99: Mark a Keeper run as completed (ok | failed | partial).
     pub async fn complete_keeper_run_internal(
         &self,
