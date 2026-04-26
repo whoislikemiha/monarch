@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Agent, Project, ShadowIdentity } from "./types";
   import { agentStore } from "./stores/agentStore.svelte";
-  import { liveAgentStore } from "./toolbox/liveAgentStore.svelte";
+  import { liveAgentStore, abortAgent } from "./toolbox/liveAgentStore.svelte";
   import { formatCost } from "./format";
   import { ShadowAvatar } from "./avatar";
 
@@ -211,7 +211,27 @@
                     {/if}
                   </div>
                   <div class="pill-status" title={statusLine}>
-                    {#if streaming}<span class="pill-pulse-dot"></span>{/if}
+                    {#if streaming}
+                      <button
+                        type="button"
+                        class="pill-pulse-stop"
+                        onclick={(e: MouseEvent) => { e.stopPropagation(); void abortAgent(agent.id); }}
+                        onkeydown={(e: KeyboardEvent) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void abortAgent(agent.id);
+                          }
+                        }}
+                        title="Stop {agent.name}"
+                        aria-label="Stop {agent.name}"
+                      >
+                        <span class="pill-pulse-dot" aria-hidden="true"></span>
+                        <svg class="pill-pulse-icon" width="9" height="9" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                          <rect x="6" y="6" width="12" height="12" rx="1.5"/>
+                        </svg>
+                      </button>
+                    {/if}
                     <span class="pill-status-text">{statusLine}</span>
                   </div>
                 </div>
@@ -524,6 +544,23 @@
     color: var(--accent);
   }
 
+  .pill-pulse-stop {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.12s, color 0.12s;
+  }
+
   .pill-pulse-dot {
     width: 5px;
     height: 5px;
@@ -531,6 +568,37 @@
     background: var(--accent);
     flex-shrink: 0;
     animation: pill-pulse 1.2s ease-in-out infinite;
+    transition: opacity 0.12s;
+  }
+
+  .pill-pulse-icon {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+
+  /*
+   * On pill hover or button focus: hide the pulsing dot, reveal the stop
+   * glyph, tint the button danger. Keyboard users get the same affordance
+   * via :focus-visible.
+   */
+  .pill:hover .pill-pulse-stop,
+  .pill-pulse-stop:focus-visible {
+    background: color-mix(in srgb, var(--error, #eb5757) 22%, transparent);
+    color: var(--error, #eb5757);
+    outline: none;
+  }
+
+  .pill:hover .pill-pulse-stop .pill-pulse-dot,
+  .pill-pulse-stop:focus-visible .pill-pulse-dot {
+    opacity: 0;
+  }
+
+  .pill:hover .pill-pulse-stop .pill-pulse-icon,
+  .pill-pulse-stop:focus-visible .pill-pulse-icon {
+    opacity: 1;
   }
 
   @keyframes pill-pulse {
