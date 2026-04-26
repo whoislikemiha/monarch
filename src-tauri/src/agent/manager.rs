@@ -777,6 +777,7 @@ mod tests {
 
     use super::*;
     use crate::db::Database;
+    use crate::memory_index::MemoryIndex;
     use crate::models::ModelCache;
     use crate::sidecar_protocol::SidecarCommand;
     use crate::ws::{self, WsState};
@@ -821,10 +822,12 @@ mod tests {
         mgr.kill("ipc-kill").await.expect("ipc kill");
 
         // WS side: full dispatch path — decode args, delegate to mgr.kill.
+        let memory_index = Arc::new(MemoryIndex::new(std::env::temp_dir()));
         let ws_state = WsState {
             db,
             agent_mgr: mgr.clone(),
             model_cache,
+            memory_index,
             broadcast_rx: broadcast_tx,
         };
         ws::dispatch_command(
