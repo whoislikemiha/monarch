@@ -131,8 +131,32 @@ export const commands = {
 	dbGetMessages: (sessionId: string) => typedError<MessageRow[], ErrorDto>(__TAURI_INVOKE("db_get_messages", { sessionId })),
 	// Get messages for a session, including all ancestor sessions (for continued sessions)
 	dbGetMessagesWithAncestry: (sessionId: string) => typedError<MessageRow[], ErrorDto>(__TAURI_INVOKE("db_get_messages_with_ancestry", { sessionId })),
-	dbSaveMemory: (memory: MemoryRow) => typedError<number, ErrorDto>(__TAURI_INVOKE("db_save_memory", { memory })),
-	dbGetMemories: (agentId: string | null, layer: string | null) => typedError<MemoryRow[], ErrorDto>(__TAURI_INVOKE("db_get_memories", { agentId, layer })),
+	// MON-99: List all non-archived memories for an agent (Memory Inspector v0).
+	dbListMemoriesForAgent: (agentId: string) => typedError<MemoryRow[], ErrorDto>(__TAURI_INVOKE("db_list_memories_for_agent", { agentId })),
+	// MON-99: Get a single memory by id.
+	dbGetMemory: (id: number) => typedError<{
+	id: number,
+	agentId: string | null,
+	scope: string,
+	projectId: string | null,
+	parentId: number | null,
+	layer: string,
+	kind: string | null,
+	title: string,
+	summary: string,
+	content: string | null,
+	manualOverride: boolean,
+	sourceQuestId: string | null,
+	sourceSessionId: string | null,
+	sourceEvents: string | null,
+	fileRefs: string | null,
+	embeddingModelId: string | null,
+	supersedesId: number | null,
+	archivedAt: string | null,
+	createdAt: string,
+	lastAccessedAt: string | null,
+	accessCount: number,
+} | null, ErrorDto>(__TAURI_INVOKE("db_get_memory", { id })),
 	dbLogEvent: (agentId: string | null, sessionId: string | null, eventType: string, data: string | null) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_log_event", { agentId, sessionId, eventType, data })),
 	dbListAgentTemplates: () => typedError<AgentTemplateRow[], ErrorDto>(__TAURI_INVOKE("db_list_agent_templates")),
 	dbSaveAgentTemplate: (template: AgentTemplateRow) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_save_agent_template", { template })),
@@ -218,6 +242,17 @@ export const commands = {
 	classifierGetConfig: () => typedError<ResolvedClassifierConfig, ErrorDto>(__TAURI_INVOKE("classifier_get_config")),
 	classifierSetConfig: (config: ClassifierConfig) => typedError<ResolvedClassifierConfig, ErrorDto>(__TAURI_INVOKE("classifier_set_config", { config })),
 	classifierGetConfigPath: () => typedError<string, ErrorDto>(__TAURI_INVOKE("classifier_get_config_path")),
+	memoryGetConfig: () => typedError<ResolvedMemoryConfig, ErrorDto>(__TAURI_INVOKE("memory_get_config")),
+	memorySetConfig: (config: MemoryConfig) => typedError<ResolvedMemoryConfig, ErrorDto>(__TAURI_INVOKE("memory_set_config", { config })),
+	memoryGetConfigPath: () => typedError<string, ErrorDto>(__TAURI_INVOKE("memory_get_config_path")),
+	// Tauri command: check whether the embedding model files are present.
+	memoryIndexStatus: () => typedError<boolean, ErrorDto>(__TAURI_INVOKE("memory_index_status")),
+	/**
+	 *  Tauri command: download model files + initialise the embedder.
+	 *  Called from the Settings Memory tab.
+	 */
+	memoryDownloadAndInit: () => typedError<null, ErrorDto>(__TAURI_INVOKE("memory_download_and_init")),
+	memorySmokeInsert: (agentId: string, title: string, content: string) => typedError<number, ErrorDto>(__TAURI_INVOKE("memory_smoke_insert", { agentId, title, content })),
 };
 
 /* Types */
@@ -374,6 +409,11 @@ attachments?: MessageAttachmentRow[] } | { kind: "assistant"; content: ("Null" |
  */
 durationMs?: number | null } | { kind: "tool-group"; executions: ToolExecution[]; turnComplete: boolean } | { kind: "status"; text: string } | { kind: "notification"; text: string; level: NotificationLevel };
 
+export type EmbeddingConfig = {
+	modelId?: string | null,
+	modelsDir?: string | null,
+};
+
 export type ErrorDto = {
 	kind: string,
 	message: string,
@@ -392,6 +432,11 @@ export type ExtensionUiResponseRequest = {
 	agentId: string,
 	requestId: string,
 	value: "Null" | ({ Bool: boolean }) & { Array?: never; Number?: never; Object?: never; String?: never } | ({ Number: ({ f64: number }) & { i64?: never; u64?: never } | ({ i64: number }) & { f64?: never; u64?: never } | ({ u64: number }) & { f64?: never; i64?: never } }) & { Array?: never; Bool?: never; Object?: never; String?: never } | ({ String: string }) & { Array?: never; Bool?: never; Number?: never; Object?: never } | ({ Array: Value[] }) & { Bool?: never; Number?: never; Object?: never; String?: never } | ({ Object: { [key in string]: Value } }) & { Array?: never; Bool?: never; Number?: never; String?: never },
+};
+
+export type KeeperModelConfig = {
+	provider: string,
+	model: string,
 };
 
 export type LiveAgentState = {
@@ -431,15 +476,34 @@ export type LiveAgentState = {
 	isStreaming: boolean,
 };
 
+export type MemoryConfig = {
+	keeper?: KeeperModelConfig | null,
+	embedding?: EmbeddingConfig | null,
+	topK?: number | null,
+};
+
+// MON-99: P2 memory row returned to frontend / used for retrieval.
 export type MemoryRow = {
 	id: number,
 	agentId: string | null,
+	scope: string,
+	projectId: string | null,
+	parentId: number | null,
 	layer: string,
-	category: string,
-	content: string,
-	relevance: number,
+	kind: string | null,
+	title: string,
+	summary: string,
+	content: string | null,
+	manualOverride: boolean,
+	sourceQuestId: string | null,
+	sourceSessionId: string | null,
+	sourceEvents: string | null,
+	fileRefs: string | null,
+	embeddingModelId: string | null,
+	supersedesId: number | null,
+	archivedAt: string | null,
 	createdAt: string,
-	lastAccessed: string | null,
+	lastAccessedAt: string | null,
 	accessCount: number,
 };
 
@@ -581,6 +645,16 @@ export type ResolvedClassifierConfig = {
 	fallback: ClassifierProvider | null,
 	timeoutMs: number,
 	systemPrompt: string,
+};
+
+// Resolved view — all fields filled in, ready to ship to the sidecar / memory index.
+export type ResolvedMemoryConfig = {
+	// If None, the Keeper is disabled.
+	keeper: KeeperModelConfig | null,
+	embeddingModelId: string,
+	modelsDir: string,
+	topK: number,
+	enabled: boolean,
 };
 
 export type SessionRow = {

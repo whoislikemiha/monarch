@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@mariozechner/pi-ai": "^0.67.68",
-    "@mariozechner/pi-coding-agent": "^0.67.68",
+    "@mariozechner/pi-coding-agent": "^0.70.2",
     "@rive-app/canvas": "^2.37.1",
     "@rive-app/webgl2": "^2.37.1",
     "@tauri-apps/api": "^2",

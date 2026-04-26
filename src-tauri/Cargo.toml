@@ -36,6 +36,13 @@ base64 = "0.22"
 toml = "0.8"
 ignore = "0.4"
 nucleo-matcher = "0.3"
+# MON-99: shadow memory storage stack (validated by MON-91 spike)
+instant-distance = { version = "0.6", features = ["with-serde"] }
+ort = { version = "2.0.0-rc.12", features = ["download-binaries", "ndarray"] }
+tokenizers = { version = "0.22", default-features = false, features = ["http", "fancy-regex"] }
+ndarray = "0.17"
+bincode = "1"
+bytemuck = { version = "1", features = ["derive"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

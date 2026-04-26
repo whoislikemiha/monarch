@@ -2,6 +2,7 @@
   import { invoke } from "$lib/api";
   import { listThemes, applyTheme, getActiveTheme, type ThemeId, type Theme } from "./themes";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
+  import MemorySettings from "./MemorySettings.svelte";
 
   let {
     onclose,
@@ -17,6 +18,7 @@
     { id: "general", label: "General" },
     { id: "appearance", label: "Appearance" },
     { id: "agent-defaults", label: "Agent Defaults" },
+    { id: "memory", label: "Memory" },
     { id: "keybindings", label: "Keybindings" },
   ];
 
@@ -111,6 +113,8 @@
               <button class="zoom-reset" onclick={() => onzoom(1.0)} disabled={zoomPercent === 100}>Reset</button>
             </div>
           </div>
+        {:else if activeCategory === "memory"}
+          <MemorySettings />
         {:else if activeCategory === "keybindings"}
           <KeybindingsSettings />
         {:else}

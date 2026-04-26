@@ -116,6 +116,8 @@ export function createUIBridge(
 			return () => {};
 		},
 		setWorkingMessage() {},
+		setWorkingIndicator() {},
+		addAutocompleteProvider() {},
 		setHiddenThinkingLabel() {},
 		setWidget() {},
 		setFooter() {},
