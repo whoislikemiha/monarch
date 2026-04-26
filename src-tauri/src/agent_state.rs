@@ -207,6 +207,22 @@ pub struct LiveAgentState {
     /// Runtime-only; the frontend reads the already-formatted status text.
     #[serde(skip)]
     pub agent_started_at_ms: Option<i64>,
+    /// MON-100: running sum of `usage.input + output + cache_read + cache_write`
+    /// across assistant `message_end` events since the last successful Keeper
+    /// tick. The event handler compares this against soft/hard thresholds in
+    /// `memory.toml` to decide when to dispatch a Keeper run; on a successful
+    /// `keeper_result`, the handler resets it to 0. Seeded on cold restart from
+    /// the DB via `rebuild_state_from_session` so the counter survives Monarch
+    /// restarts. Sum components instead of trusting `total_tokens` so we know
+    /// exactly what we're measuring (cache reads must count — the Anthropic
+    /// 200k-cache-read window is real context the LLM has loaded).
+    #[serde(default)]
+    pub tokens_since_last_compaction: i64,
+    /// MON-100: true between dispatching a Keeper run and observing the
+    /// matching `keeper_result`. Prevents the trigger logic from firing twice
+    /// for the same threshold crossing while the model is still answering.
+    #[serde(skip)]
+    pub keeper_in_flight: bool,
 }
 
 // ---- Event application -------------------------------------------------

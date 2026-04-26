@@ -19,13 +19,14 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::db::{Database, MessageRow, SaveClassificationPayload};
+use crate::db::{Database, InsertMemoryPayload, MessageRow, RecordQuestEventPayload, SaveClassificationPayload};
 use crate::error::MonarchError;
+use crate::memory_index::MemoryIndex;
 use crate::persistence::write_attachment_bytes;
 use crate::sidecar_protocol::InnerEvent;
 use crate::util::chrono_now;
 
-use super::event_handler::mark_agent_desynced;
+use super::event_handler::{emit_event, mark_agent_desynced};
 use super::manager::AgentStateEntry;
 use super::WsBroadcast;
 
@@ -108,6 +109,39 @@ pub(super) enum PersistCommand {
     SaveClassification {
         payload: SaveClassificationPayload,
     },
+    /// MON-100: insert one Keeper-produced atomic claim. The consumer embeds
+    /// `payload.summary` via `MemoryIndex::embed_to_blob` before the insert
+    /// so the new row carries an embedding immediately. If the embedder is
+    /// not initialised the row is still written (without an embedding) and
+    /// the subsequent `RebuildHnsw` simply skips it — the captain can still
+    /// see the memory in the Inspector and FTS5 retrieval still works.
+    InsertMemory {
+        agent_id: String,
+        payload: InsertMemoryPayload,
+    },
+    /// MON-100: mark a `memory_keeper_runs` row complete with outcome +
+    /// summary + token counts.
+    CompleteKeeperRun {
+        run_id: i64,
+        outcome: String,
+        output_summary: Option<String>,
+        tokens_in: Option<i64>,
+        tokens_out: Option<i64>,
+    },
+    /// MON-100 / MON-83: append one row to `quest_events` and broadcast on
+    /// `quest-event-{questId}` so the QuestTimelineTool wakes. Wraps the
+    /// existing `db.record_quest_event_internal` + `agent::emit_event` pair
+    /// from the `db_record_quest_event` Tauri command.
+    RecordQuestEvent {
+        payload: RecordQuestEventPayload,
+    },
+    /// MON-100: full-rebuild the per-agent HNSW index from current DB
+    /// embeddings. Runs last in a Keeper-tick burst so the index is
+    /// consistent before the next read. P3d (MON-97) replaces this with
+    /// incremental insert.
+    RebuildHnsw {
+        agent_id: String,
+    },
 }
 
 impl PersistCommand {
@@ -118,14 +152,24 @@ impl PersistCommand {
             | Self::SaveToolResult { agent_id, .. }
             | Self::IncrementAgentStats { agent_id, .. }
             | Self::IncrementAgentTurns { agent_id, .. }
-            | Self::RecordToolUsage { agent_id, .. } => agent_id,
+            | Self::RecordToolUsage { agent_id, .. }
+            | Self::InsertMemory { agent_id, .. }
+            | Self::RebuildHnsw { agent_id, .. } => agent_id,
             Self::SaveClassification { payload } => &payload.agent_id,
+            // CompleteKeeperRun + RecordQuestEvent don't carry an agent id
+            // directly — failures still log but cannot flip a per-agent
+            // desync flag. Empty string causes the consumer's desync helper
+            // to short-circuit (`if agent_id.is_empty()`).
+            Self::CompleteKeeperRun { .. } | Self::RecordQuestEvent { .. } => "",
         }
     }
 
     async fn apply(
         self,
         db: &Database,
+        memory_index: &Arc<MemoryIndex>,
+        app: &Arc<PlMutex<Option<AppHandle>>>,
+        ws_tx: &broadcast::Sender<WsBroadcast>,
         ctx: &mut PersistContext,
     ) -> Result<(), MonarchError> {
         match self {
@@ -259,6 +303,75 @@ impl PersistCommand {
                 // Suppress unused-mut warning when `linked` is None.
                 let _ = &mut payload;
                 Ok(())
+            }
+            Self::InsertMemory { agent_id: _, payload } => {
+                // MON-100: embed the summary before insert. If the embedder
+                // is not initialised (captain hasn't downloaded the model)
+                // we still write the row — FTS5 search keeps working off
+                // title+summary+content; only the HNSW vector path is
+                // skipped until the next rebuild after init.
+                let (embedding, embedding_model_id) = if memory_index
+                    .is_initialized()
+                {
+                    match memory_index.embed_to_blob(&payload.summary).await {
+                        Ok(blob) => (
+                            Some(blob),
+                            Some(crate::memory_config::DEFAULT_EMBEDDING_MODEL_ID.to_string()),
+                        ),
+                        Err(e) => {
+                            eprintln!("[monarch] keeper: embed failed: {}", e);
+                            (None, None)
+                        }
+                    }
+                } else {
+                    (None, None)
+                };
+                db.insert_memory_internal(payload, embedding, embedding_model_id)
+                    .await
+                    .map(|_| ())
+            }
+            Self::CompleteKeeperRun {
+                run_id,
+                outcome,
+                output_summary,
+                tokens_in,
+                tokens_out,
+            } => {
+                db.complete_keeper_run_internal(
+                    run_id,
+                    &outcome,
+                    output_summary,
+                    tokens_in,
+                    tokens_out,
+                )
+                .await
+            }
+            Self::RecordQuestEvent { payload } => {
+                let quest_id = payload.quest_id.clone();
+                let event_type = payload.event_type.clone();
+                let id = db.record_quest_event_internal(&payload).await?;
+                // Mirrors the `db_record_quest_event` Tauri command's broadcast
+                // so the QuestTimelineTool wakes regardless of how the event
+                // was authored (UI button, Keeper tick, executor, …).
+                let app_opt = app.lock().clone();
+                if let Some(app) = app_opt {
+                    emit_event(
+                        &app,
+                        ws_tx,
+                        &format!("quest-event-{}", quest_id),
+                        &serde_json::json!({ "id": id, "eventType": event_type }).to_string(),
+                    );
+                }
+                Ok(())
+            }
+            Self::RebuildHnsw { agent_id } => {
+                // P2 ships full-rebuild — instant-distance is fast enough for
+                // P2 volumes (<10k memories per agent). MON-97 (P3d) replaces
+                // this with incremental insert.
+                let data = db
+                    .load_embeddings_for_agent_internal(&agent_id)
+                    .await?;
+                memory_index.rebuild(data).await
             }
         }
     }
@@ -531,6 +644,7 @@ fn inner_event_tag(event: &InnerEvent) -> &'static str {
 pub(super) async fn run_persist_consumer(
     mut rx: mpsc::Receiver<PersistCommand>,
     db: Arc<Database>,
+    memory_index: Arc<MemoryIndex>,
     live_states: Arc<DashMap<String, Arc<AgentStateEntry>>>,
     ws_tx: broadcast::Sender<WsBroadcast>,
     app_handle: Arc<PlMutex<Option<AppHandle>>>,
@@ -538,7 +652,10 @@ pub(super) async fn run_persist_consumer(
     let mut ctx = PersistContext::default();
     while let Some(cmd) = rx.recv().await {
         let agent_id = cmd.agent_id().to_string();
-        let err: String = match cmd.apply(&db, &mut ctx).await {
+        let err: String = match cmd
+            .apply(&db, &memory_index, &app_handle, &ws_tx, &mut ctx)
+            .await
+        {
             Ok(()) => continue,
             Err(e) => e.to_string(),
         };

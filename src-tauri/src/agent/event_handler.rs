@@ -14,10 +14,11 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{broadcast, mpsc};
 
-use crate::agent_state::{ApplyOutcome, LiveAgentState};
-use crate::sidecar_protocol::{apply_event, InnerEvent, SidecarEvent};
+use crate::agent_state::{ApplyOutcome, DisplayItem, LiveAgentState};
+use crate::db::{Database, InsertMemoryPayload, RecordQuestEventPayload};
+use crate::sidecar_protocol::{apply_event, AtomicClaim, InnerEvent, SidecarEvent};
 
-use super::manager::{AgentManagerInner, AgentStateEntry};
+use super::manager::{AgentManagerInner, AgentStateEntry, InternalDispatch};
 use super::persist::{build_persist_commands, EventDurations, PersistCommand};
 use super::{WsBroadcast, DEBOUNCE_MILLIS};
 
@@ -87,6 +88,8 @@ pub(super) fn emit_state_event(
 pub(super) async fn handle_sidecar_event(
     app: &AppHandle,
     persist_tx: &mpsc::Sender<PersistCommand>,
+    dispatch_tx: &mpsc::Sender<InternalDispatch>,
+    db: &Arc<Database>,
     inner: &Arc<PlMutex<AgentManagerInner>>,
     live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
     ws_tx: &broadcast::Sender<WsBroadcast>,
@@ -211,6 +214,14 @@ pub(super) async fn handle_sidecar_event(
             // Apply the event to per-agent LiveAgentState and decide whether
             // to emit a snapshot now, debounce it, or skip.
             apply_and_maybe_emit(app, ws_tx, live_states, &agent_id, &inner_event).await;
+
+            // MON-100: continuous-compaction trigger checks. Run after the
+            // event applied (so `tokens_since_last_compaction` reflects the
+            // post-event sum) and only at "natural" boundaries — TurnEnd
+            // for the soft threshold, MessageEnd for the hard threshold.
+            // The dispatcher consumes via `Arc<AgentManager>` since
+            // Keeper dispatch needs the sidecar pipe + db.
+            maybe_trigger_keeper(dispatch_tx, live_states, &agent_id, &inner_event).await;
         }
 
         SidecarEvent::ExtensionUiRequest { agent_id } => {
@@ -282,6 +293,73 @@ pub(super) async fn handle_sidecar_event(
             emit_event(app, ws_tx, &event_name, &out.to_string());
         }
 
+        SidecarEvent::KeeperResult {
+            agent_id,
+            run_id,
+            claims,
+            compaction_summary,
+            model,
+            tokens_in,
+            tokens_out,
+            latency_ms,
+            error,
+        } => {
+            // Surface model + latency at stderr; tokens land on the run row.
+            // Pre-emptive observability for calibrating thresholds and
+            // catching regressions while Slice B is bedding in.
+            if let Some(err) = error.as_ref() {
+                eprintln!(
+                    "[monarch] keeper_result {} agent={} model={:?} latency_ms={:?} ERROR: {}",
+                    run_id, agent_id, model, latency_ms, err
+                );
+            } else {
+                let claims_count = claims.as_ref().map(|c| c.len()).unwrap_or(0);
+                eprintln!(
+                    "[monarch] keeper_result {} agent={} model={:?} latency_ms={:?} claims={} tokens_in={:?} tokens_out={:?}",
+                    run_id, agent_id, model, latency_ms, claims_count, tokens_in, tokens_out
+                );
+            }
+            handle_keeper_result(
+                app,
+                persist_tx,
+                live_states,
+                ws_tx,
+                inner,
+                db,
+                &agent_id,
+                run_id,
+                claims,
+                compaction_summary,
+                tokens_in,
+                tokens_out,
+                error,
+            )
+            .await;
+        }
+
+        SidecarEvent::KeeperRewriteApplied {
+            agent_id,
+            run_id,
+            pre_length,
+            post_length,
+        } => {
+            eprintln!(
+                "[monarch] keeper_rewrite_applied {} agent={} pre={} post={}",
+                run_id, agent_id, pre_length, post_length
+            );
+            push_status_for_agent(
+                app,
+                ws_tx,
+                live_states,
+                &agent_id,
+                format!(
+                    "✦ Context compacted (Keeper run #{} — {} → {} messages in LLM view)",
+                    run_id, pre_length, post_length
+                ),
+            )
+            .await;
+        }
+
         SidecarEvent::Unknown { raw } => {
             // Envelope-level unknown — the sidecar shipped a top-level
             // message type the Rust side doesn't recognize. Flip desync for
@@ -294,6 +372,257 @@ pub(super) async fn handle_sidecar_event(
             }
         }
     }
+}
+
+/// MON-100: append a `DisplayItem::Status` to the agent's live state and
+/// emit a snapshot. Used by Keeper observability events so the captain sees
+/// "Memories distilled" / "Context compacted" rows land in the chat thread.
+async fn push_status_for_agent(
+    app: &AppHandle,
+    ws_tx: &broadcast::Sender<WsBroadcast>,
+    live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
+    agent_id: &str,
+    text: String,
+) {
+    let Some(entry) = live_states.get(agent_id).map(|e| e.clone()) else {
+        return;
+    };
+    let mut g = entry.inner.write().await;
+    g.state.items.push(DisplayItem::Status { text });
+    g.state.state_version = g.state.state_version.saturating_add(1);
+    let snap = g.state.clone();
+    drop(g);
+    emit_state_event(app, ws_tx, &entry.topic, &snap);
+}
+
+/// MON-100: enqueue a Keeper run when the running token sum crosses a
+/// threshold at the right boundary. Soft threshold fires at `TurnEnd` (next
+/// natural breakpoint after crossing); hard threshold fires at `MessageEnd`
+/// regardless. Reads thresholds from `memory.toml` per call — the file is
+/// tiny (microseconds) and the call rate is at most a couple per turn.
+async fn maybe_trigger_keeper(
+    dispatch_tx: &mpsc::Sender<InternalDispatch>,
+    live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
+    agent_id: &str,
+    event: &InnerEvent,
+) {
+    let (is_soft_boundary, is_hard_boundary) = match event {
+        InnerEvent::TurnEnd => (true, false),
+        // Hard trigger only on assistant `message_end` — that's where the
+        // usage delta lands and that's the only role for which the executor
+        // is producing live tokens.
+        InnerEvent::MessageEnd { message, .. } if message.role == "assistant" => (true, true),
+        _ => return,
+    };
+
+    let cfg = crate::memory_config::resolved().await;
+    if !cfg.enabled {
+        return;
+    }
+
+    let entry = match live_states.get(agent_id) {
+        Some(e) => e.clone(),
+        None => return,
+    };
+    let tokens = {
+        let g = entry.inner.read().await;
+        if g.state.keeper_in_flight {
+            return;
+        }
+        g.state.tokens_since_last_compaction
+    };
+
+    let crossed_hard = is_hard_boundary && tokens >= cfg.hard_threshold_tokens as i64;
+    let crossed_soft = is_soft_boundary && tokens >= cfg.soft_threshold_tokens as i64;
+    if !(crossed_hard || crossed_soft) {
+        return;
+    }
+
+    if let Err(e) = dispatch_tx
+        .try_send(InternalDispatch::KeeperRun {
+            agent_id: agent_id.to_string(),
+        })
+    {
+        // try_send avoids stalling the reader; the channel is bounded but
+        // 32 is plenty for the worst-case rate (≤1 per turn). Failure
+        // means the dispatcher is saturated or shutting down — log and
+        // wait for the next boundary.
+        eprintln!(
+            "[monarch] keeper dispatch enqueue failed for {}: {:?}",
+            agent_id, e
+        );
+    }
+}
+
+/// MON-100: handle one `keeper_result` from the sidecar.
+///
+/// On error: log + mark the run as 'error' in the DB; clear `keeper_in_flight`
+/// so the next threshold crossing can retry; leave the token counter alone
+/// (we want to retry from the same anchor).
+///
+/// On success: clear `keeper_in_flight` + reset `tokens_since_last_compaction`
+/// in the live state, then enqueue persist commands FIFO: N × InsertMemory →
+/// CompleteKeeperRun → RecordQuestEvent (when a current quest is set) →
+/// RebuildHnsw. The sidecar already rewrote Pi's `state.messages` in-place.
+#[allow(clippy::too_many_arguments)]
+async fn handle_keeper_result(
+    app: &AppHandle,
+    persist_tx: &mpsc::Sender<PersistCommand>,
+    live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
+    ws_tx: &broadcast::Sender<WsBroadcast>,
+    inner: &Arc<PlMutex<AgentManagerInner>>,
+    db: &Arc<Database>,
+    agent_id: &str,
+    run_id: i64,
+    claims: Option<Vec<AtomicClaim>>,
+    compaction_summary: Option<String>,
+    tokens_in: Option<i64>,
+    tokens_out: Option<i64>,
+    error: Option<String>,
+) {
+    // Reset live-state flags before enqueueing persistence work so the very
+    // next event for this agent sees a clean window.
+    if let Some(entry) = live_states.get(agent_id).map(|e| e.clone()) {
+        let mut g = entry.inner.write().await;
+        g.state.keeper_in_flight = false;
+        if error.is_none() {
+            g.state.tokens_since_last_compaction = 0;
+        }
+        g.state.state_version = g.state.state_version.saturating_add(1);
+        let snap = g.state.clone();
+        drop(g);
+        emit_state_event(app, ws_tx, &entry.topic, &snap);
+    }
+
+    // Failure path: just close out the run row; do not write memories.
+    if let Some(err_msg) = error.as_ref() {
+        eprintln!(
+            "[monarch] keeper run {} for {} failed: {}",
+            run_id, agent_id, err_msg
+        );
+        let _ = persist_tx
+            .send(PersistCommand::CompleteKeeperRun {
+                run_id,
+                outcome: "error".to_string(),
+                output_summary: Some(err_msg.clone()),
+                tokens_in,
+                tokens_out,
+            })
+            .await;
+        return;
+    }
+
+    let claims = claims.unwrap_or_default();
+    let summary = compaction_summary.unwrap_or_default();
+    let session_id = inner.lock().session_map.get(agent_id).cloned();
+
+    // Resolve the agent's current quest id once (used for both the memory
+    // provenance FK and the optional compaction_tick event).
+    let current_quest_id = db
+        .get_agent_current_quest_id_internal(agent_id)
+        .await
+        .ok()
+        .flatten();
+
+    // Provenance: `source_events` carries the message ids that fed the
+    // slice. P2 ships an empty array here — the substrate already records
+    // raw events in `events` and the slice rendering is deterministic from
+    // `last_keeper_run.completed_at`, so this is informational. P3+
+    // populates it once we want fine-grained replay.
+    for c in claims.iter() {
+        let payload = InsertMemoryPayload {
+            agent_id: Some(agent_id.to_string()),
+            scope: "self".to_string(),
+            project_id: None,
+            parent_id: None,
+            layer: "leaf".to_string(),
+            kind: c.kind.clone(),
+            title: c.title.clone(),
+            summary: c.summary.clone(),
+            content: Some(c.content.clone()),
+            source_quest_id: current_quest_id.clone(),
+            source_session_id: session_id.clone(),
+            source_events: None,
+            file_refs: None,
+            supersedes_id: None,
+        };
+        if persist_tx
+            .send(PersistCommand::InsertMemory {
+                agent_id: agent_id.to_string(),
+                payload,
+            })
+            .await
+            .is_err()
+        {
+            eprintln!("[monarch] persist consumer closed, dropping InsertMemory");
+            return;
+        }
+    }
+
+    // Mark the run as ok with the produced summary + token counts.
+    if persist_tx
+        .send(PersistCommand::CompleteKeeperRun {
+            run_id,
+            outcome: "ok".to_string(),
+            output_summary: Some(summary.clone()),
+            tokens_in,
+            tokens_out,
+        })
+        .await
+        .is_err()
+    {
+        return;
+    }
+
+    // Compaction tick on the quest timeline — only when an agent has a
+    // current quest. Plan: when no quest is set, the run is visible only
+    // via `memory_keeper_runs` and the new memories themselves.
+    if let Some(qid) = current_quest_id {
+        let payload_json = serde_json::json!({
+            "keeper_run_id": run_id,
+            "claims_count": claims.len(),
+            "summary": summary,
+        })
+        .to_string();
+        let _ = persist_tx
+            .send(PersistCommand::RecordQuestEvent {
+                payload: RecordQuestEventPayload {
+                    quest_id: qid,
+                    event_type: "compaction_tick".to_string(),
+                    actor: Some("keeper".to_string()),
+                    payload_json: Some(payload_json),
+                },
+            })
+            .await;
+    }
+
+    // HNSW rebuild last so the index is consistent before any subsequent
+    // retrieval reads.
+    let _ = persist_tx
+        .send(PersistCommand::RebuildHnsw {
+            agent_id: agent_id.to_string(),
+        })
+        .await;
+
+    // MON-100: visible signal in the chat thread. The actual `state.messages`
+    // rewrite happens at the next `turn_end`; this status row just confirms
+    // the Keeper itself succeeded and N memories landed.
+    let memories_label = if claims.len() == 1 {
+        "1 memory".to_string()
+    } else {
+        format!("{} memories", claims.len())
+    };
+    push_status_for_agent(
+        app,
+        ws_tx,
+        live_states,
+        agent_id,
+        format!(
+            "◈ Keeper distilled {} (run #{}) — context compacts at next turn end",
+            memories_label, run_id
+        ),
+    )
+    .await;
 }
 
 /// MON-30: body of the debounce task, factored out so it can be unit-tested

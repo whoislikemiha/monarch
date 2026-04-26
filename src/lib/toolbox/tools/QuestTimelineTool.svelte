@@ -133,6 +133,31 @@
     }
     return all;
   });
+
+  // MON-100: parsed compaction_tick payload. Returns null when the row
+  // isn't a Keeper tick or the payload doesn't decode — both fall back to
+  // the generic event renderer.
+  interface CompactionPayload {
+    keeperRunId: number | null;
+    claimsCount: number;
+    summary: string;
+  }
+  function parseCompactionPayload(raw: string | null): CompactionPayload | null {
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed == null || typeof parsed !== "object") return null;
+      const obj = parsed as Record<string, unknown>;
+      const keeperRunId =
+        typeof obj.keeper_run_id === "number" ? obj.keeper_run_id : null;
+      const claimsCount =
+        typeof obj.claims_count === "number" ? obj.claims_count : 0;
+      const summary = typeof obj.summary === "string" ? obj.summary : "";
+      return { keeperRunId, claimsCount, summary };
+    } catch {
+      return null;
+    }
+  }
 </script>
 
 <div class="quest-tool">
@@ -319,13 +344,36 @@
                         <div class="muted small">No events.</div>
                       {:else}
                         {#each events as ev (ev.id)}
-                          <div class="event-row">
-                            <span class="event-type">{ev.eventType}</span>
-                            <span class="muted small">{ev.actor ?? "—"}</span>
-                            <span class="muted small">{formatRelative(ev.createdAt)}</span>
-                          </div>
-                          {#if ev.payloadJson}
-                            <pre class="event-payload">{ev.payloadJson}</pre>
+                          {#if ev.eventType === "compaction_tick"}
+                            {@const cp = parseCompactionPayload(ev.payloadJson)}
+                            <div class="event-row compaction-row">
+                              <span class="compaction-icon" title="Keeper compaction tick">◈</span>
+                              <span class="event-type compaction-type">compaction</span>
+                              <span class="muted small">{ev.actor ?? "—"}</span>
+                              <span class="muted small">{formatRelative(ev.createdAt)}</span>
+                              {#if cp}
+                                <span class="claims-pill" title="{cp.claimsCount} atomic claims persisted">
+                                  +{cp.claimsCount} {cp.claimsCount === 1 ? "claim" : "claims"}
+                                </span>
+                              {/if}
+                            </div>
+                            {#if cp}
+                              <div class="compaction-summary">{cp.summary || "(no summary returned)"}</div>
+                              <div class="compaction-meta muted small">
+                                run #{cp.keeperRunId ?? "?"}
+                              </div>
+                            {:else if ev.payloadJson}
+                              <pre class="event-payload">{ev.payloadJson}</pre>
+                            {/if}
+                          {:else}
+                            <div class="event-row">
+                              <span class="event-type">{ev.eventType}</span>
+                              <span class="muted small">{ev.actor ?? "—"}</span>
+                              <span class="muted small">{formatRelative(ev.createdAt)}</span>
+                            </div>
+                            {#if ev.payloadJson}
+                              <pre class="event-payload">{ev.payloadJson}</pre>
+                            {/if}
                           {/if}
                         {/each}
                       {/if}
@@ -618,6 +666,44 @@
     border-radius: 3px;
     white-space: pre-wrap;
     word-break: break-all;
+  }
+
+  /* MON-100: compaction_tick visual treatment. Subtle accent border +
+     dedicated icon set this kind of event apart from quest-status events
+     without making it loud. */
+  .compaction-row {
+    padding-left: 0;
+  }
+  .compaction-icon {
+    color: var(--accent);
+    font-size: 11px;
+  }
+  .compaction-type {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .claims-pill {
+    margin-left: auto;
+    padding: 0 6px;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    background: var(--accent-bg-hover);
+    color: var(--accent);
+    font-size: 9px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+  .compaction-summary {
+    margin: 2px 0 4px 18px;
+    padding: 4px 8px;
+    border-left: 2px solid var(--accent);
+    background: var(--bg-sidebar);
+    color: var(--text-primary);
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+  }
+  .compaction-meta {
+    margin-left: 18px;
   }
 
   .empty {

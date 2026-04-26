@@ -120,6 +120,25 @@ export interface SetCustomPromptCommand {
   shadowIdentityPayload?: string | null;
 }
 
+// MON-100: Keeper run config + command. Rust resolves provider/model from
+// `~/.config/monarch/memory.toml` and ships the system prompt per call so the
+// sidecar stays stateless WRT Keeper config (same shape as ClassifierInvocation).
+export interface KeeperConfig {
+  provider: string;
+  model: string;
+  systemPrompt: string;
+}
+
+export interface KeeperRunCommand {
+  type: "keeper_run";
+  agentId: string;
+  /** Provenance row id (`memory_keeper_runs.id`); echoed in the result. */
+  runId: number;
+  /** Textual rendering of recent messages + last summary + related memories. */
+  slice: string;
+  config: KeeperConfig;
+}
+
 export type SidecarCommand =
   | CreateSessionCommand
   | DestroySessionCommand
@@ -131,7 +150,8 @@ export type SidecarCommand =
   | CompactCommand
   | LoadSessionCommand
   | ExtensionUIResponseCommand
-  | SetCustomPromptCommand;
+  | SetCustomPromptCommand
+  | KeeperRunCommand;
 
 // ── Events (Sidecar → Rust via stdout) ──
 
@@ -195,10 +215,54 @@ export interface ClassificationEvent {
   error?: string;
 }
 
+// MON-100: atomic claim shape produced by the Keeper. `kind` is open-string
+// on the wire (Rust persists it verbatim) but the Keeper prompt restricts it
+// to: fact | decision | constraint | convention | preference | correction |
+// landmark.
+export interface AtomicClaim {
+  title: string;
+  summary: string;
+  content: string;
+  kind?: string;
+}
+
+// MON-100: Keeper result. Emitted once per `keeper_run`. On success, `claims`
+// + `compactionSummary` are populated. On failure (timeout, provider crash,
+// JSON parse error) `error` is set and the rest may be null. The sidecar
+// rewrites Pi's `state.messages` with a synthesized scaffold inline on
+// success — Rust only handles persistence and live-state reset.
+export interface KeeperResultEvent {
+  type: "keeper_result";
+  agentId: string;
+  runId: number;
+  claims?: AtomicClaim[];
+  compactionSummary?: string;
+  model?: string;
+  tokensIn?: number;
+  tokensOut?: number;
+  latencyMs?: number;
+  error?: string;
+}
+
+// MON-100: emitted once the Pi `state.messages` rewrite for a given Keeper
+// run lands. Rust uses this to push a visible "Context compacted" status
+// into the live state — without it there is no captain-facing way to
+// confirm the rewrite took effect (the LLM's view collapsed but the chat
+// transcript stays untouched).
+export interface KeeperRewriteAppliedEvent {
+  type: "keeper_rewrite_applied";
+  agentId: string;
+  runId: number;
+  preLength: number;
+  postLength: number;
+}
+
 export type SidecarEvent =
   | SessionReadyEvent
   | SessionDestroyedEvent
   | AgentEventEnvelope
   | ExtensionUIRequestEvent
   | SidecarErrorEvent
-  | ClassificationEvent;
+  | ClassificationEvent
+  | KeeperResultEvent
+  | KeeperRewriteAppliedEvent;
