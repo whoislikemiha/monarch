@@ -1,4 +1,5 @@
 import { SvelteMap } from "svelte/reactivity";
+import { invoke } from "../api";
 import type { LiveAgentState as WireLiveAgentState } from "../bindings";
 import type { AssistantMessage, DisplayItem, ToolExecution, Usage } from "../types";
 import type { LiveAgentState } from "./types";
@@ -133,6 +134,24 @@ export function applyUpdate(
 /** Drop an agent's entry entirely (on kill / removal). */
 export function removeLiveState(agentId: string): void {
   liveAgentStore.byAgent.delete(agentId);
+}
+
+/**
+ * Dispatch the sidecar abort command for `agentId` (MON-104). Any component
+ * — AgentView, AgentRoster, AgentPortrait — can call this without owning a
+ * direct handle to the sidecar wire path. Errors are swallowed because abort
+ * is fire-and-forget; the canonical signal that it worked is `isStreaming`
+ * flipping back to false.
+ */
+export async function abortAgent(agentId: string): Promise<void> {
+  try {
+    await invoke("send_command", {
+      id: agentId,
+      commandJson: JSON.stringify({ type: "abort" }),
+    });
+  } catch (err) {
+    console.error(`[abortAgent] failed for ${agentId}`, err);
+  }
 }
 
 /** Empty detached state used as a fallback before an agent is bound. */
