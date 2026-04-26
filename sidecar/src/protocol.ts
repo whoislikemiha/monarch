@@ -139,6 +139,45 @@ export interface KeeperRunCommand {
   config: KeeperConfig;
 }
 
+export interface MemoryRow {
+  id: number;
+  agentId?: string | null;
+  scope: string;
+  projectId?: string | null;
+  parentId?: number | null;
+  layer: string;
+  kind?: string | null;
+  title: string;
+  summary: string;
+  content?: string | null;
+  manualOverride: boolean;
+  sourceQuestId?: string | null;
+  sourceSessionId?: string | null;
+  sourceEvents?: string | null;
+  fileRefs?: string | null;
+  embeddingModelId?: string | null;
+  supersedesId?: number | null;
+  archivedAt?: string | null;
+  createdAt: string;
+  lastAccessedAt?: string | null;
+  accessCount: number;
+}
+
+export interface MemorySearchResult {
+  memory: MemoryRow;
+  source: "fts" | "vector" | "hybrid" | string;
+  ftsRank?: number | null;
+  vectorRank?: number | null;
+}
+
+export interface MemorySearchResponseCommand {
+  type: "memory_search_response";
+  agentId: string;
+  requestId: string;
+  results: MemorySearchResult[];
+  error?: string | null;
+}
+
 export type SidecarCommand =
   | CreateSessionCommand
   | DestroySessionCommand
@@ -151,7 +190,8 @@ export type SidecarCommand =
   | LoadSessionCommand
   | ExtensionUIResponseCommand
   | SetCustomPromptCommand
-  | KeeperRunCommand;
+  | KeeperRunCommand
+  | MemorySearchResponseCommand;
 
 // ── Events (Sidecar → Rust via stdout) ──
 
@@ -257,6 +297,14 @@ export interface KeeperRewriteAppliedEvent {
   postLength: number;
 }
 
+export interface MemorySearchRequestEvent {
+  type: "memory_search_request";
+  agentId: string;
+  requestId: string;
+  query: string;
+  topK?: number | null;
+}
+
 export type SidecarEvent =
   | SessionReadyEvent
   | SessionDestroyedEvent
@@ -265,4 +313,5 @@ export type SidecarEvent =
   | SidecarErrorEvent
   | ClassificationEvent
   | KeeperResultEvent
-  | KeeperRewriteAppliedEvent;
+  | KeeperRewriteAppliedEvent
+  | MemorySearchRequestEvent;

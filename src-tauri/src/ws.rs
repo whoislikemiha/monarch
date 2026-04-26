@@ -382,6 +382,20 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             let memory = state.db.get_memory_internal(id).await?;
             serde_json::to_value(memory).map_err(MonarchError::from)
         }
+        "memory_search_for_agent" => {
+            let agent_id = str_field(&args, "agentId")?;
+            let query = str_field(&args, "query")?;
+            let top_k = args.get("topK").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let results = crate::memory_search::search_memories_for_agent_internal(
+                &state.db,
+                &state.memory_index,
+                &agent_id,
+                &query,
+                top_k,
+            )
+            .await?;
+            serde_json::to_value(results).map_err(MonarchError::from)
+        }
 
         // ---- DB: Events ----
         "db_log_event" => {

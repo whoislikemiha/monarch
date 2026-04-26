@@ -264,6 +264,7 @@ export const commands = {
 	 *  Called from the Settings Memory tab.
 	 */
 	memoryDownloadAndInit: () => typedError<null, ErrorDto>(__TAURI_INVOKE("memory_download_and_init")),
+	memorySearchForAgent: (agentId: string, query: string, topK: number | null) => typedError<MemorySearchResult[], ErrorDto>(__TAURI_INVOKE("memory_search_for_agent", { agentId, query, topK })),
 	memorySmokeInsert: (agentId: string, title: string, content: string) => typedError<number, ErrorDto>(__TAURI_INVOKE("memory_smoke_insert", { agentId, title, content })),
 };
 
@@ -533,6 +534,15 @@ export type MemoryRow = {
 	createdAt: string,
 	lastAccessedAt: string | null,
 	accessCount: number,
+};
+
+export type MemorySearchResult = {
+	memory: MemoryRow,
+	// `fts`, `vector`, or `hybrid`.
+	source: string,
+	ftsRank: number | null,
+	// 1-based position from the vector index result list.
+	vectorRank: number | null,
 };
 
 /**

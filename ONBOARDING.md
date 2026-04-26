@@ -360,6 +360,8 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 | `load_session`            | Inject an array of messages into the session (used on restore and recovery). |
 | `set_custom_prompt`       | Replace the active system prompt; also updates the `promptRef` closure. |
 | `extension_ui_response`   | Reply to a pending Pi extension UI request. |
+| `keeper_run`              | Ask the sidecar Keeper worker to distill a recent message slice into memory claims. |
+| `memory_search_response`  | Reply to a pending sidecar memory lookup request before a user turn is forwarded to Pi. |
 
 ### Sidecar → Rust (events)
 
@@ -369,6 +371,10 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 | `session_destroyed`       | Session has been cleaned up. |
 | `event`                   | Wrapper around a raw Pi SDK runtime event (`message_*`, `tool_execution_*`, `turn_*`, `queue_update`, `compaction_*`, …). |
 | `extension_ui_request`    | Pi needs user input (select / confirm / input / editor). Includes a `requestId` for the eventual `extension_ui_response`. |
+| `classification`          | Per-user-turn classifier result, emitted independently of the Pi turn. |
+| `keeper_result`           | Keeper worker output for a `keeper_run`; Rust persists claims and run metadata. |
+| `keeper_rewrite_applied`  | Confirmation that the sidecar compacted Pi's in-memory message array after a Keeper run. |
+| `memory_search_request`   | Sidecar asks Rust for relevant memories before forwarding a non-streaming user prompt. Rust answers with `memory_search_response`; timeout is non-blocking. |
 | `error`                   | Sidecar-level error (parse failure, model setup failure, ...). |
 
 ### Rust → frontend (Tauri events)
@@ -628,7 +634,7 @@ A quick map of the delta between [VISION.md](./VISION.md) and reality. Not exhau
 |---|---|---|
 | Multi-agent delegation & hierarchy | ❌ | Agents are flat; no parent/child or role-based dispatch. |
 | Tool-call interception & approval flows | ❌ | Events flow through Rust but there's no gate to pause a tool call. Tracked under the *Agent loop* project in Linear. |
-| Memory keeper / layered memory | ❌ | The `memories` table exists but nothing writes to it. Tracked under *Memory & context tools*. |
+| Memory keeper / layered memory | ⚠️ Partial | P2 substrate, Keeper writes, and user-turn retrieval are wired. Editing, project sharing, reranking/evals, stale-file validation, and polished Inspector workflows remain roadmap work. |
 | Context inspector / manipulation UI | ❌ | No way to see what Pi actually has in context. Tracked under *Memory & context tools*. |
 | Time travel / branching UI | ⚠️ Partial | Session ancestry supports branching in the data model, but no UI for rewind/fork. |
 | Headless loop / mobile / remote | ❌ | Tauri desktop only. No web server, no tunnel. |
