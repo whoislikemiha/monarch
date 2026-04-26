@@ -17,10 +17,18 @@ import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
 import type {
 	ClassifierInvocation,
 	CreateSessionCommand,
+	KeeperRunCommand,
 	LoadSessionCommand,
 	PromptContentPart,
 } from "./protocol.js";
 import { classify } from "./classifier.js";
+import { runKeeper } from "./keeper.js";
+
+interface PendingKeeperRewrite {
+	runId: number;
+	summary: string;
+	tailAnchor: number;
+}
 
 interface ManagedSession {
 	session: AgentSession;
@@ -35,6 +43,12 @@ interface ManagedSession {
 	shadowIdentityPayload?: string | null;
 	/** Live system prompt. Mutated by setCustomPrompt; the loader override closes over this ref. */
 	promptRef: { current: string };
+	/**
+	 * MON-100: Keeper run that completed mid-streaming-turn. Drained on the
+	 * next `agent_end` so we never rewrite `state.messages` while Pi is
+	 * mutating it. Clears immediately on apply.
+	 */
+	pendingKeeperRewrite?: PendingKeeperRewrite | null;
 }
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -379,6 +393,19 @@ export class RuntimeManager {
 						`Request failed after ${event.attempt} retries.`,
 				});
 			}
+
+			// MON-100: drain a deferred Keeper rewrite once Pi quiesces. We
+			// stash one when a Keeper run completes mid-streaming-turn so
+			// the rewrite never lands while Pi is still mutating
+			// `state.messages`. `agent_end` is the safest natural boundary —
+			// no in-flight LLM call, no in-flight tool execution.
+			if (event.type === "agent_end") {
+				const m = this.sessions.get(agentId);
+				if (m?.pendingKeeperRewrite) {
+					this.applyKeeperRewrite(m, m.pendingKeeperRewrite);
+					m.pendingKeeperRewrite = null;
+				}
+			}
 		};
 
 		const unsubscribe = session.subscribe(listener);
@@ -551,12 +578,134 @@ export class RuntimeManager {
 		// Reset both the session manager (file/memory) and the agent's live message state
 		managed.session.sessionManager.newSession();
 		managed.session.agent.state.messages = [];
+		// MON-100: any deferred Keeper rewrite is keyed against the old
+		// message array length and is now nonsensical — drop it.
+		managed.pendingKeeperRewrite = null;
 	}
 
 	async compact(agentId: string): Promise<void> {
 		const managed = this.getSession(agentId);
 		if (!managed) return;
 		await managed.session.compact();
+	}
+
+	/**
+	 * MON-100: continuous-compaction Keeper run.
+	 *
+	 * Captures `tailAnchor = state.messages.length` BEFORE the LLM call so we
+	 * know which messages predate the run; the synthesized scaffold replaces
+	 * `[0..tailAnchor]` with `[user: "Previous context …", assistant: "Acknowledged"]`
+	 * and the tail (anything Pi appended during the round trip) survives
+	 * untouched. Captain-facing chat UI reads from the canonical SQLite
+	 * `messages` table, so this rewrite only ever affects what the LLM sees.
+	 *
+	 * On failure: emit `keeper_result` with an `error` field and skip the
+	 * rewrite — raw history stays intact and the next threshold crossing
+	 * retries.
+	 *
+	 * On success mid-streaming: stash the rewrite on the managed session and
+	 * apply it at the next `agent_end` (the listener drains it). Avoids
+	 * mutating `state.messages` while Pi is mid-turn.
+	 */
+	async keeperRun(cmd: KeeperRunCommand): Promise<void> {
+		const managed = this.getSession(cmd.agentId);
+		if (!managed) return;
+
+		const tailAnchor = managed.session.agent.state.messages.length;
+
+		const result = await runKeeper(managed.session, cmd.slice, cmd.config);
+
+		if ("error" in result) {
+			this.emit({
+				type: "keeper_result",
+				agentId: cmd.agentId,
+				runId: cmd.runId,
+				model: result.model,
+				latencyMs: result.latencyMs,
+				error: result.error,
+			});
+			return;
+		}
+
+		this.emit({
+			type: "keeper_result",
+			agentId: cmd.agentId,
+			runId: cmd.runId,
+			claims: result.claims,
+			compactionSummary: result.compactionSummary,
+			model: result.model,
+			tokensIn: result.tokensIn,
+			tokensOut: result.tokensOut,
+			latencyMs: result.latencyMs,
+		});
+
+		const rewrite: PendingKeeperRewrite = {
+			runId: cmd.runId,
+			summary: result.compactionSummary,
+			tailAnchor,
+		};
+		if (managed.session.isStreaming) {
+			managed.pendingKeeperRewrite = rewrite;
+		} else {
+			this.applyKeeperRewrite(managed, rewrite);
+		}
+	}
+
+	/**
+	 * MON-100: replace the Pi message array's first `tailAnchor` entries with
+	 * a two-message synthesized scaffold. Mechanism mirrors `loadSession`'s
+	 * direct mutation of `session.agent.state.messages`. Idempotent on
+	 * `tailAnchor > current length` (out-of-date anchor — sidecar restart or
+	 * a `new_session` happened between dispatch and result; skip).
+	 */
+	private applyKeeperRewrite(
+		managed: ManagedSession,
+		rewrite: PendingKeeperRewrite,
+	): void {
+		const all = managed.session.agent.state.messages;
+		if (rewrite.tailAnchor > all.length) {
+			return;
+		}
+		const tail = all.slice(rewrite.tailAnchor);
+		const ts = new Date().toISOString();
+
+		// Pull a model id from the most recent assistant entry so the
+		// synthesized "Acknowledged" message stays valid for Pi's pipeline.
+		// Fall back to a stable placeholder; Pi tolerates unknown ids on
+		// replayed/synthesized rows the same way `loadSession` does.
+		let modelId = "monarch-keeper";
+		for (let i = all.length - 1; i >= 0; i--) {
+			const m = all[i] as { role?: string; model?: string };
+			if (m?.role === "assistant" && typeof m.model === "string") {
+				modelId = m.model;
+				break;
+			}
+		}
+
+		const synthUser = {
+			role: "user",
+			content: `[Previous context — Keeper compaction @ ${ts}]\n\n## Summary\n\n${rewrite.summary}`,
+			timestamp: Date.now(),
+		};
+		const synthAssistant = {
+			role: "assistant",
+			content: [
+				{
+					type: "text",
+					text: "Acknowledged. Continuing from this state.",
+				},
+			],
+			model: modelId,
+			usage: { ...EMPTY_USAGE, cost: { ...EMPTY_USAGE.cost } },
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
+
+		managed.session.agent.state.messages = [
+			synthUser,
+			synthAssistant,
+			...tail,
+		] as any;
 	}
 
 	/**
@@ -571,6 +720,10 @@ export class RuntimeManager {
 		// accumulate stale messages from a previous in-memory run.
 		managed.session.sessionManager.newSession();
 		managed.session.agent.state.messages = [];
+		// MON-100: same logic as newSession — drop any deferred Keeper rewrite
+		// because its tail anchor is no longer meaningful against the rebuilt
+		// message array.
+		managed.pendingKeeperRewrite = null;
 
 		const agentMessages: Array<Record<string, unknown>> = [];
 

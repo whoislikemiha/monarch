@@ -79,6 +79,11 @@ async function handleCommand(cmd: SidecarCommand): Promise<void> {
 		case "set_custom_prompt":
 			manager.setCustomPrompt(cmd.agentId, cmd.prompt, cmd.projectInstructions, cmd.captainIdentityPayload, cmd.shadowIdentityPayload);
 			break;
+		case "keeper_run":
+			// MON-100: don't await — the Keeper round trip can take seconds and
+			// the readline pump must stay free for in-flight prompts/aborts.
+			void manager.keeperRun(cmd);
+			break;
 		default:
 			process.stderr.write(
 				`[sidecar] Unknown command type: ${(cmd as any).type}\n`,
