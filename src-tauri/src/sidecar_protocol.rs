@@ -55,6 +55,18 @@ pub struct ClassifierProvider {
     pub model: String,
 }
 
+/// MON-100: Keeper invocation config mirrored on the sidecar side. Rust resolves
+/// provider/model/systemPrompt from `~/.config/monarch/memory.toml` and ships
+/// it per call so the sidecar stays stateless WRT Keeper config (same shape
+/// pattern as `ClassifierInvocationConfig`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeeperConfig {
+    pub provider: String,
+    pub model: String,
+    pub system_prompt: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassifierInvocationConfig {
@@ -153,6 +165,19 @@ pub enum SidecarCommand {
         captain_identity_payload: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         shadow_identity_payload: Option<String>,
+    },
+    /// MON-100: continuous compaction. Rust dispatches one `KeeperRun` when
+    /// the per-agent token counter crosses a threshold; sidecar makes a
+    /// one-shot LLM call against `config.{provider, model}` with `slice` as
+    /// the user message + `config.system_prompt` as the system prompt, then
+    /// emits a `keeper_result` event AND rewrites Pi's `state.messages`
+    /// in-place with a synthesized scaffold (deferred to next `agent_end`
+    /// when streaming).
+    KeeperRun {
+        agent_id: String,
+        run_id: i64,
+        slice: String,
+        config: KeeperConfig,
     },
 }
 
@@ -417,9 +442,39 @@ pub enum SidecarEvent {
         latency_ms: Option<i32>,
         error: Option<String>,
     },
+    /// MON-100: Keeper run result. `claims` + `compaction_summary` populated
+    /// on success; `error` populated on failure. The sidecar handles the Pi
+    /// `state.messages` rewrite inline; Rust only persists rows + resets the
+    /// live token counter on success.
+    KeeperResult {
+        agent_id: String,
+        run_id: i64,
+        claims: Option<Vec<AtomicClaim>>,
+        compaction_summary: Option<String>,
+        model: Option<String>,
+        tokens_in: Option<i64>,
+        tokens_out: Option<i64>,
+        latency_ms: Option<i64>,
+        error: Option<String>,
+    },
     Unknown {
         raw: Value,
     },
+}
+
+/// MON-100: atomic claim shape. Mirrors `AtomicClaim` in
+/// `sidecar/src/protocol.ts`. `kind` is open-string on the wire — the Keeper
+/// system prompt restricts it to fact/decision/constraint/convention/
+/// preference/correction/landmark, but Rust persists whatever the model
+/// emits to keep the substrate forward-compatible with prompt evolution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AtomicClaim {
+    pub title: String,
+    pub summary: String,
+    pub content: String,
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -464,6 +519,24 @@ enum KnownSidecarEvent {
         #[serde(default)]
         error: Option<String>,
     },
+    KeeperResult {
+        agent_id: String,
+        run_id: i64,
+        #[serde(default)]
+        claims: Option<Vec<AtomicClaim>>,
+        #[serde(default)]
+        compaction_summary: Option<String>,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        tokens_in: Option<i64>,
+        #[serde(default)]
+        tokens_out: Option<i64>,
+        #[serde(default)]
+        latency_ms: Option<i64>,
+        #[serde(default)]
+        error: Option<String>,
+    },
 }
 
 impl From<KnownSidecarEvent> for SidecarEvent {
@@ -505,6 +578,27 @@ impl From<KnownSidecarEvent> for SidecarEvent {
                 latency_ms,
                 error,
             },
+            KnownSidecarEvent::KeeperResult {
+                agent_id,
+                run_id,
+                claims,
+                compaction_summary,
+                model,
+                tokens_in,
+                tokens_out,
+                latency_ms,
+                error,
+            } => Self::KeeperResult {
+                agent_id,
+                run_id,
+                claims,
+                compaction_summary,
+                model,
+                tokens_in,
+                tokens_out,
+                latency_ms,
+                error,
+            },
         }
     }
 }
@@ -516,6 +610,7 @@ const KNOWN_SIDECAR_TAGS: &[&str] = &[
     "extension_ui_request",
     "error",
     "classification",
+    "keeper_result",
 ];
 
 impl<'de> Deserialize<'de> for SidecarEvent {
@@ -664,6 +759,19 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
             if message.role == "assistant" {
                 let sm = streaming_from(message);
                 if let Some(usage) = sm.usage.clone() {
+                    // MON-100: feed the Keeper compaction trigger. Sum the four
+                    // usage components (input/output/cacheRead/cacheWrite)
+                    // explicitly rather than relying on `total_tokens` — the
+                    // Anthropic 200k-cache-read window is real context the LLM
+                    // has loaded, and we want it counted.
+                    let delta = usage
+                        .input
+                        .saturating_add(usage.output)
+                        .saturating_add(usage.cache_read)
+                        .saturating_add(usage.cache_write);
+                    state.tokens_since_last_compaction = state
+                        .tokens_since_last_compaction
+                        .saturating_add(delta);
                     state.last_usage = Some(usage);
                 }
                 // MON-71: seal remaining thinking blocks and compute turn

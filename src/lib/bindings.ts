@@ -58,6 +58,18 @@ export const commands = {
 	 *  tool calls) this policy needs to be revisited — see MON-40.
 	 */
 	isStreaming: boolean,
+	/**
+	 *  MON-100: running sum of `usage.input + output + cache_read + cache_write`
+	 *  across assistant `message_end` events since the last successful Keeper
+	 *  tick. The event handler compares this against soft/hard thresholds in
+	 *  `memory.toml` to decide when to dispatch a Keeper run; on a successful
+	 *  `keeper_result`, the handler resets it to 0. Seeded on cold restart from
+	 *  the DB via `rebuild_state_from_session` so the counter survives Monarch
+	 *  restarts. Sum components instead of trusting `total_tokens` so we know
+	 *  exactly what we're measuring (cache reads must count — the Anthropic
+	 *  200k-cache-read window is real context the LLM has loaded).
+	 */
+	tokensSinceLastCompaction?: number,
 } | null, ErrorDto>(__TAURI_INVOKE("get_agent_state", { agentId })),
 	/**
 	 *  Rebuild the assembled `LiveAgentState` for an agent from a SQLite session
@@ -474,12 +486,28 @@ export type LiveAgentState = {
 	 *  tool calls) this policy needs to be revisited — see MON-40.
 	 */
 	isStreaming: boolean,
+	/**
+	 *  MON-100: running sum of `usage.input + output + cache_read + cache_write`
+	 *  across assistant `message_end` events since the last successful Keeper
+	 *  tick. The event handler compares this against soft/hard thresholds in
+	 *  `memory.toml` to decide when to dispatch a Keeper run; on a successful
+	 *  `keeper_result`, the handler resets it to 0. Seeded on cold restart from
+	 *  the DB via `rebuild_state_from_session` so the counter survives Monarch
+	 *  restarts. Sum components instead of trusting `total_tokens` so we know
+	 *  exactly what we're measuring (cache reads must count — the Anthropic
+	 *  200k-cache-read window is real context the LLM has loaded).
+	 */
+	tokensSinceLastCompaction?: number,
 };
 
 export type MemoryConfig = {
 	keeper?: KeeperModelConfig | null,
 	embedding?: EmbeddingConfig | null,
 	topK?: number | null,
+	// MON-100: continuous-compaction soft trigger threshold (tokens).
+	softThresholdTokens?: number | null,
+	// MON-100: continuous-compaction hard trigger threshold (tokens).
+	hardThresholdTokens?: number | null,
 };
 
 // MON-99: P2 memory row returned to frontend / used for retrieval.
@@ -655,6 +683,18 @@ export type ResolvedMemoryConfig = {
 	modelsDir: string,
 	topK: number,
 	enabled: boolean,
+	/**
+	 *  MON-100: soft / hard compaction thresholds in tokens. Defaults from
+	 *  `DEFAULT_SOFT_THRESHOLD_TOKENS` / `DEFAULT_HARD_THRESHOLD_TOKENS`.
+	 */
+	softThresholdTokens: number,
+	hardThresholdTokens: number,
+	/**
+	 *  MON-100: read-only Keeper system prompt. Surfaced in MemorySettings UI;
+	 *  captain-edited prompt is out of scope for Slice B (see plan §
+	 *  "Out of scope").
+	 */
+	keeperSystemPrompt: string,
 };
 
 export type SessionRow = {
