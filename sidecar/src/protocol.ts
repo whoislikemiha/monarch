@@ -244,6 +244,19 @@ export interface KeeperResultEvent {
   error?: string;
 }
 
+// MON-100: emitted once the Pi `state.messages` rewrite for a given Keeper
+// run lands. Rust uses this to push a visible "Context compacted" status
+// into the live state — without it there is no captain-facing way to
+// confirm the rewrite took effect (the LLM's view collapsed but the chat
+// transcript stays untouched).
+export interface KeeperRewriteAppliedEvent {
+  type: "keeper_rewrite_applied";
+  agentId: string;
+  runId: number;
+  preLength: number;
+  postLength: number;
+}
+
 export type SidecarEvent =
   | SessionReadyEvent
   | SessionDestroyedEvent
@@ -251,4 +264,5 @@ export type SidecarEvent =
   | ExtensionUIRequestEvent
   | SidecarErrorEvent
   | ClassificationEvent
-  | KeeperResultEvent;
+  | KeeperResultEvent
+  | KeeperRewriteAppliedEvent;

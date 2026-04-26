@@ -14,7 +14,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{broadcast, mpsc};
 
-use crate::agent_state::{ApplyOutcome, LiveAgentState};
+use crate::agent_state::{ApplyOutcome, DisplayItem, LiveAgentState};
 use crate::db::{Database, InsertMemoryPayload, RecordQuestEventPayload};
 use crate::sidecar_protocol::{apply_event, AtomicClaim, InnerEvent, SidecarEvent};
 
@@ -337,6 +337,29 @@ pub(super) async fn handle_sidecar_event(
             .await;
         }
 
+        SidecarEvent::KeeperRewriteApplied {
+            agent_id,
+            run_id,
+            pre_length,
+            post_length,
+        } => {
+            eprintln!(
+                "[monarch] keeper_rewrite_applied {} agent={} pre={} post={}",
+                run_id, agent_id, pre_length, post_length
+            );
+            push_status_for_agent(
+                app,
+                ws_tx,
+                live_states,
+                &agent_id,
+                format!(
+                    "✦ Context compacted (Keeper run #{} — {} → {} messages in LLM view)",
+                    run_id, pre_length, post_length
+                ),
+            )
+            .await;
+        }
+
         SidecarEvent::Unknown { raw } => {
             // Envelope-level unknown — the sidecar shipped a top-level
             // message type the Rust side doesn't recognize. Flip desync for
@@ -349,6 +372,27 @@ pub(super) async fn handle_sidecar_event(
             }
         }
     }
+}
+
+/// MON-100: append a `DisplayItem::Status` to the agent's live state and
+/// emit a snapshot. Used by Keeper observability events so the captain sees
+/// "Memories distilled" / "Context compacted" rows land in the chat thread.
+async fn push_status_for_agent(
+    app: &AppHandle,
+    ws_tx: &broadcast::Sender<WsBroadcast>,
+    live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
+    agent_id: &str,
+    text: String,
+) {
+    let Some(entry) = live_states.get(agent_id).map(|e| e.clone()) else {
+        return;
+    };
+    let mut g = entry.inner.write().await;
+    g.state.items.push(DisplayItem::Status { text });
+    g.state.state_version = g.state.state_version.saturating_add(1);
+    let snap = g.state.clone();
+    drop(g);
+    emit_state_event(app, ws_tx, &entry.topic, &snap);
 }
 
 /// MON-100: enqueue a Keeper run when the running token sum crosses a
@@ -559,6 +603,26 @@ async fn handle_keeper_result(
             agent_id: agent_id.to_string(),
         })
         .await;
+
+    // MON-100: visible signal in the chat thread. The actual `state.messages`
+    // rewrite happens at the next `turn_end`; this status row just confirms
+    // the Keeper itself succeeded and N memories landed.
+    let memories_label = if claims.len() == 1 {
+        "1 memory".to_string()
+    } else {
+        format!("{} memories", claims.len())
+    };
+    push_status_for_agent(
+        app,
+        ws_tx,
+        live_states,
+        agent_id,
+        format!(
+            "◈ Keeper distilled {} (run #{}) — context compacts at next turn end",
+            memories_label, run_id
+        ),
+    )
+    .await;
 }
 
 /// MON-30: body of the debounce task, factored out so it can be unit-tested

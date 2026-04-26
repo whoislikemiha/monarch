@@ -457,6 +457,17 @@ pub enum SidecarEvent {
         latency_ms: Option<i64>,
         error: Option<String>,
     },
+    /// MON-100: emitted by the sidecar once `applyKeeperRewrite` swapped
+    /// `state.messages`. Rust pushes a visible Status item ("Context
+    /// compacted: …") so the captain can see the rewrite land in the chat.
+    /// `pre_length` / `post_length` are message counts before/after — useful
+    /// for stderr telemetry.
+    KeeperRewriteApplied {
+        agent_id: String,
+        run_id: i64,
+        pre_length: i64,
+        post_length: i64,
+    },
     Unknown {
         raw: Value,
     },
@@ -537,6 +548,14 @@ enum KnownSidecarEvent {
         #[serde(default)]
         error: Option<String>,
     },
+    KeeperRewriteApplied {
+        agent_id: String,
+        run_id: i64,
+        #[serde(default)]
+        pre_length: i64,
+        #[serde(default)]
+        post_length: i64,
+    },
 }
 
 impl From<KnownSidecarEvent> for SidecarEvent {
@@ -599,6 +618,17 @@ impl From<KnownSidecarEvent> for SidecarEvent {
                 latency_ms,
                 error,
             },
+            KnownSidecarEvent::KeeperRewriteApplied {
+                agent_id,
+                run_id,
+                pre_length,
+                post_length,
+            } => Self::KeeperRewriteApplied {
+                agent_id,
+                run_id,
+                pre_length,
+                post_length,
+            },
         }
     }
 }
@@ -611,6 +641,7 @@ const KNOWN_SIDECAR_TAGS: &[&str] = &[
     "error",
     "classification",
     "keeper_result",
+    "keeper_rewrite_applied",
 ];
 
 impl<'de> Deserialize<'de> for SidecarEvent {

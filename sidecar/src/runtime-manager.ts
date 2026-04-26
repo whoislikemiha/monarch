@@ -394,12 +394,16 @@ export class RuntimeManager {
 				});
 			}
 
-			// MON-100: drain a deferred Keeper rewrite once Pi quiesces. We
-			// stash one when a Keeper run completes mid-streaming-turn so
-			// the rewrite never lands while Pi is still mutating
-			// `state.messages`. `agent_end` is the safest natural boundary —
-			// no in-flight LLM call, no in-flight tool execution.
-			if (event.type === "agent_end") {
+			// MON-100: drain a deferred Keeper rewrite at the next safe
+			// boundary. `turn_end` fires after every LLM call ends, before
+			// the next tool execution + LLM call cycle. There is no
+			// in-flight LLM call at that moment, so swapping `state.messages`
+			// is safe. Originally we waited for `agent_end`, but for long
+			// "prime on the codebase" tasks Pi may run dozens of turns
+			// before `agent_end` — meaning all keeper ticks during that
+			// stretch never apply, and the executor keeps growing past the
+			// hard threshold. `turn_end` lets the rewrite land mid-task.
+			if (event.type === "turn_end") {
 				const m = this.sessions.get(agentId);
 				if (m?.pendingKeeperRewrite) {
 					this.applyKeeperRewrite(m, m.pendingKeeperRewrite);
@@ -657,11 +661,19 @@ export class RuntimeManager {
 	 * direct mutation of `session.agent.state.messages`. Idempotent on
 	 * `tailAnchor > current length` (out-of-date anchor — sidecar restart or
 	 * a `new_session` happened between dispatch and result; skip).
+	 *
+	 * Emits `keeper_rewrite_applied` once the swap lands so Rust can push
+	 * a visible status into the live state ("Context compacted"). Without
+	 * that signal there is no captain-facing way to confirm the rewrite
+	 * actually took effect.
 	 */
 	private applyKeeperRewrite(
 		managed: ManagedSession,
 		rewrite: PendingKeeperRewrite,
 	): void {
+		const agentId =
+			[...this.sessions.entries()].find(([, m]) => m === managed)?.[0] ??
+			"";
 		const all = managed.session.agent.state.messages;
 		if (rewrite.tailAnchor > all.length) {
 			return;
@@ -706,6 +718,16 @@ export class RuntimeManager {
 			synthAssistant,
 			...tail,
 		] as any;
+
+		if (agentId) {
+			this.emit({
+				type: "keeper_rewrite_applied",
+				agentId,
+				runId: rewrite.runId,
+				preLength: all.length,
+				postLength: 2 + tail.length,
+			});
+		}
 	}
 
 	/**
