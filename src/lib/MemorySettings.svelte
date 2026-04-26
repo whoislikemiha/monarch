@@ -30,6 +30,12 @@
   let provider = $state("anthropic");
   let model = $state("claude-haiku-4-5");
   let topK = $state(5);
+  // MON-100: continuous-compaction thresholds. Defaults match
+  // memory_config::DEFAULT_SOFT/HARD_THRESHOLD_TOKENS until refresh()
+  // overwrites with the resolved view from the backend.
+  let softThresholdTokens = $state(25_000);
+  let hardThresholdTokens = $state(30_000);
+  let promptExpanded = $state(false);
 
   let dirty = $derived(
     !!resolved &&
@@ -37,7 +43,9 @@
         (keeperEnabled &&
           (provider !== resolved.keeper?.provider ||
             model !== resolved.keeper?.model)) ||
-        topK !== resolved.topK),
+        topK !== resolved.topK ||
+        softThresholdTokens !== resolved.softThresholdTokens ||
+        hardThresholdTokens !== resolved.hardThresholdTokens),
   );
 
   async function refresh() {
@@ -55,6 +63,8 @@
         model = resolved.keeper.model;
       }
       topK = resolved.topK;
+      softThresholdTokens = resolved.softThresholdTokens;
+      hardThresholdTokens = resolved.hardThresholdTokens;
     } catch (e) {
       error = String(e);
     } finally {
@@ -83,10 +93,16 @@
       const payload: MemoryConfig = {
         keeper: keeperEnabled ? { provider, model } : null,
         topK,
+        softThresholdTokens,
+        hardThresholdTokens,
       };
       resolved = await invoke<ResolvedMemoryConfig>("memory_set_config", {
         config: payload,
       });
+      // Re-seed thresholds from the round-tripped resolved view in case the
+      // backend clamped or substituted defaults.
+      softThresholdTokens = resolved.softThresholdTokens;
+      hardThresholdTokens = resolved.hardThresholdTokens;
     } catch (e) {
       error = String(e);
     } finally {
@@ -174,6 +190,39 @@
           memories form at quest-close.
         </p>
       {/if}
+      <div class="row">
+        <span class="label">Soft trigger (tokens)</span>
+        <input
+          class="input narrow"
+          type="number"
+          min="1000"
+          step="1000"
+          bind:value={softThresholdTokens}
+          disabled={!embedderReady || !keeperEnabled || saving}
+        />
+      </div>
+      <div class="row">
+        <span class="label">Hard trigger (tokens)</span>
+        <input
+          class="input narrow"
+          type="number"
+          min="1000"
+          step="1000"
+          bind:value={hardThresholdTokens}
+          disabled={!embedderReady || !keeperEnabled || saving}
+        />
+      </div>
+      <p class="hint">
+        Soft fires at the next turn-end once activity since the last successful
+        Keeper run crosses this; hard forces a clean cut at any message-end.
+      </p>
+
+      <details bind:open={promptExpanded} class="prompt-details">
+        <summary class="prompt-summary">
+          Keeper system prompt (read-only, ships from code)
+        </summary>
+        <pre class="prompt-text">{resolved.keeperSystemPrompt}</pre>
+      </details>
     </section>
 
     <section class="card">
@@ -352,5 +401,33 @@
     font-size: 10px;
     white-space: pre-wrap;
     border-radius: 4px;
+  }
+  .prompt-details {
+    margin-top: 4px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    background: var(--bg-panel);
+  }
+  .prompt-summary {
+    padding: 6px 8px;
+    font-size: 10px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .prompt-summary:hover {
+    color: var(--text-secondary);
+  }
+  .prompt-text {
+    margin: 0;
+    padding: 8px;
+    border-top: 1px solid var(--border-subtle);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    font-size: 10px;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 320px;
+    overflow-y: auto;
   }
 </style>
