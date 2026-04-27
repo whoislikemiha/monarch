@@ -104,10 +104,40 @@ pub struct AgentStateInner {
 pub(crate) enum InternalDispatch {
     /// Trigger one continuous-compaction Keeper run for the agent. No-op if
     /// the Keeper config is empty or a run is already in flight.
-    KeeperRun { agent_id: String },
+    KeeperRun {
+        agent_id: String,
+        trigger: KeeperRunTrigger,
+    },
     /// Send a manager-originated command to the sidecar. Used by inbound
     /// request/response bridges that originate in `event_handler.rs`.
     SendSidecarCommand { command: SidecarCommand },
+}
+
+/// MON-100 / MON-103: Keeper runs share plumbing but differ in why they
+/// fired and which message slice should feed the model.
+#[derive(Debug, Clone)]
+pub(crate) enum KeeperRunTrigger {
+    Continuous,
+    QuestClose {
+        quest_id: String,
+        since: Option<String>,
+    },
+}
+
+impl KeeperRunTrigger {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Continuous => "continuous",
+            Self::QuestClose { .. } => "quest_close",
+        }
+    }
+
+    fn quest_id(&self) -> Option<&str> {
+        match self {
+            Self::Continuous => None,
+            Self::QuestClose { quest_id, .. } => Some(quest_id.as_str()),
+        }
+    }
 }
 
 /// MON-27 lock hierarchy:
@@ -230,8 +260,8 @@ impl AgentManager {
             let mut rx = rx;
             while let Some(d) = rx.recv().await {
                 match d {
-                    InternalDispatch::KeeperRun { agent_id } => {
-                        if let Err(e) = mgr.dispatch_keeper_run(&db, &agent_id).await {
+                    InternalDispatch::KeeperRun { agent_id, trigger } => {
+                        if let Err(e) = mgr.dispatch_keeper_run(&db, &agent_id, trigger).await {
                             eprintln!("[monarch] keeper dispatch failed for {}: {:?}", agent_id, e);
                         }
                     }
@@ -257,10 +287,11 @@ impl AgentManager {
     /// captain hasn't opted in) OR when a run is already in flight for this
     /// agent (debounces concurrent threshold crossings while the model is
     /// answering). Errors propagate so the dispatcher logs them.
-    pub async fn dispatch_keeper_run(
+    pub(crate) async fn dispatch_keeper_run(
         &self,
         db: &Arc<Database>,
         agent_id: &str,
+        trigger: KeeperRunTrigger,
     ) -> Result<Option<i64>, MonarchError> {
         let cfg = crate::memory_config::resolved().await;
         let Some(km) = cfg.keeper.clone() else {
@@ -279,15 +310,31 @@ impl AgentManager {
 
         let model_id = format!("{}/{}", km.provider, km.model);
 
-        // Slice anchor: messages with timestamp > last successful run's
-        // completed_at. Empty for the first ever run → all messages.
+        // Slice anchor. Continuous compaction resumes after the last
+        // successful Keeper run; quest-close distillation scopes to the
+        // quest's own lifetime.
         let last_run = db
             .last_successful_keeper_run_internal(agent_id)
             .await
             .ok()
             .flatten();
-        let since: Option<String> = last_run.as_ref().and_then(|r| r.completed_at.clone());
-        let prior_summary: Option<String> = last_run.and_then(|r| r.output_summary);
+        let last_completed_at: Option<String> =
+            last_run.as_ref().and_then(|r| r.completed_at.clone());
+        let prior_summary: Option<String> =
+            last_run.as_ref().and_then(|r| r.output_summary.clone());
+        let since: Option<String> = match &trigger {
+            KeeperRunTrigger::Continuous => last_completed_at,
+            KeeperRunTrigger::QuestClose { since, .. } => since.clone(),
+        };
+        let quest_id = match &trigger {
+            KeeperRunTrigger::QuestClose { quest_id, .. } => Some(quest_id.clone()),
+            KeeperRunTrigger::Continuous => db
+                .get_agent_current_quest_id_internal(agent_id)
+                .await
+                .ok()
+                .flatten(),
+        };
+        let trigger_label = trigger.label().to_string();
 
         let messages = db
             .list_agent_messages_since_internal(agent_id, since.as_deref())
@@ -339,7 +386,12 @@ impl AgentManager {
         let slice = render_keeper_slice(prior_summary.as_deref(), &related, &kept);
 
         let run_id = db
-            .insert_keeper_run_internal(agent_id, "continuous", None, &model_id)
+            .insert_keeper_run_internal(
+                agent_id,
+                &trigger_label,
+                quest_id.as_deref().or_else(|| trigger.quest_id()),
+                &model_id,
+            )
             .await?;
 
         // Mark in-flight before shipping the command so any threshold
@@ -354,6 +406,7 @@ impl AgentManager {
         let cmd = SidecarCommand::KeeperRun {
             agent_id: agent_id.to_string(),
             run_id,
+            trigger: trigger_label,
             slice,
             config: KeeperConfig {
                 provider: km.provider,

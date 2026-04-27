@@ -134,6 +134,8 @@ export interface KeeperRunCommand {
   agentId: string;
   /** Provenance row id (`memory_keeper_runs.id`); echoed in the result. */
   runId: number;
+  /** `continuous` or `quest_close`; reserved for future model/prompt branching. */
+  trigger: string;
   /** Textual rendering of recent messages + last summary + related memories. */
   slice: string;
   config: KeeperConfig;

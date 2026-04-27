@@ -232,7 +232,7 @@ CREATE TABLE quest_events (
 
 -- FK extensions on existing tables. messages.quest_id is still mostly
 -- event/roadmap territory; agents.current_quest_id is populated by
--- auto-created active quests.
+-- auto-created active quests and cleared when that exact quest closes.
 ALTER TABLE messages ADD COLUMN quest_id         TEXT REFERENCES quest_nodes(id);
 ALTER TABLE agents   ADD COLUMN current_quest_id TEXT REFERENCES quest_nodes(id);
 
@@ -362,7 +362,7 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 | `load_session`            | Inject an array of messages into the session (used on restore and recovery). |
 | `set_custom_prompt`       | Replace the active system prompt; also updates the `promptRef` closure. |
 | `extension_ui_response`   | Reply to a pending Pi extension UI request. |
-| `keeper_run`              | Ask the sidecar Keeper worker to distill a recent message slice into memory claims. |
+| `keeper_run`              | Ask the sidecar Keeper worker to distill a recent message slice into memory claims. Carries `trigger` (`continuous` or `quest_close`) so future prompt/model tiers can branch. |
 | `memory_search_response`  | Reply to a pending sidecar memory lookup request before a user turn is forwarded to Pi. |
 
 ### Sidecar → Rust (events)
@@ -390,6 +390,8 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 | `quest-created-{id}`      | `{ id }` | A quest node was created; known-root subscribers re-fetch. |
 | `quest-created-for-agent-{id}` | `{ id, agentId }` | A root quest was created for an agent, including auto-created current quests. The Quest Timeline listens here so an empty timeline wakes up. |
 | `quest-updated-{rootId}` / `quest-event-{questId}` | `{ id, ... }` | Quest tree or event-log invalidation for the toolbox timeline. |
+
+Quest close lifecycle: `db_update_quest` compares the previous and updated status. A transition to `done` records a `status_change` event, clears `agents.current_quest_id` only when it still points at that quest, and dispatches a Keeper run with `trigger='quest_close'`, `quest_id` populated, and a slice anchored at `quest_nodes.started_at ?? created_at`. Keeper results use the run row's quest provenance for memory `source_quest_id` and `compaction_tick` events, not the agent's later current quest.
 
 `LiveAgentState` is defined in Rust at `src-tauri/src/agent_state.rs`; the TypeScript shape is generated via `specta` + `tauri-specta` into `src/lib/bindings.ts`. To regenerate after a Rust change, run `cargo run -- --export-bindings` from `src-tauri/` — the generated file is post-processed to route through `$lib/api` so the WS fallback still works in non-Tauri environments.
 
