@@ -89,6 +89,7 @@
   let formExecHint = $state<"in_context" | "delegate" | "explore">("in_context");
   let formParentId = $state<string>("");
   let formSubmitting = $state(false);
+  let markingDoneId = $state<string | null>(null);
 
   $effect(() => {
     // When the create form opens, reset fields and preselect parent.
@@ -124,6 +125,34 @@
     }
   }
 
+  function nowIsoSeconds(): string {
+    return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
+
+  async function markDone(quest: QuestRow) {
+    if (!agentContext || !questState || quest.status === "done") return;
+    markingDoneId = quest.id;
+    try {
+      await questStore.updateQuest(agentContext.agentId, {
+        id: quest.id,
+        title: null,
+        description: null,
+        status: "done",
+        grade: null,
+        execHint: null,
+        assigneeShadowId: null,
+        summary: null,
+        startedAt: null,
+        completedAt: quest.completedAt ?? nowIsoSeconds(),
+        abandonedAt: null,
+      });
+    } catch (e) {
+      questState.error = String(e);
+    } finally {
+      markingDoneId = null;
+    }
+  }
+
   // Pool of parent options: every quest already loaded for this agent
   // (across all roots). Keeps the form simple without a second fetch.
   let parentOptions = $derived.by(() => {
@@ -140,6 +169,7 @@
   // the generic event renderer.
   interface CompactionPayload {
     keeperRunId: number | null;
+    trigger: string;
     claimsCount: number;
     summary: string;
   }
@@ -151,13 +181,19 @@
       const obj = parsed as Record<string, unknown>;
       const keeperRunId =
         typeof obj.keeper_run_id === "number" ? obj.keeper_run_id : null;
+      const trigger =
+        typeof obj.trigger === "string" ? obj.trigger : "continuous";
       const claimsCount =
         typeof obj.claims_count === "number" ? obj.claims_count : 0;
       const summary = typeof obj.summary === "string" ? obj.summary : "";
-      return { keeperRunId, claimsCount, summary };
+      return { keeperRunId, trigger, claimsCount, summary };
     } catch {
       return null;
     }
+  }
+
+  function formatTrigger(trigger: string): string {
+    return trigger === "quest_close" ? "quest close" : "continuous";
   }
 </script>
 
@@ -349,7 +385,9 @@
                             {@const cp = parseCompactionPayload(ev.payloadJson)}
                             <div class="event-row compaction-row">
                               <span class="compaction-icon" title="Keeper compaction tick">◈</span>
-                              <span class="event-type compaction-type">compaction</span>
+                              <span class="event-type compaction-type">
+                                {cp ? formatTrigger(cp.trigger) : "compaction"}
+                              </span>
                               <span class="muted small">{ev.actor ?? "—"}</span>
                               <span class="muted small">{formatRelative(ev.createdAt)}</span>
                               {#if cp}
@@ -379,16 +417,31 @@
                         {/each}
                       {/if}
                     </div>
-                    <button
-                      type="button"
-                      class="ghost-btn sub-btn"
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        questStore.startCreate(agentContext.agentId, quest.id);
-                      }}
-                    >
-                      + Sub-quest
-                    </button>
+                    <div class="detail-actions">
+                      {#if quest.status !== "done"}
+                        <button
+                          type="button"
+                          class="done-btn"
+                          onclick={(e) => {
+                            e.stopPropagation();
+                            markDone(quest);
+                          }}
+                          disabled={markingDoneId === quest.id}
+                        >
+                          {markingDoneId === quest.id ? "Closing..." : "Mark done"}
+                        </button>
+                      {/if}
+                      <button
+                        type="button"
+                        class="ghost-btn"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          questStore.startCreate(agentContext.agentId, quest.id);
+                        }}
+                      >
+                        + Sub-quest
+                      </button>
+                    </div>
                   </div>
                 {/if}
               </div>
@@ -507,8 +560,27 @@
   .ghost-btn:hover:not(:disabled) {
     background: var(--bg-panel-2);
   }
-  .sub-btn {
+  .detail-actions {
+    display: flex;
+    gap: 6px;
     margin-top: 6px;
+  }
+  .done-btn {
+    padding: 4px 10px;
+    border: 1px solid #4da36b;
+    border-radius: 4px;
+    background: rgba(77, 163, 107, 0.12);
+    color: #4da36b;
+    font-size: 10px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .done-btn:hover:not(:disabled) {
+    background: rgba(77, 163, 107, 0.18);
+  }
+  .done-btn:disabled {
+    opacity: 0.55;
+    cursor: default;
   }
 
   /* Timeline */

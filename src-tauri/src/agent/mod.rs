@@ -25,6 +25,7 @@ mod sidecar;
 // `__cmd__<name>` helper that must share the fn's module.
 pub use commands::{ExtensionUiResponseRequest, SpawnAgentRequest};
 pub use manager::AgentManager;
+pub(crate) use manager::KeeperRunTrigger;
 
 /// MON-83: cross-module access to the dual (Tauri + WS) emit helper so
 /// non-agent command surfaces can broadcast their own event channels

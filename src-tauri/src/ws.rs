@@ -502,7 +502,9 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
                 serde_json::from_value(args.get("payload").cloned().unwrap_or(args.clone()))
                     .map_err(|e| MonarchError::invalid_input(format!("Invalid payload: {}", e)))?;
             let id = payload.id.clone();
+            let before = state.db.get_quest_internal(&id).await?;
             state.db.update_quest_internal(&payload).await?;
+            let after = state.db.get_quest_internal(&id).await?;
             let app = state.agent_mgr.get_app_handle()?;
             crate::agent::emit_event(
                 &app,
@@ -510,6 +512,25 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
                 &format!("quest-updated-{}", id),
                 &serde_json::json!({ "id": id }).to_string(),
             );
+            if let Some(after_quest) = after.as_ref() {
+                if after_quest.root_id != after_quest.id {
+                    crate::agent::emit_event(
+                        &app,
+                        &state.agent_mgr.ws_broadcast,
+                        &format!("quest-updated-{}", after_quest.root_id),
+                        &serde_json::json!({ "id": after_quest.id, "rootId": after_quest.root_id })
+                            .to_string(),
+                    );
+                }
+            }
+            crate::db::handle_quest_update_side_effects(
+                &app,
+                &state.db,
+                &state.agent_mgr,
+                before,
+                after,
+            )
+            .await?;
             Ok(Value::Null)
         }
         "db_get_quest" => {

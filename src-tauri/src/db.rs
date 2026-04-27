@@ -1966,6 +1966,32 @@ impl Database {
             .await?)
     }
 
+    /// MON-103: load one Keeper run by id so result persistence can use the
+    /// run row's trigger / quest provenance instead of whatever quest happens
+    /// to be current when the async model call returns.
+    pub async fn get_keeper_run_internal(
+        &self,
+        run_id: i64,
+    ) -> Result<Option<KeeperRunRow>, MonarchError> {
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, agent_id, trigger, quest_id, started_at, completed_at,
+                            tokens_input, tokens_output, model_id, output_summary, outcome
+                     FROM memory_keeper_runs
+                     WHERE id = ?1",
+                )?;
+                let mut rows = stmt.query_map(params![run_id], map_keeper_run)?;
+                if let Some(row) = rows.next() {
+                    Ok(Some(row?))
+                } else {
+                    Ok(None)
+                }
+            })
+            .await?)
+    }
+
     /// MON-100: Messages across all of an agent's sessions newer than the
     /// supplied timestamp (NULL = all). Ordered ascending by timestamp so
     /// the rendered slice reads chronologically. Excludes the synthetic
@@ -2558,6 +2584,31 @@ impl Database {
             })
             .await?;
         Ok(())
+    }
+
+    /// MON-103: when a quest closes, clear the agent pointer only if it
+    /// still points at that quest. This lets the next meaningful prompt
+    /// auto-create a fresh current quest without disturbing newer work.
+    pub async fn clear_agent_current_quest_if_matches_internal(
+        &self,
+        agent_id: &str,
+        quest_id: &str,
+    ) -> Result<(), MonarchError> {
+        let agent_id = agent_id.to_string();
+        let quest_id = quest_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE agents
+                     SET current_quest_id = NULL,
+                         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                     WHERE id = ?1 AND current_quest_id = ?2",
+                    params![agent_id, quest_id],
+                )?;
+                Ok(())
+            })
+            .await?)
     }
 
     pub async fn get_quest_internal(
@@ -3360,13 +3411,92 @@ pub async fn db_update_quest(
     payload: UpdateQuestPayload,
 ) -> Result<(), MonarchError> {
     let id = payload.id.clone();
+    let before = db.get_quest_internal(&id).await?;
     db.update_quest_internal(&payload).await?;
+    let after = db.get_quest_internal(&id).await?;
     crate::agent::emit_event(
         &app,
         &agent_mgr.ws_broadcast,
         &format!("quest-updated-{}", id),
         &serde_json::json!({ "id": id }).to_string(),
     );
+    if let Some(after_quest) = after.as_ref() {
+        if after_quest.root_id != after_quest.id {
+            crate::agent::emit_event(
+                &app,
+                &agent_mgr.ws_broadcast,
+                &format!("quest-updated-{}", after_quest.root_id),
+                &serde_json::json!({ "id": after_quest.id, "rootId": after_quest.root_id })
+                    .to_string(),
+            );
+        }
+    }
+    handle_quest_update_side_effects(&app, db.inner(), agent_mgr.inner(), before, after).await?;
+    Ok(())
+}
+
+pub(crate) async fn handle_quest_update_side_effects(
+    app: &tauri::AppHandle,
+    db: &Arc<Database>,
+    agent_mgr: &Arc<crate::agent::AgentManager>,
+    before: Option<QuestRow>,
+    after: Option<QuestRow>,
+) -> Result<(), MonarchError> {
+    let Some(after) = after else {
+        return Ok(());
+    };
+    let before_status = before.as_ref().map(|q| q.status.as_str());
+    if before_status == Some(after.status.as_str()) {
+        return Ok(());
+    }
+
+    let event_payload = serde_json::json!({
+        "from": before_status,
+        "to": after.status.as_str(),
+    })
+    .to_string();
+    let event_id = db
+        .record_quest_event_internal(&RecordQuestEventPayload {
+            quest_id: after.id.clone(),
+            event_type: "status_change".to_string(),
+            actor: Some("monarch".to_string()),
+            payload_json: Some(event_payload),
+        })
+        .await?;
+    crate::agent::emit_event(
+        app,
+        &agent_mgr.ws_broadcast,
+        &format!("quest-event-{}", after.id),
+        &serde_json::json!({ "id": event_id, "eventType": "status_change" }).to_string(),
+    );
+
+    let transitioned_to_done = before_status != Some("done") && after.status == "done";
+    if !transitioned_to_done {
+        return Ok(());
+    }
+
+    let Some(agent_id) = after.assignee_shadow_id.clone() else {
+        return Ok(());
+    };
+    db.clear_agent_current_quest_if_matches_internal(&agent_id, &after.id)
+        .await?;
+    let since = after.started_at.clone().or_else(|| Some(after.created_at.clone()));
+    if let Err(e) = agent_mgr
+        .dispatch_keeper_run(
+            db,
+            &agent_id,
+            crate::agent::KeeperRunTrigger::QuestClose {
+                quest_id: after.id.clone(),
+                since,
+            },
+        )
+        .await
+    {
+        eprintln!(
+            "[monarch] quest-close keeper dispatch failed for {} quest {}: {:?}",
+            agent_id, after.id, e
+        );
+    }
     Ok(())
 }
 

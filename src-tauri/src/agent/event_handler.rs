@@ -481,6 +481,7 @@ async fn maybe_trigger_keeper(
 
     if let Err(e) = dispatch_tx.try_send(InternalDispatch::KeeperRun {
         agent_id: agent_id.to_string(),
+        trigger: crate::agent::KeeperRunTrigger::Continuous,
     }) {
         // try_send avoids stalling the reader; the channel is bounded but
         // 32 is plenty for the worst-case rate (≤1 per turn). Failure
@@ -555,13 +556,23 @@ async fn handle_keeper_result(
     let summary = compaction_summary.unwrap_or_default();
     let session_id = inner.lock().session_map.get(agent_id).cloned();
 
-    // Resolve the agent's current quest id once (used for both the memory
-    // provenance FK and the optional compaction_tick event).
-    let current_quest_id = db
-        .get_agent_current_quest_id_internal(agent_id)
-        .await
-        .ok()
-        .flatten();
+    // Resolve the Keeper run provenance once. Quest-close runs must attach
+    // memories/events to the quest that closed, even if the agent has moved
+    // on and auto-created a new current quest before the model returns.
+    let run_row = db.get_keeper_run_internal(run_id).await.ok().flatten();
+    let trigger = run_row
+        .as_ref()
+        .map(|r| r.trigger.clone())
+        .unwrap_or_else(|| "continuous".to_string());
+    let provenance_quest_id = run_row.as_ref().and_then(|r| r.quest_id.clone());
+    let current_quest_id = if provenance_quest_id.is_some() {
+        provenance_quest_id
+    } else {
+        db.get_agent_current_quest_id_internal(agent_id)
+            .await
+            .ok()
+            .flatten()
+    };
 
     // Provenance: `source_events` carries the message ids that fed the
     // slice. P2 ships an empty array here — the substrate already records
@@ -619,6 +630,7 @@ async fn handle_keeper_result(
     if let Some(qid) = current_quest_id {
         let payload_json = serde_json::json!({
             "keeper_run_id": run_id,
+            "trigger": trigger,
             "claims_count": claims.len(),
             "summary": summary,
         })

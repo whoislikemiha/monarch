@@ -181,6 +181,7 @@ pub enum SidecarCommand {
     KeeperRun {
         agent_id: String,
         run_id: i64,
+        trigger: String,
         slice: String,
         config: KeeperConfig,
     },
