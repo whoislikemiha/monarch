@@ -58,6 +58,7 @@ The phases are *temporal*. The work itself runs on four cross-cutting tracks; ea
 |-------|----------------|------------|----------|-------|
 | **P1** Captain identity | `captain` + identity-version tables | — | — | Identity editors; auto-memory migration |
 | **P2** First memory | `memories`, `memory_keeper_runs`, FTS5, HNSW basics, Keeper at quest-close, brute-force retrieval | `compaction_tick` event kind; `source_quest_id` provenance | `compaction_tick` rendered in existing tool | Memory Inspector v0 (browse) |
+| **P2b** Auto quest spine | — | Auto-created root quest + `agents.current_quest_id` on meaningful user turns | Existing QuestTimeline wakes on first root | Empty timeline becomes live without manual quest creation |
 | **P3a** Eval harness | Recall/merge metrics on a fixed seed | — | — | — |
 | **P3b** Reranker | Top-K=20 → top-K=5 reranker pass | — | — | — |
 | **P3c** Rebuild worker | Background HNSW rebuild + atomic swap | — | — | — |
@@ -80,11 +81,12 @@ P1 ─────────────────────────�
 P2 ──► P3a ──► P3b
    └──► P3c, P3d (after P2; can run in parallel)
 
-P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P9 | P10 | P11) ──► P12
+P2 ──► P2b ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P9 | P10 | P11) ──► P12
 ```
 
 - **P1 is independent.** Land any time. Replaces the auto-memory pattern in-app.
 - **P2 is the gate to everything cognitive.** Without it, no memory exists to read or write.
+- **P2b makes the quest spine real.** It is a bridge slice: no decomposition, just a current root quest so MON-103, P4, and later timeline work have somewhere to attach.
 - **P3a–d improves P2** but doesn't block P4+. Pick when memory volume warrants.
 - **P4 → P5 → P6** is sequential because each builds on the prior's surface (narration before manual editor before reports).
 - **P7 needs P1 + P4** at minimum (shared identity + L2 to read).
@@ -130,6 +132,7 @@ P2 ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P
 - [**MON-100**](https://linear.app/monarch-commander/issue/MON-100) — Slice B: **token-pressure-triggered Keeper write path.** Continuous compaction loop. Token counter per agent (sums `usage.total_tokens` since last tick). Soft trigger at ~25k looking for next natural breakpoint within ~5k more; hard trigger at 30k. Sidecar Keeper worker (`sidecar/src/keeper.ts`, structurally mirrors `classifier.ts`). Structured-JSON claim extraction. Memory writes via the existing single-consumer pipeline (`PersistCommand` variants). HNSW rebuild after each successful run. `compaction_tick` on `quest_events` when `agents.current_quest_id` is set; otherwise visible only via `memory_keeper_runs`. Pi `state.messages` rewrite after the tick — synthesized [user: "previously summarized" + assistant: "ack" + raw-since-tick] scaffold replaces the pre-tick raw conversation. Silent no-op when no Keeper model configured.
 - [**MON-102**](https://linear.app/monarch-commander/issue/MON-102) — Executor `suggest_memory` tool. Memory-poisoning firewall input path (executor proposes via `quest_events` row; Keeper still decides at next tick). Independent of MON-100 at the produce side.
 - [**MON-101**](https://linear.app/monarch-commander/issue/MON-101) — Slice C: hybrid retrieval read path. On user turn, surfaces relevant memories via FTS5 + brute-force vector top-K (no reranker — P3b). Surfaces as `## Relevant Memories` adjacent to the new user message. `access_count` / `last_accessed_at` updated on retrieval.
+- [**MON-105**](https://linear.app/monarch-commander/issue/MON-105) — Bridge: auto-create an active root quest for meaningful user turns. Populates `agents.current_quest_id` before the sidecar starts work so compaction ticks, MON-103 quest-close, and P4 narration have a quest spine without requiring manual QuestTimeline setup.
 - [**MON-103**](https://linear.app/monarch-commander/issue/MON-103) — Quest-close *semantic* trigger. Reuses MON-100's Keeper plumbing; adds status-transition detection in `db_update_quest`, `trigger='quest_close'` labeling, and a "Mark done" UI affordance. v1 uses the same model + prompt as MON-100; per `distillation.md` § "Compaction triggers" the design supports a deeper-pass model tier here, deferred until calibration shows it helps.
 - *(deferred)* Idle compaction trigger. Small follow-up after MON-100 — same Keeper plumbing, idle-timer-based dispatch.
 

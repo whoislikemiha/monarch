@@ -186,6 +186,11 @@ class QuestStore {
       prev.unlisten.forEach((p) => p.then((fn) => fn()).catch(() => {}));
     }
     const subs: AgentSubs = { unlisten: [] };
+    subs.unlisten.push(
+      listen<string>(`quest-created-for-agent-${entry.agentId}`, () =>
+        this.refresh(entry.agentId),
+      ),
+    );
     for (const root of entry.roots) {
       subs.unlisten.push(
         listen<string>(`quest-updated-${root.id}`, () =>

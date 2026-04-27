@@ -13,11 +13,12 @@
    * slice, not someone else's stale one.
    */
   let questState = $derived(
-    agentContext ? questStore.ensure(agentContext.agentId) : null,
+    agentContext ? (questStore.byAgent.get(agentContext.agentId) ?? null) : null,
   );
 
   $effect(() => {
     if (agentContext) {
+      questStore.ensure(agentContext.agentId);
       questStore.refresh(agentContext.agentId);
     }
   });
