@@ -26,7 +26,7 @@ use crate::sidecar_protocol::{KeeperConfig, LoadSessionMessage, ShadowConfig, Si
 use crate::util::chrono_now;
 
 use super::commands::{ExtensionUiResponseRequest, SpawnAgentRequest};
-use super::event_handler::emit_state_event;
+use super::event_handler::{emit_event, emit_state_event};
 use super::persist::{run_persist_consumer, PersistCommand};
 use super::sidecar::SidecarProcess;
 use super::{TaskHandle, WsBroadcast};
@@ -651,7 +651,7 @@ impl AgentManager {
         // the shape is validated against the canonical wire contract.
         let mut value: serde_json::Value = serde_json::from_str(&command_json)?;
         if let Some(obj) = value.as_object_mut() {
-            obj.insert("agentId".to_string(), serde_json::Value::String(id));
+            obj.insert("agentId".to_string(), serde_json::Value::String(id.clone()));
         }
         let mut cmd: SidecarCommand = serde_json::from_value(value)?;
         // MON-82: on Prompt, attach the resolved classifier config + a minted
@@ -683,8 +683,55 @@ impl AgentManager {
                 }
             }
         }
+        if let SidecarCommand::Prompt { message, .. } = &cmd {
+            self.maybe_auto_create_quest_for_prompt(app, db, &id, message)
+                .await;
+        }
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
             .await
+    }
+
+    async fn maybe_auto_create_quest_for_prompt(
+        &self,
+        app: &AppHandle,
+        db: &Arc<Database>,
+        agent_id: &str,
+        message: &serde_json::Value,
+    ) {
+        let text = prompt_text(message);
+        if !is_meaningful_quest_prompt(&text) {
+            return;
+        }
+        let title = quest_title_from_prompt(&text)
+            .unwrap_or_else(|| format!("Task from {}", crate::util::chrono_now()));
+        let description = quest_description_from_prompt(&text);
+        match db
+            .auto_create_current_quest_internal(agent_id, &title, description.as_deref())
+            .await
+        {
+            Ok(Some(quest_id)) => {
+                let payload = serde_json::json!({ "id": quest_id, "agentId": agent_id });
+                emit_event(
+                    app,
+                    &self.ws_broadcast,
+                    &format!("quest-created-{}", quest_id),
+                    &payload.to_string(),
+                );
+                emit_event(
+                    app,
+                    &self.ws_broadcast,
+                    &format!("quest-created-for-agent-{}", agent_id),
+                    &payload.to_string(),
+                );
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!(
+                    "[monarch] auto quest creation failed for {}: {:?}",
+                    agent_id, e
+                );
+            }
+        }
     }
 
     /// MON-98: Push an updated captain identity payload to all live agent
@@ -1020,6 +1067,120 @@ fn render_keeper_slice(
     s
 }
 
+fn prompt_text(message: &serde_json::Value) -> String {
+    match message {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(parts) => parts
+            .iter()
+            .filter_map(|p| {
+                if p.get("type").and_then(|t| t.as_str()) == Some("text") {
+                    p.get("text").and_then(|t| t.as_str()).map(String::from)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+fn is_meaningful_quest_prompt(text: &str) -> bool {
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lower = compact.to_lowercase();
+    if compact.len() < 18 {
+        return false;
+    }
+    let chitchat = [
+        "hi",
+        "hello",
+        "hey",
+        "thanks",
+        "thank you",
+        "ok",
+        "okay",
+        "cool",
+        "nice",
+        "what's up",
+        "how are you",
+        "status",
+        "ping",
+    ];
+    if chitchat.iter().any(|p| lower == *p || lower == format!("{p}!")) {
+        return false;
+    }
+    let task_markers = [
+        "add ",
+        "build ",
+        "change ",
+        "check ",
+        "create ",
+        "debug ",
+        "design ",
+        "fix ",
+        "implement ",
+        "investigate ",
+        "look ",
+        "make ",
+        "plan ",
+        "refactor ",
+        "review ",
+        "run ",
+        "set up ",
+        "update ",
+        "write ",
+        "pr ",
+        "ticket",
+        "linear",
+        "roadmap",
+        "branch",
+        "commit",
+        "test",
+        "error",
+        "bug",
+        "file",
+        "code",
+    ];
+    text.lines().filter(|line| !line.trim().is_empty()).count() > 1
+        || compact.len() >= 80
+        || task_markers.iter().any(|marker| lower.contains(marker))
+}
+
+fn quest_title_from_prompt(text: &str) -> Option<String> {
+    let first = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?
+        .trim_start_matches(['#', '-', '*', '>', ' '])
+        .trim();
+    if first.is_empty() {
+        return None;
+    }
+    let mut title = first
+        .split_whitespace()
+        .take(16)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if title.len() > 90 {
+        title.truncate(87);
+        title.push_str("...");
+    }
+    Some(title)
+}
+
+fn quest_description_from_prompt(text: &str) -> Option<String> {
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.is_empty() {
+        return None;
+    }
+    let mut excerpt = compact;
+    if excerpt.len() > 500 {
+        excerpt.truncate(497);
+        excerpt.push_str("...");
+    }
+    Some(format!("Auto-created from user turn:\n\n{}", excerpt))
+}
+
 /// MON-100: pull plain text out of a stored `messages.content` value, which
 /// may be a JSON-encoded array of content blocks (assistant), a plain string
 /// (user, free-form), or a tool-result JSON blob. The Keeper benefits from
@@ -1106,6 +1267,22 @@ mod tests {
                 agent_id: agent_id.to_string(),
             },
         }
+    }
+
+    #[test]
+    fn auto_quest_heuristic_ignores_chitchat() {
+        assert!(!is_meaningful_quest_prompt("thanks"));
+        assert!(!is_meaningful_quest_prompt("how are you?"));
+        assert!(!is_meaningful_quest_prompt("ok"));
+    }
+
+    #[test]
+    fn auto_quest_heuristic_accepts_task_prompts() {
+        assert!(is_meaningful_quest_prompt("fix the failing memory retrieval test"));
+        assert!(is_meaningful_quest_prompt("let's set up the auto quest ticket first"));
+        assert!(is_meaningful_quest_prompt(
+            "Please inspect the Rust sidecar protocol and update the roadmap notes."
+        ));
     }
 
     #[tokio::test]

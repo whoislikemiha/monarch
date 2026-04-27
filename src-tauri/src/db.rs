@@ -1863,6 +1863,80 @@ impl Database {
             .await?)
     }
 
+    /// MON-105: create a root quest for a meaningful user turn and set it as
+    /// the agent's current quest, but only if there is no active current
+    /// quest. Returns `Some(new_id)` when a quest was created.
+    pub async fn auto_create_current_quest_internal(
+        &self,
+        agent_id: &str,
+        title: &str,
+        description: Option<&str>,
+    ) -> Result<Option<String>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        let title = title.to_string();
+        let description = description.map(|s| s.to_string());
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let tx = conn.unchecked_transaction()?;
+                let existing: Option<(String, Option<String>)> = tx
+                    .query_row(
+                        "SELECT q.id, q.status
+                         FROM agents a
+                         LEFT JOIN quest_nodes q ON q.id = a.current_quest_id
+                         WHERE a.id = ?1",
+                        params![agent_id],
+                        |row| {
+                            Ok((
+                                row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                                row.get::<_, Option<String>>(1)?,
+                            ))
+                        },
+                    )
+                    .ok();
+                if let Some((id, status)) = existing {
+                    let terminal = matches!(
+                        status.as_deref(),
+                        Some("done" | "verified" | "abandoned" | "superseded")
+                    );
+                    if !id.is_empty() && !terminal {
+                        tx.commit()?;
+                        return Ok(None);
+                    }
+                }
+
+                let id = crate::util::uuid_v4_simple();
+                let event_id = crate::util::uuid_v4_simple();
+                let now = crate::util::chrono_now();
+                tx.execute(
+                    "INSERT INTO quest_nodes (
+                        id, root_id, parent_id, title, description,
+                        status, grade, exec_hint, assignee_shadow_id,
+                        created_by, created_at, started_at
+                    ) VALUES (?1, ?1, NULL, ?2, ?3, 'in_progress', 'C', 'in_context', ?4, 'monarch', ?5, ?5)",
+                    params![id, title, description, agent_id, now],
+                )?;
+                let event_payload = serde_json::json!({
+                    "from": null,
+                    "to": "in_progress",
+                    "autoCreated": true,
+                })
+                .to_string();
+                tx.execute(
+                    "INSERT INTO quest_events (id, quest_id, event_type, actor, payload_json, created_at)
+                     VALUES (?1, ?2, 'status_change', 'monarch', ?3, ?4)",
+                    params![event_id, id, event_payload, now],
+                )?;
+                tx.execute(
+                    "UPDATE agents SET current_quest_id = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?2",
+                    params![id, agent_id],
+                )?;
+                tx.commit()?;
+                Ok(Some(id))
+            })
+            .await?)
+    }
+
     /// MON-100: Most recent successful Keeper run for an agent, or None.
     /// Drives slice anchoring (we replay messages newer than this row's
     /// `completed_at`) and the synthesized scaffold's prior summary (its
@@ -3258,13 +3332,22 @@ pub async fn db_create_quest(
     agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
     payload: CreateQuestPayload,
 ) -> Result<String, MonarchError> {
+    let assignee = payload.assignee_shadow_id.clone();
     let id = db.create_quest_internal(&payload).await?;
     crate::agent::emit_event(
         &app,
         &agent_mgr.ws_broadcast,
         &format!("quest-created-{}", id),
-        &serde_json::json!({ "id": id }).to_string(),
+        &serde_json::json!({ "id": id.clone() }).to_string(),
     );
+    if let Some(agent_id) = assignee {
+        crate::agent::emit_event(
+            &app,
+            &agent_mgr.ws_broadcast,
+            &format!("quest-created-for-agent-{}", agent_id),
+            &serde_json::json!({ "id": id, "agentId": agent_id }).to_string(),
+        );
+    }
     Ok(id)
 }
 

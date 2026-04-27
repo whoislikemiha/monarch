@@ -230,7 +230,9 @@ CREATE TABLE quest_events (
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- FK extensions on existing tables (Slice 2 leaves both NULL; Slice 3+ populate).
+-- FK extensions on existing tables. messages.quest_id is still mostly
+-- event/roadmap territory; agents.current_quest_id is populated by
+-- auto-created active quests.
 ALTER TABLE messages ADD COLUMN quest_id         TEXT REFERENCES quest_nodes(id);
 ALTER TABLE agents   ADD COLUMN current_quest_id TEXT REFERENCES quest_nodes(id);
 
@@ -385,6 +387,9 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 | `agent-event-{id}`        | Varies (JSON) | Out-of-band signals only: `session_ready`, `sidecar_error`, `extension_ui_request`. **Message and tool forwarding on this channel is deprecated** — a follow-up issue removes the Rust-side emit after verifying no frontend subscribers remain. |
 | `agent-exit-{id}`         | `number \| null` | Pi process exit code. |
 | `agent-stderr-{id}`       | `string` | Per-line sidecar stderr, buffered into `agent.stderrLines`. |
+| `quest-created-{id}`      | `{ id }` | A quest node was created; known-root subscribers re-fetch. |
+| `quest-created-for-agent-{id}` | `{ id, agentId }` | A root quest was created for an agent, including auto-created current quests. The Quest Timeline listens here so an empty timeline wakes up. |
+| `quest-updated-{rootId}` / `quest-event-{questId}` | `{ id, ... }` | Quest tree or event-log invalidation for the toolbox timeline. |
 
 `LiveAgentState` is defined in Rust at `src-tauri/src/agent_state.rs`; the TypeScript shape is generated via `specta` + `tauri-specta` into `src/lib/bindings.ts`. To regenerate after a Rust change, run `cargo run -- --export-bindings` from `src-tauri/` — the generated file is post-processed to route through `$lib/api` so the WS fallback still works in non-Tauri environments.
 

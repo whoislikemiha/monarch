@@ -102,6 +102,11 @@
   let live: LiveAgentState = $derived(
     (boundAgentId && liveAgentStore.byAgent.get(boundAgentId)) || DETACHED_LIVE,
   );
+  let classifications = $derived(classifierStore.byAgent.get(agent.id)?.ordinalMap);
+
+  $effect(() => {
+    classifierStore.ensure(agent.id);
+  });
 
   export function focusInput() {
     chatInputRef?.focus();
@@ -693,7 +698,7 @@
           {nowMs}
           agentName={agent.name}
           {sentImages}
-          classifications={classifierStore.ensure(agent.id).ordinalMap}
+          {classifications}
           onimageclick={(src) => (lightboxSrc = src)}
         />
 
