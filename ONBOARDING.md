@@ -224,7 +224,7 @@ CREATE TABLE quest_nodes (
 CREATE TABLE quest_events (
   id           TEXT PRIMARY KEY,
   quest_id     TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
-  event_type   TEXT NOT NULL,                    -- status_change | scope_expanded | ...
+  event_type   TEXT NOT NULL,                    -- status_change | compaction_tick | memory_suggestion | ...
   actor        TEXT,                             -- role or shadow_id
   payload_json TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
@@ -371,7 +371,7 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 |---------------------------|---------|
 | `session_ready`           | Pi session is initialized and ready for `prompt`. |
 | `session_destroyed`       | Session has been cleaned up. |
-| `event`                   | Wrapper around a raw Pi SDK runtime event (`message_*`, `tool_execution_*`, `turn_*`, `queue_update`, `compaction_*`, …). |
+| `event`                   | Wrapper around a Pi SDK runtime event (`message_*`, `tool_execution_*`, `turn_*`, `queue_update`, `compaction_*`, …) or a Monarch-authored inner event such as `memory_suggestion`. |
 | `extension_ui_request`    | Pi needs user input (select / confirm / input / editor). Includes a `requestId` for the eventual `extension_ui_response`. |
 | `classification`          | Per-user-turn classifier result, emitted independently of the Pi turn. |
 | `keeper_result`           | Keeper worker output for a `keeper_run`; Rust persists claims and run metadata. |

@@ -405,6 +405,7 @@ pub(super) fn build_persist_commands(
     event: &InnerEvent,
     inner_raw: Option<&serde_json::Value>,
     durations: EventDurations,
+    current_quest_id: Option<String>,
 ) -> Vec<PersistCommand> {
     let mut cmds: Vec<PersistCommand> = Vec::with_capacity(2);
 
@@ -552,6 +553,33 @@ pub(super) fn build_persist_commands(
                 agent_id: agent_id.to_string(),
             });
         }
+        InnerEvent::MemorySuggestion {
+            title,
+            summary,
+            content,
+        } => {
+            if let Some(quest_id) = current_quest_id {
+                let payload_json = serde_json::json!({
+                    "title": title,
+                    "summary": summary,
+                    "content": content,
+                })
+                .to_string();
+                cmds.push(PersistCommand::RecordQuestEvent {
+                    payload: RecordQuestEventPayload {
+                        quest_id,
+                        event_type: "memory_suggestion".to_string(),
+                        actor: Some(agent_id.to_string()),
+                        payload_json: Some(payload_json),
+                    },
+                });
+            } else {
+                eprintln!(
+                    "[monarch] dropping memory_suggestion for {} with no current quest",
+                    agent_id
+                );
+            }
+        }
         _ => {}
     }
 
@@ -619,6 +647,7 @@ fn inner_event_tag(event: &InnerEvent) -> &'static str {
         InnerEvent::MessageEnd { .. } => "message_end",
         InnerEvent::ToolExecutionStart { .. } => "tool_execution_start",
         InnerEvent::ToolExecutionEnd { .. } => "tool_execution_end",
+        InnerEvent::MemorySuggestion { .. } => "memory_suggestion",
         InnerEvent::CompactionStart { .. } => "compaction_start",
         InnerEvent::CompactionEnd { .. } => "compaction_end",
         InnerEvent::AutoRetryStart { .. } => "auto_retry_start",

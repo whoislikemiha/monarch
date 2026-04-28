@@ -6,13 +6,14 @@
 import {
 	createAgentSession,
 	DefaultResourceLoader,
+	defineTool,
 	SessionManager,
 	type AgentSession,
 	type AgentSessionEventListener,
 } from "@mariozechner/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-import type { Api, ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
+import { Type, type Api, type ImageContent, type Model, type TextContent } from "@mariozechner/pi-ai";
 import { buildSystemPrompt } from "./shadow-oath.js";
 import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
 import type {
@@ -76,6 +77,56 @@ const EMPTY_USAGE = {
 		total: 0,
 	},
 } as const;
+
+function createSuggestMemoryTool(agentId: string, emit: EmitFn) {
+	return defineTool({
+		name: "suggest_memory",
+		label: "Suggest Memory",
+		description:
+			"Suggest a noteworthy fact, decision, preference, or convention for the Keeper to consider later.",
+		promptSnippet:
+			"suggest_memory(title, summary, content) - flag a durable fact, decision, preference, or convention for later Keeper review.",
+		promptGuidelines: [
+			"Use suggest_memory only for durable information that should likely survive this quest.",
+			"The tool records a suggestion only; the Keeper decides whether it becomes memory.",
+		],
+		parameters: Type.Object({
+			title: Type.String({
+				description: "Short title for the suggested memory.",
+			}),
+			summary: Type.String({
+				description: "One-sentence summary of what should be remembered.",
+			}),
+			content: Type.String({
+				description: "Supporting detail, evidence, or context for the Keeper.",
+			}),
+		}),
+		async execute(_toolCallId, params) {
+			const title = params.title.trim();
+			const summary = params.summary.trim();
+			const content = params.content.trim();
+			emit({
+				type: "event",
+				agentId,
+				event: {
+					type: "memory_suggestion",
+					title,
+					summary,
+					content,
+				},
+			});
+			return {
+				content: [
+					{
+						type: "text",
+						text: "Memory suggestion queued for Keeper review if an active quest is available.",
+					},
+				],
+				details: { title, summary, content },
+			};
+		},
+	});
+}
 
 function tryParseStoredContent(content: string): unknown {
 	const trimmed = content.trim();
@@ -325,6 +376,7 @@ export class RuntimeManager {
 			thinkingLevel: initialLevel,
 			sessionManager: SessionManager.inMemory(cmd.cwd),
 			resourceLoader,
+			customTools: [createSuggestMemoryTool(cmd.agentId, this.emit)],
 		});
 
 		if (cmd.provider === "lmstudio") {
