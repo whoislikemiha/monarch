@@ -192,6 +192,27 @@
     }
   }
 
+  interface MemorySuggestionPayload {
+    title: string;
+    summary: string;
+    content: string;
+  }
+  function parseMemorySuggestionPayload(raw: string | null): MemorySuggestionPayload | null {
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed == null || typeof parsed !== "object") return null;
+      const obj = parsed as Record<string, unknown>;
+      const title = typeof obj.title === "string" ? obj.title : "";
+      const summary = typeof obj.summary === "string" ? obj.summary : "";
+      const content = typeof obj.content === "string" ? obj.content : "";
+      if (!title && !summary && !content) return null;
+      return { title, summary, content };
+    } catch {
+      return null;
+    }
+  }
+
   function formatTrigger(trigger: string): string {
     return trigger === "quest_close" ? "quest close" : "continuous";
   }
@@ -375,14 +396,14 @@
                     {#if quest.description}
                       <p class="description">{quest.description}</p>
                     {/if}
-                    <div class="event-log">
-                      <div class="log-title">Event log</div>
-                      {#if events.length === 0}
-                        <div class="muted small">No events.</div>
-                      {:else}
-                        {#each events as ev (ev.id)}
-                          {#if ev.eventType === "compaction_tick"}
-                            {@const cp = parseCompactionPayload(ev.payloadJson)}
+	                    <div class="event-log">
+	                      <div class="log-title">Event log</div>
+	                      {#if events.length === 0}
+	                        <div class="muted small">No events.</div>
+	                      {:else}
+	                        {#each events as ev (ev.id)}
+	                          {#if ev.eventType === "compaction_tick"}
+	                            {@const cp = parseCompactionPayload(ev.payloadJson)}
                             <div class="event-row compaction-row">
                               <span class="compaction-icon" title="Keeper compaction tick">◈</span>
                               <span class="event-type compaction-type">
@@ -401,21 +422,45 @@
                               <div class="compaction-meta muted small">
                                 run #{cp.keeperRunId ?? "?"}
                               </div>
-                            {:else if ev.payloadJson}
-                              <pre class="event-payload">{ev.payloadJson}</pre>
-                            {/if}
-                          {:else}
-                            <div class="event-row">
-                              <span class="event-type">{ev.eventType}</span>
-                              <span class="muted small">{ev.actor ?? "—"}</span>
-                              <span class="muted small">{formatRelative(ev.createdAt)}</span>
-                            </div>
-                            {#if ev.payloadJson}
-                              <pre class="event-payload">{ev.payloadJson}</pre>
-                            {/if}
-                          {/if}
-                        {/each}
-                      {/if}
+	                            {:else if ev.payloadJson}
+	                              <pre class="event-payload">{ev.payloadJson}</pre>
+	                            {/if}
+	                          {:else if ev.eventType === "memory_suggestion"}
+	                            {@const suggestion = parseMemorySuggestionPayload(ev.payloadJson)}
+	                            <div class="event-row memory-suggestion-row">
+	                              <span class="memory-suggestion-icon" title="Executor memory suggestion">◇</span>
+	                              <span class="event-type memory-suggestion-type">memory suggestion</span>
+	                              <span class="muted small">{ev.actor ?? "—"}</span>
+	                              <span class="muted small">{formatRelative(ev.createdAt)}</span>
+	                            </div>
+	                            {#if suggestion}
+	                              <div class="memory-suggestion-card">
+	                                <div class="memory-suggestion-title">{suggestion.title || "(untitled)"}</div>
+	                                {#if suggestion.summary}
+	                                  <div class="memory-suggestion-summary">{suggestion.summary}</div>
+	                                {/if}
+	                                {#if suggestion.content}
+	                                  <details class="memory-suggestion-details">
+	                                    <summary>Details</summary>
+	                                    <div>{suggestion.content}</div>
+	                                  </details>
+	                                {/if}
+	                              </div>
+	                            {:else if ev.payloadJson}
+	                              <pre class="event-payload">{ev.payloadJson}</pre>
+	                            {/if}
+	                          {:else}
+	                            <div class="event-row">
+	                              <span class="event-type">{ev.eventType}</span>
+	                              <span class="muted small">{ev.actor ?? "—"}</span>
+	                              <span class="muted small">{formatRelative(ev.createdAt)}</span>
+	                            </div>
+	                            {#if ev.payloadJson}
+	                              <pre class="event-payload">{ev.payloadJson}</pre>
+	                            {/if}
+	                          {/if}
+	                        {/each}
+	                      {/if}
                     </div>
                     <div class="detail-actions">
                       {#if quest.status !== "done"}
@@ -777,6 +822,46 @@
   }
   .compaction-meta {
     margin-left: 18px;
+  }
+
+  .memory-suggestion-row {
+    padding-left: 0;
+  }
+  .memory-suggestion-icon {
+    color: #d6a84d;
+    font-size: 11px;
+  }
+  .memory-suggestion-type {
+    color: #d6a84d;
+    font-weight: 600;
+  }
+  .memory-suggestion-card {
+    margin: 2px 0 4px 18px;
+    padding: 6px 8px;
+    border-left: 2px solid #d6a84d;
+    background: var(--bg-sidebar);
+    color: var(--text-primary);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .memory-suggestion-title {
+    font-weight: 600;
+  }
+  .memory-suggestion-summary {
+    color: var(--text-secondary);
+  }
+  .memory-suggestion-details {
+    margin-top: 4px;
+    color: var(--text-secondary);
+  }
+  .memory-suggestion-details summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 10px;
+  }
+  .memory-suggestion-details div {
+    margin-top: 4px;
+    white-space: pre-wrap;
   }
 
   .empty {

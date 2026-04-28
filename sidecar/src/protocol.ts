@@ -307,6 +307,13 @@ export interface MemorySearchRequestEvent {
   topK?: number | null;
 }
 
+export interface MemorySuggestionInnerEvent {
+  type: "memory_suggestion";
+  title: string;
+  summary: string;
+  content: string;
+}
+
 export type SidecarEvent =
   | SessionReadyEvent
   | SessionDestroyedEvent

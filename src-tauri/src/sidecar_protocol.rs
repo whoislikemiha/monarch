@@ -265,6 +265,11 @@ pub enum InnerEvent {
         result: Option<Value>,
         is_error: bool,
     },
+    MemorySuggestion {
+        title: String,
+        summary: String,
+        content: String,
+    },
     CompactionStart {
         reason: Option<String>,
     },
@@ -324,6 +329,11 @@ enum KnownInnerEvent {
         result: Option<Value>,
         is_error: bool,
     },
+    MemorySuggestion {
+        title: String,
+        summary: String,
+        content: String,
+    },
     CompactionStart {
         #[serde(default)]
         reason: Option<String>,
@@ -376,6 +386,15 @@ impl From<KnownInnerEvent> for InnerEvent {
                 result,
                 is_error,
             },
+            KnownInnerEvent::MemorySuggestion {
+                title,
+                summary,
+                content,
+            } => Self::MemorySuggestion {
+                title,
+                summary,
+                content,
+            },
             KnownInnerEvent::CompactionStart { reason } => Self::CompactionStart { reason },
             KnownInnerEvent::CompactionEnd { aborted } => Self::CompactionEnd { aborted },
             KnownInnerEvent::AutoRetryStart { attempt } => Self::AutoRetryStart { attempt },
@@ -401,6 +420,7 @@ const KNOWN_INNER_TAGS: &[&str] = &[
     "message_end",
     "tool_execution_start",
     "tool_execution_end",
+    "memory_suggestion",
     "compaction_start",
     "compaction_end",
     "auto_retry_start",
@@ -992,6 +1012,7 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
         InnerEvent::AutoRetryEnd => ApplyOutcome::NoOp,
         InnerEvent::QueueUpdate => ApplyOutcome::NoOp,
         InnerEvent::ToolExecutionUpdate => ApplyOutcome::NoOp,
+        InnerEvent::MemorySuggestion { .. } => ApplyOutcome::NoOp,
         // MON-39 item 9: unknown events return NoOp so `state_version`
         // does not bump per event. The reader-side path in
         // `handle_sidecar_event` is the canonical entry that flips

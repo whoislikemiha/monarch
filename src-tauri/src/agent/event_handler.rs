@@ -206,9 +206,22 @@ pub(super) async fn handle_sidecar_event(
             // apply clears the turn anchor and writes the duration onto the
             // ToolExecution — peeking after would see the mutation.
             let durations = compute_event_durations(live_states, &agent_id, &inner_event).await;
-            for cmd in
-                build_persist_commands(&agent_id, session_id, &inner_event, inner_raw, durations)
-            {
+            let current_quest_id = if matches!(inner_event, InnerEvent::MemorySuggestion { .. }) {
+                db.get_agent_current_quest_id_internal(&agent_id)
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
+            for cmd in build_persist_commands(
+                &agent_id,
+                session_id,
+                &inner_event,
+                inner_raw,
+                durations,
+                current_quest_id,
+            ) {
                 if persist_tx.send(cmd).await.is_err() {
                     eprintln!("[monarch] persist consumer closed, dropping event");
                     break;
