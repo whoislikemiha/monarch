@@ -3826,6 +3826,36 @@ impl Database {
             .await?)
     }
 
+    /// Resolve the agent's current active plan item — the row whose
+    /// `status = 'active'` on the agent's `current_quest_id`. Used by the
+    /// persist pipeline when a sidecar plan-lifecycle event arrives
+    /// without an explicit item id (the executor tool implicitly targets
+    /// the active item). Returns `None` if the agent has no current
+    /// quest, or if no item is active on it.
+    pub async fn get_active_plan_item_for_agent_internal(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<String>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let item: Option<String> = conn
+                    .query_row(
+                        "SELECT pi.id FROM quest_plan_items pi
+                         INNER JOIN agents a ON a.current_quest_id = pi.quest_id
+                         WHERE a.id = ?1 AND pi.status = 'active'
+                         ORDER BY pi.order_index ASC
+                         LIMIT 1",
+                        params![agent_id],
+                        |row| row.get(0),
+                    )
+                    .ok();
+                Ok(item)
+            })
+            .await?)
+    }
+
     pub async fn block_plan_item_internal(
         &self,
         item_id: &str,

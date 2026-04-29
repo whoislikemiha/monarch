@@ -21,7 +21,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::db::{
     Database, InsertMemoryPayload, MessageRow, QuestEventNotification, RecordQuestEventPayload,
-    SaveClassificationPayload,
+    SaveClassificationPayload, SetPlanPayload,
 };
 use crate::error::MonarchError;
 use crate::memory_index::MemoryIndex;
@@ -168,6 +168,38 @@ pub(super) enum PersistCommand {
         is_error: bool,
         duration_ms: Option<i64>,
     },
+    /// P4b: bulk replace a quest's plan. The sidecar `set_plan` tool
+    /// emits this; manual UI edits go directly through the Tauri
+    /// command path (which calls `Database::set_plan_internal`).
+    PlanSet {
+        agent_id: String,
+        payload: SetPlanPayload,
+    },
+    /// P4b: mark a plan item active. `item_id` is resolved upstream by
+    /// the executor tool — Slice A does not invent ids.
+    PlanItemStart {
+        agent_id: String,
+        item_id: String,
+    },
+    /// P4b: complete the currently active plan item on the agent's
+    /// current quest. The active item is looked up server-side from
+    /// `quest_plan_items.status = 'active'`.
+    PlanItemComplete {
+        agent_id: String,
+        outcome: Option<String>,
+    },
+    /// P4b: skip the named item, or the current active item if `None`.
+    PlanItemSkip {
+        agent_id: String,
+        item_id: Option<String>,
+        reason: Option<String>,
+    },
+    /// P4b: block the named item, or the current active item if `None`.
+    PlanItemBlock {
+        agent_id: String,
+        item_id: Option<String>,
+        reason: String,
+    },
     /// MON-100: full-rebuild the per-agent HNSW index from current DB
     /// embeddings. Runs last in a Keeper-tick burst so the index is
     /// consistent before the next read. P3d (MON-97) replaces this with
@@ -192,7 +224,12 @@ impl PersistCommand {
             | Self::ActionComplete { agent_id, .. }
             | Self::ExecutorDecision { agent_id, .. }
             | Self::ToolCallStart { agent_id, .. }
-            | Self::ToolCallEnd { agent_id, .. } => agent_id,
+            | Self::ToolCallEnd { agent_id, .. }
+            | Self::PlanSet { agent_id, .. }
+            | Self::PlanItemStart { agent_id, .. }
+            | Self::PlanItemComplete { agent_id, .. }
+            | Self::PlanItemSkip { agent_id, .. }
+            | Self::PlanItemBlock { agent_id, .. } => agent_id,
             Self::SaveClassification { payload } => &payload.agent_id,
             // CompleteKeeperRun + RecordQuestEvent don't carry an agent id
             // directly — failures still log but cannot flip a per-agent
@@ -464,6 +501,61 @@ impl PersistCommand {
                 emit_quest_notifications(app, ws_tx, notes);
                 Ok(())
             }
+            Self::PlanSet { payload, .. } => {
+                let notes = db.set_plan_internal(&payload).await?;
+                emit_quest_notifications(app, ws_tx, notes);
+                Ok(())
+            }
+            Self::PlanItemStart { item_id, .. } => {
+                let notes = db.start_plan_item_internal(&item_id).await?;
+                emit_quest_notifications(app, ws_tx, notes);
+                Ok(())
+            }
+            Self::PlanItemComplete { agent_id, outcome } => {
+                let target = db.get_active_plan_item_for_agent_internal(&agent_id).await?;
+                let Some(item_id) = target else {
+                    return Ok(());
+                };
+                let notes = db
+                    .complete_plan_item_internal(&item_id, outcome.as_deref())
+                    .await?;
+                emit_quest_notifications(app, ws_tx, notes);
+                Ok(())
+            }
+            Self::PlanItemSkip {
+                agent_id,
+                item_id,
+                reason,
+            } => {
+                let target = match item_id {
+                    Some(id) => Some(id),
+                    None => db.get_active_plan_item_for_agent_internal(&agent_id).await?,
+                };
+                let Some(item_id) = target else {
+                    return Ok(());
+                };
+                let notes = db
+                    .skip_plan_item_internal(&item_id, reason.as_deref())
+                    .await?;
+                emit_quest_notifications(app, ws_tx, notes);
+                Ok(())
+            }
+            Self::PlanItemBlock {
+                agent_id,
+                item_id,
+                reason,
+            } => {
+                let target = match item_id {
+                    Some(id) => Some(id),
+                    None => db.get_active_plan_item_for_agent_internal(&agent_id).await?,
+                };
+                let Some(item_id) = target else {
+                    return Ok(());
+                };
+                let notes = db.block_plan_item_internal(&item_id, &reason).await?;
+                emit_quest_notifications(app, ws_tx, notes);
+                Ok(())
+            }
             Self::RebuildHnsw { agent_id } => {
                 // P2 ships full-rebuild — instant-distance is fast enough for
                 // P2 volumes (<10k memories per agent). MON-97 (P3d) replaces
@@ -726,6 +818,45 @@ pub(super) fn build_persist_commands(
                 });
             }
         }
+        InnerEvent::PlanSet { items, rationale } => {
+            if let Some(quest_id) = current_quest_id {
+                cmds.push(PersistCommand::PlanSet {
+                    agent_id: agent_id.to_string(),
+                    payload: SetPlanPayload {
+                        quest_id,
+                        items: items.clone(),
+                        created_by: Some("executor".to_string()),
+                        rationale: rationale.clone(),
+                    },
+                });
+            }
+        }
+        InnerEvent::PlanItemStart { item_id } => {
+            cmds.push(PersistCommand::PlanItemStart {
+                agent_id: agent_id.to_string(),
+                item_id: item_id.clone(),
+            });
+        }
+        InnerEvent::PlanItemComplete { outcome } => {
+            cmds.push(PersistCommand::PlanItemComplete {
+                agent_id: agent_id.to_string(),
+                outcome: outcome.clone(),
+            });
+        }
+        InnerEvent::PlanItemSkip { item_id, reason } => {
+            cmds.push(PersistCommand::PlanItemSkip {
+                agent_id: agent_id.to_string(),
+                item_id: item_id.clone(),
+                reason: reason.clone(),
+            });
+        }
+        InnerEvent::PlanItemBlock { item_id, reason } => {
+            cmds.push(PersistCommand::PlanItemBlock {
+                agent_id: agent_id.to_string(),
+                item_id: item_id.clone(),
+                reason: reason.clone(),
+            });
+        }
         InnerEvent::TurnEnd => {
             // MON-63: increment per-agent turn counter
             cmds.push(PersistCommand::IncrementAgentTurns {
@@ -831,6 +962,11 @@ fn inner_event_tag(event: &InnerEvent) -> &'static str {
         InnerEvent::ActionTransition { .. } => "action_transition",
         InnerEvent::ActionComplete { .. } => "action_complete",
         InnerEvent::ExecutorDecision { .. } => "executor_decision",
+        InnerEvent::PlanSet { .. } => "plan_set",
+        InnerEvent::PlanItemStart { .. } => "plan_item_start",
+        InnerEvent::PlanItemComplete { .. } => "plan_item_complete",
+        InnerEvent::PlanItemSkip { .. } => "plan_item_skip",
+        InnerEvent::PlanItemBlock { .. } => "plan_item_block",
         InnerEvent::CompactionStart { .. } => "compaction_start",
         InnerEvent::CompactionEnd { .. } => "compaction_end",
         InnerEvent::AutoRetryStart { .. } => "auto_retry_start",
@@ -844,7 +980,18 @@ fn inner_event_tag(event: &InnerEvent) -> &'static str {
 fn is_narration_tool(tool_name: &str) -> bool {
     matches!(
         tool_name,
-        "set_current_action" | "complete_action" | "record_decision"
+        "set_current_action"
+            | "complete_action"
+            | "record_decision"
+            // P4b plan-narration tools (Slice B). Hidden from ordinary
+            // tool_call rendering — their semantic events land as
+            // plan_* rows on the timeline instead.
+            | "set_plan"
+            | "update_plan"
+            | "start_plan_item"
+            | "complete_plan_item"
+            | "skip_plan_item"
+            | "block_plan_item"
     )
 }
 
