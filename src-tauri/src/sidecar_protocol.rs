@@ -281,6 +281,35 @@ pub enum InnerEvent {
         decision: String,
         rationale: Option<String>,
     },
+    /// P4b: full plan replace authored by the executor. `items` is the
+    /// new ordered list; entries with no `id` get one minted server-side.
+    PlanSet {
+        items: Vec<crate::db::PlanItemInput>,
+        rationale: Option<String>,
+    },
+    /// P4b: mark a plan item active. The previously active item on the
+    /// same quest (if any) is silently reset to pending.
+    PlanItemStart {
+        item_id: String,
+    },
+    /// P4b: complete the currently active plan item with optional outcome.
+    /// Item id resolution happens on the persistence side from the live
+    /// plan slice — the sidecar doesn't carry plan state.
+    PlanItemComplete {
+        outcome: Option<String>,
+    },
+    /// P4b: skip a plan item. `item_id` is optional; when omitted the
+    /// currently active item is skipped.
+    PlanItemSkip {
+        item_id: Option<String>,
+        reason: Option<String>,
+    },
+    /// P4b: mark a plan item blocked. `item_id` is optional; when omitted
+    /// the currently active item is blocked. `reason` is required.
+    PlanItemBlock {
+        item_id: Option<String>,
+        reason: String,
+    },
     CompactionStart {
         reason: Option<String>,
     },
@@ -358,6 +387,29 @@ enum KnownInnerEvent {
         #[serde(default)]
         rationale: Option<String>,
     },
+    PlanSet {
+        items: Vec<crate::db::PlanItemInput>,
+        #[serde(default)]
+        rationale: Option<String>,
+    },
+    PlanItemStart {
+        item_id: String,
+    },
+    PlanItemComplete {
+        #[serde(default)]
+        outcome: Option<String>,
+    },
+    PlanItemSkip {
+        #[serde(default)]
+        item_id: Option<String>,
+        #[serde(default)]
+        reason: Option<String>,
+    },
+    PlanItemBlock {
+        #[serde(default)]
+        item_id: Option<String>,
+        reason: String,
+    },
     CompactionStart {
         #[serde(default)]
         reason: Option<String>,
@@ -434,6 +486,15 @@ impl From<KnownInnerEvent> for InnerEvent {
                 decision,
                 rationale,
             },
+            KnownInnerEvent::PlanSet { items, rationale } => Self::PlanSet { items, rationale },
+            KnownInnerEvent::PlanItemStart { item_id } => Self::PlanItemStart { item_id },
+            KnownInnerEvent::PlanItemComplete { outcome } => Self::PlanItemComplete { outcome },
+            KnownInnerEvent::PlanItemSkip { item_id, reason } => {
+                Self::PlanItemSkip { item_id, reason }
+            }
+            KnownInnerEvent::PlanItemBlock { item_id, reason } => {
+                Self::PlanItemBlock { item_id, reason }
+            }
             KnownInnerEvent::CompactionStart { reason } => Self::CompactionStart { reason },
             KnownInnerEvent::CompactionEnd { aborted } => Self::CompactionEnd { aborted },
             KnownInnerEvent::AutoRetryStart { attempt } => Self::AutoRetryStart { attempt },
@@ -463,6 +524,11 @@ const KNOWN_INNER_TAGS: &[&str] = &[
     "action_transition",
     "action_complete",
     "executor_decision",
+    "plan_set",
+    "plan_item_start",
+    "plan_item_complete",
+    "plan_item_skip",
+    "plan_item_block",
     "compaction_start",
     "compaction_end",
     "auto_retry_start",
@@ -1058,6 +1124,14 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
         InnerEvent::ActionTransition { .. } => ApplyOutcome::NoOp,
         InnerEvent::ActionComplete { .. } => ApplyOutcome::NoOp,
         InnerEvent::ExecutorDecision { .. } => ApplyOutcome::NoOp,
+        // P4b: plan-lifecycle events affect persistence + L2 slice but
+        // don't mutate the chat-side LiveAgentState. The Quest store
+        // wakes via `quest-event-{id}` instead.
+        InnerEvent::PlanSet { .. } => ApplyOutcome::NoOp,
+        InnerEvent::PlanItemStart { .. } => ApplyOutcome::NoOp,
+        InnerEvent::PlanItemComplete { .. } => ApplyOutcome::NoOp,
+        InnerEvent::PlanItemSkip { .. } => ApplyOutcome::NoOp,
+        InnerEvent::PlanItemBlock { .. } => ApplyOutcome::NoOp,
         // MON-39 item 9: unknown events return NoOp so `state_version`
         // does not bump per event. The reader-side path in
         // `handle_sidecar_event` is the canonical entry that flips

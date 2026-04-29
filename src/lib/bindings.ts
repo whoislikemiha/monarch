@@ -237,7 +237,31 @@ export const commands = {
 	currentAction: WorkingMemoryCurrentAction | null,
 	recentActions: WorkingMemoryRecentAction[],
 	updatedAt: string,
+	activePlanItemId?: string | null,
+	nextPlanItemIds?: string[],
 } | null, ErrorDto>(__TAURI_INVOKE("db_get_working_memory", { agentId })),
+	dbListPlanItems: (questId: string) => typedError<PlanItemRow[], ErrorDto>(__TAURI_INVOKE("db_list_plan_items", { questId })),
+	dbGetPlanItem: (itemId: string) => typedError<{
+	id: string,
+	questId: string,
+	parentId: string | null,
+	title: string,
+	status: string,
+	orderIndex: number,
+	createdBy: string,
+	rationale: string | null,
+	createdAt: string,
+	updatedAt: string,
+	completedAt: string | null,
+} | null, ErrorDto>(__TAURI_INVOKE("db_get_plan_item", { itemId })),
+	dbSetPlan: (payload: SetPlanPayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_set_plan", { payload })),
+	dbAddPlanItem: (payload: AddPlanItemPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_add_plan_item", { payload })),
+	dbUpdatePlanItem: (payload: UpdatePlanItemPayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_plan_item", { payload })),
+	dbDeletePlanItem: (itemId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_delete_plan_item", { itemId })),
+	dbStartPlanItem: (itemId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_start_plan_item", { itemId })),
+	dbCompletePlanItem: (itemId: string, outcome: string | null) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_complete_plan_item", { itemId, outcome })),
+	dbSkipPlanItem: (itemId: string, reason: string | null) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_skip_plan_item", { itemId, reason })),
+	dbBlockPlanItem: (itemId: string, reason: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_block_plan_item", { itemId, reason })),
 	dbListClassificationsForAgent: (agentId: string, limit: number | null) => typedError<ClassificationRow[], ErrorDto>(__TAURI_INVOKE("db_list_classifications_for_agent", { agentId, limit })),
 	dbGetClassificationForMessage: (messageId: number) => typedError<{
 	id: string,
@@ -277,6 +301,18 @@ export const commands = {
 };
 
 /* Types */
+export type AddPlanItemPayload = {
+	questId: string,
+	title: string,
+	rationale?: string | null,
+	/**
+	 *  Insert this item after the named item id, or at the end when
+	 *  omitted. Insertion shifts subsequent `order_index` values forward.
+	 */
+	afterItemId?: string | null,
+	createdBy?: string | null,
+};
+
 export type AgentRow = {
 	id: string,
 	name: string,
@@ -622,6 +658,35 @@ export type PathSuggestion = {
 	isDir: boolean,
 };
 
+/**
+ *  Input row for `db_set_plan` / executor `set_plan`. `id` is optional —
+ *  server generates a UUID if omitted, which is the common case for newly
+ *  proposed items. Status defaults to `pending` when omitted; the only
+ *  reason a caller would supply it is when the new plan inherits a
+ *  previously active item without restarting it.
+ */
+export type PlanItemInput = {
+	id?: string | null,
+	title: string,
+	rationale?: string | null,
+	status?: string | null,
+	parentId?: string | null,
+};
+
+export type PlanItemRow = {
+	id: string,
+	questId: string,
+	parentId: string | null,
+	title: string,
+	status: string,
+	orderIndex: number,
+	createdBy: string,
+	rationale: string | null,
+	createdAt: string,
+	updatedAt: string,
+	completedAt: string | null,
+};
+
 export type ProjectRow = {
 	id: string,
 	name: string,
@@ -737,6 +802,19 @@ export type SessionRow = {
 	parentSessionId: string | null,
 };
 
+/**
+ *  Bulk replace payload — `db_set_plan(quest_id, items, created_by)`.
+ *  `created_by` defaults to `'captain'` when called from the manual UI
+ *  path; sidecar pass-through sets it to `'executor'`. The whole list is
+ *  authoritative — items not present (matched by id) are deleted.
+ */
+export type SetPlanPayload = {
+	questId: string,
+	items: PlanItemInput[],
+	createdBy?: string | null,
+	rationale?: string | null,
+};
+
 // MON-98: Current shadow identity version (L1b). Returned by `get_shadow_identity`.
 export type ShadowIdentityRow = {
 	id: number,
@@ -838,6 +916,17 @@ export type ToolUsageEntry = {
 };
 
 /**
+ *  Per-item edit payload. Only non-`None` fields are written. `id` is the
+ *  row's primary key.
+ */
+export type UpdatePlanItemPayload = {
+	id: string,
+	title?: string | null,
+	rationale?: string | null,
+	orderIndex?: number | null,
+};
+
+/**
  *  Payload for `db_update_quest`. Only non-`None` fields are written.
  *  Lifecycle timestamps (`started_at` / `completed_at` / `abandoned_at`)
  *  can be set explicitly by the caller; the Steward owns this in Slice 4+.
@@ -891,6 +980,8 @@ export type WorkingMemoryPayload = {
 	currentAction: WorkingMemoryCurrentAction | null,
 	recentActions: WorkingMemoryRecentAction[],
 	updatedAt: string,
+	activePlanItemId?: string | null,
+	nextPlanItemIds?: string[],
 };
 
 export type WorkingMemoryRecentAction = {
