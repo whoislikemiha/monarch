@@ -402,6 +402,46 @@ impl Database {
                         updated_at TEXT NOT NULL
                     );",
                 );
+                // P4b (MON-111): durable per-quest execution plan items.
+                // Plan items are the *intended route* — distinct from the
+                // recorded coherent-action timeline. Status is a finite
+                // lifecycle pinned at the storage layer; Rust mirrors the
+                // values in `PlanItemStatus`. `parent_id` exists so future
+                // grouping is possible without migration; V0 UI is flat.
+                let _ = conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS quest_plan_items (
+                        id TEXT PRIMARY KEY,
+                        quest_id TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
+                        parent_id TEXT REFERENCES quest_plan_items(id) ON DELETE CASCADE,
+                        title TEXT NOT NULL,
+                        status TEXT NOT NULL CHECK (status IN (
+                            'pending','active','completed','skipped','blocked'
+                        )),
+                        order_index INTEGER NOT NULL,
+                        created_by TEXT NOT NULL CHECK (created_by IN (
+                            'executor','chat_shadow','captain','architect','monarch'
+                        )),
+                        rationale TEXT,
+                        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                        completed_at TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_quest_plan_items_quest_order
+                        ON quest_plan_items(quest_id, order_index);
+                    CREATE INDEX IF NOT EXISTS idx_quest_plan_items_quest_status
+                        ON quest_plan_items(quest_id, status);",
+                );
+                // P4b (MON-111): coherent_action events stamp the plan_item_id
+                // active in L2 at INSERT time so timeline rendering can group
+                // actions under their plan item without a join through L2.
+                // Nullable — actions emitted while no item is active stay NULL.
+                let _ = conn.execute_batch(
+                    "ALTER TABLE quest_events ADD COLUMN plan_item_id TEXT REFERENCES quest_plan_items(id) ON DELETE SET NULL;",
+                );
+                let _ = conn.execute_batch(
+                    "CREATE INDEX IF NOT EXISTS idx_quest_events_plan_item
+                        ON quest_events(plan_item_id);",
+                );
                 // messages.quest_id: nullable FK. Slice 2 leaves this NULL
                 // everywhere; Slice 3 (Architect) is the first writer.
                 let _ = conn.execute_batch(
@@ -1187,6 +1227,13 @@ pub struct WorkingMemoryPayload {
     pub current_action: Option<WorkingMemoryCurrentAction>,
     pub recent_actions: Vec<WorkingMemoryRecentAction>,
     pub updated_at: String,
+    // P4b: plan slice. Pointers into `quest_plan_items` for the active
+    // quest. Defaults preserve forward compatibility with v1 rows — old
+    // payloads deserialize cleanly with both fields empty.
+    #[serde(default)]
+    pub active_plan_item_id: Option<String>,
+    #[serde(default)]
+    pub next_plan_item_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -3500,12 +3547,14 @@ fn map_quest(row: &Row<'_>) -> rusqlite::Result<QuestRow> {
 
 fn empty_working_memory(current_quest_id: &str, now: &str) -> WorkingMemoryPayload {
     WorkingMemoryPayload {
-        schema_version: 1,
+        schema_version: 2,
         current_quest_id: Some(current_quest_id.to_string()),
         current_quest_path: Vec::new(),
         current_action: None,
         recent_actions: Vec::new(),
         updated_at: now.to_string(),
+        active_plan_item_id: None,
+        next_plan_item_ids: Vec::new(),
     }
 }
 
