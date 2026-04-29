@@ -81,6 +81,18 @@
     return `${d}d ago`;
   }
 
+  function formatDateTime(iso: string | null): string {
+    if (!iso) return "";
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return iso;
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date);
+  }
+
   // --- New-quest form ------------------------------------------------------
 
   let formTitle = $state("");
@@ -265,6 +277,9 @@
     const childrenByParent = new Map<string, QuestEventRow[]>();
     const roots: QuestEventRow[] = [];
     for (const ev of events) {
+      // Status is already visible in the quest metadata; the auto-created
+      // and mark-done rows add noise to the execution narrative.
+      if (ev.eventType === "status_change") continue;
       if (ev.parentEventId) {
         const list = childrenByParent.get(ev.parentEventId) ?? [];
         list.push(ev);
@@ -460,47 +475,49 @@
                 </button>
                 {#if expanded}
                   <div class="detail">
-                    <div class="detail-meta">
-                      <span class="meta-row">
-                        <span class="meta-label">Status</span>
-                        <span class="meta-value">{quest.status}</span>
-                      </span>
-                      {#if quest.grade}
+                    <div class="quest-info">
+                      <div class="detail-meta">
                         <span class="meta-row">
-                          <span class="meta-label">Grade</span>
-                          <span class="meta-value">{quest.grade}</span>
+                          <span class="meta-label">Status</span>
+                          <span class="meta-value">{quest.status}</span>
                         </span>
-                      {/if}
-                      {#if quest.execHint}
+                        {#if quest.grade}
+                          <span class="meta-row">
+                            <span class="meta-label">Grade</span>
+                            <span class="meta-value">{quest.grade}</span>
+                          </span>
+                        {/if}
+                        {#if quest.execHint}
+                          <span class="meta-row">
+                            <span class="meta-label">Exec</span>
+                            <span class="meta-value">{quest.execHint}</span>
+                          </span>
+                        {/if}
                         <span class="meta-row">
-                          <span class="meta-label">Exec</span>
-                          <span class="meta-value">{quest.execHint}</span>
+                          <span class="meta-label">Created by</span>
+                          <span class="meta-value">{quest.createdBy}</span>
                         </span>
-                      {/if}
-                      <span class="meta-row">
-                        <span class="meta-label">Created by</span>
-                        <span class="meta-value">{quest.createdBy}</span>
-                      </span>
-                      <span class="meta-row">
-                        <span class="meta-label">Created</span>
-                        <span class="meta-value">{quest.createdAt}</span>
-                      </span>
-                      {#if quest.startedAt}
                         <span class="meta-row">
-                          <span class="meta-label">Started</span>
-                          <span class="meta-value">{quest.startedAt}</span>
+                          <span class="meta-label">Created</span>
+                          <span class="meta-value">{formatDateTime(quest.createdAt)}</span>
                         </span>
-                      {/if}
-                      {#if quest.completedAt}
-                        <span class="meta-row">
-                          <span class="meta-label">Completed</span>
-                          <span class="meta-value">{quest.completedAt}</span>
-                        </span>
+                        {#if quest.startedAt}
+                          <span class="meta-row">
+                            <span class="meta-label">Started</span>
+                            <span class="meta-value">{formatDateTime(quest.startedAt)}</span>
+                          </span>
+                        {/if}
+                        {#if quest.completedAt}
+                          <span class="meta-row">
+                            <span class="meta-label">Completed</span>
+                            <span class="meta-value">{formatDateTime(quest.completedAt)}</span>
+                          </span>
+                        {/if}
+                      </div>
+                      {#if quest.description}
+                        <p class="description">{quest.description}</p>
                       {/if}
                     </div>
-                    {#if quest.description}
-                      <p class="description">{quest.description}</p>
-                    {/if}
                     <div class="event-log">
                       <div class="log-title">Event log</div>
                       {#if events.length === 0}
@@ -536,7 +553,15 @@
                                 {#each node.children as child (child.id)}
                                   {#if child.eventType === "tool_call"}
                                     {@const tool = toolCallPayload(child.payloadJson)}
-                                    <div class="event-row child-row tool-row" class:error={tool.isError}>
+                                    {@const toolOpen = questState.expandedEventIds.has(child.id)}
+                                    <button
+                                      type="button"
+                                      class="event-row event-toggle child-row tool-row"
+                                      class:error={tool.isError}
+                                      onclick={() => questStore.toggleEventExpand(agentContext.agentId, child.id)}
+                                      aria-expanded={toolOpen}
+                                    >
+                                      <span class="event-disclosure">{toolOpen ? "▾" : "▸"}</span>
                                       <span class="child-marker"></span>
                                       <span class="event-type">{tool.toolName}</span>
                                       {#if tool.status}
@@ -545,15 +570,12 @@
                                       {#if tool.durationMs != null}
                                         <span class="muted small">{durationLabel(tool.durationMs)}</span>
                                       {/if}
-                                    </div>
-                                    {#if tool.argsPreview || tool.resultPreview}
-                                      <details class="child-details">
-                                        <summary>details</summary>
-                                        <div class="child-summary">
-                                          {#if tool.argsPreview}<span>{tool.argsPreview}</span>{/if}
-                                          {#if tool.resultPreview}<span>{tool.resultPreview}</span>{/if}
-                                        </div>
-                                      </details>
+                                    </button>
+                                    {#if toolOpen && (tool.argsPreview || tool.resultPreview)}
+                                      <div class="child-summary">
+                                        {#if tool.argsPreview}<span>{tool.argsPreview}</span>{/if}
+                                        {#if tool.resultPreview}<span>{tool.resultPreview}</span>{/if}
+                                      </div>
                                     {/if}
                                   {:else if child.eventType === "action_outcome"}
                                     {@const outcome = outcomePayload(child.payloadJson)}
@@ -917,22 +939,29 @@
   /* Detail — inline expansion */
   .detail {
     margin: 2px 0 6px 20px;
-    padding: 8px;
+    padding: 10px;
     border-left: 2px solid var(--border-subtle);
     background: var(--bg-panel);
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 10px;
+  }
+  .quest-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
   .detail-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+    gap: 8px 12px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
   .meta-row {
     display: flex;
-    gap: 4px;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
     font-size: 10px;
   }
   .meta-label {
@@ -942,6 +971,9 @@
   }
   .meta-value {
     color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .description {
     margin: 0;
@@ -952,7 +984,9 @@
   .event-log {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-subtle);
   }
   .log-title {
     font-size: 9px;
@@ -1077,6 +1111,8 @@
   }
   .child-row {
     min-height: 18px;
+    padding: 2px 0;
+    border-radius: 4px;
   }
   .child-marker {
     width: 5px;
@@ -1098,7 +1134,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    margin-left: 11px;
+    margin-left: 26px;
     padding: 3px 6px;
     border-radius: 3px;
     background: var(--bg-sidebar);
@@ -1107,21 +1143,8 @@
     line-height: 1.4;
     overflow-wrap: anywhere;
   }
-  .child-details {
-    margin-left: 11px;
-  }
-  .child-details summary {
-    cursor: pointer;
-    color: var(--text-muted);
-    font-size: 9px;
-    line-height: 1.4;
-    user-select: none;
-  }
-  .child-details .child-summary {
-    margin: 2px 0 0;
-  }
   .child-payload {
-    margin-left: 11px;
+    margin-left: 26px;
   }
 
   /* MON-100: compaction_tick visual treatment. Subtle accent border +
