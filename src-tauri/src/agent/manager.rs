@@ -1159,7 +1159,10 @@ fn is_meaningful_quest_prompt(text: &str) -> bool {
         "status",
         "ping",
     ];
-    if chitchat.iter().any(|p| lower == *p || lower == format!("{p}!")) {
+    if chitchat
+        .iter()
+        .any(|p| lower == *p || lower == format!("{p}!"))
+    {
         return false;
     }
     let task_markers = [
@@ -1331,8 +1334,12 @@ mod tests {
 
     #[test]
     fn auto_quest_heuristic_accepts_task_prompts() {
-        assert!(is_meaningful_quest_prompt("fix the failing memory retrieval test"));
-        assert!(is_meaningful_quest_prompt("let's set up the auto quest ticket first"));
+        assert!(is_meaningful_quest_prompt(
+            "fix the failing memory retrieval test"
+        ));
+        assert!(is_meaningful_quest_prompt(
+            "let's set up the auto quest ticket first"
+        ));
         assert!(is_meaningful_quest_prompt(
             "Please inspect the Rust sidecar protocol and update the roadmap notes."
         ));

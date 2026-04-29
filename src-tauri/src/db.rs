@@ -1,5 +1,6 @@
 use rusqlite::{params, Row};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio_rusqlite::Connection;
@@ -374,6 +375,33 @@ impl Database {
                     CREATE INDEX IF NOT EXISTS idx_quest_events_quest
                         ON quest_events(quest_id, created_at);",
                 );
+                // P4: nested execution narrative. `actor` remains the
+                // concrete writer id/name; `author` is the semantic source
+                // (executor/chat_shadow/captain/keeper/system). Existing
+                // rows keep NULLs and render through legacy fallbacks.
+                let _ = conn.execute_batch(
+                    "ALTER TABLE quest_events ADD COLUMN parent_event_id TEXT REFERENCES quest_events(id) ON DELETE CASCADE;",
+                );
+                let _ = conn.execute_batch(
+                    "ALTER TABLE quest_events ADD COLUMN author TEXT;",
+                );
+                let _ = conn.execute_batch(
+                    "ALTER TABLE quest_events ADD COLUMN surface_override TEXT;",
+                );
+                let _ = conn.execute_batch(
+                    "ALTER TABLE quest_events ADD COLUMN payload_schema_version INTEGER NOT NULL DEFAULT 1;",
+                );
+                let _ = conn.execute_batch(
+                    "CREATE INDEX IF NOT EXISTS idx_quest_events_parent
+                        ON quest_events(parent_event_id);",
+                );
+                let _ = conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS agent_working_memory (
+                        agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+                        payload_json TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );",
+                );
                 // messages.quest_id: nullable FK. Slice 2 leaves this NULL
                 // everywhere; Slice 3 (Architect) is the first writer.
                 let _ = conn.execute_batch(
@@ -637,7 +665,9 @@ impl Database {
             .map_err(MonarchError::from)
     }
 
-    pub async fn get_captain_identity_payload_internal(&self) -> Result<Option<String>, MonarchError> {
+    pub async fn get_captain_identity_payload_internal(
+        &self,
+    ) -> Result<Option<String>, MonarchError> {
         self.conn
             .call(|conn| {
                 let result = conn.query_row(
@@ -1068,6 +1098,10 @@ pub struct QuestEventRow {
     pub actor: Option<String>,
     pub payload_json: Option<String>,
     pub created_at: String,
+    pub parent_event_id: Option<String>,
+    pub author: Option<String>,
+    pub surface_override: Option<String>,
+    pub payload_schema_version: i32,
 }
 
 /// Payload for `db_create_quest`. `id` is optional — server generates a
@@ -1106,13 +1140,60 @@ pub struct UpdateQuestPayload {
     pub abandoned_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordQuestEventPayload {
     pub quest_id: String,
     pub event_type: String,
     pub actor: Option<String>,
     pub payload_json: Option<String>,
+    #[serde(default)]
+    pub parent_event_id: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub surface_override: Option<String>,
+    #[serde(default)]
+    pub payload_schema_version: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkingMemoryCurrentAction {
+    pub event_id: String,
+    pub quest_id: String,
+    pub intent: String,
+    pub started_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkingMemoryRecentAction {
+    pub event_id: String,
+    pub quest_id: String,
+    pub intent: String,
+    pub outcome: String,
+    pub completed_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_closed: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkingMemoryPayload {
+    pub schema_version: i32,
+    pub current_quest_id: Option<String>,
+    pub current_quest_path: Vec<String>,
+    pub current_action: Option<WorkingMemoryCurrentAction>,
+    pub recent_actions: Vec<WorkingMemoryRecentAction>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct QuestEventNotification {
+    pub quest_id: String,
+    pub event_id: String,
+    pub event_type: String,
 }
 
 // ---- MON-82: Classifications ----
@@ -1168,7 +1249,10 @@ pub struct SaveClassificationPayload {
 impl Database {
     /// Insert a project if the root_path doesn't already exist, then return the winning row's id.
     /// Safe under concurrent inserts: losers get the existing row's id back.
-    pub async fn ensure_project_internal(&self, project: &ProjectRow) -> Result<String, MonarchError> {
+    pub async fn ensure_project_internal(
+        &self,
+        project: &ProjectRow,
+    ) -> Result<String, MonarchError> {
         let project = project.clone();
         Ok(self
             .conn
@@ -1297,7 +1381,10 @@ impl Database {
     }
 
     /// MON-73: Update all user-editable agent fields post-creation.
-    pub async fn update_agent_internal(&self, payload: &AgentUpdatePayload) -> Result<(), MonarchError> {
+    pub async fn update_agent_internal(
+        &self,
+        payload: &AgentUpdatePayload,
+    ) -> Result<(), MonarchError> {
         let payload = payload.clone();
         self.conn
             .call(move |conn| {
@@ -1309,9 +1396,17 @@ impl Database {
                        updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
                      WHERE id=?1",
                     params![
-                        payload.id, payload.name, payload.shadow_name, payload.shadow_title,
-                        payload.shadow_grade, payload.provider, payload.model, payload.thinking_level,
-                        payload.cwd, payload.avatar_type, payload.avatar_path,
+                        payload.id,
+                        payload.name,
+                        payload.shadow_name,
+                        payload.shadow_title,
+                        payload.shadow_grade,
+                        payload.provider,
+                        payload.model,
+                        payload.thinking_level,
+                        payload.cwd,
+                        payload.avatar_type,
+                        payload.avatar_path,
                     ],
                 )?;
                 Ok(())
@@ -1423,7 +1518,13 @@ impl Database {
                 conn.execute(
                     "INSERT INTO events (agent_id, session_id, event_type, data, timestamp) \
                      VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![agent_id, session_id, event_type, data, crate::util::chrono_now()],
+                    params![
+                        agent_id,
+                        session_id,
+                        event_type,
+                        data,
+                        crate::util::chrono_now()
+                    ],
                 )?;
                 Ok(())
             })
@@ -1675,12 +1776,21 @@ impl Database {
                         ?16
                     )",
                     params![
-                        payload.agent_id, payload.scope, payload.project_id,
-                        payload.parent_id, payload.layer, payload.kind,
-                        payload.title, payload.summary, payload.content,
-                        payload.source_quest_id, payload.source_session_id,
-                        payload.source_events, payload.file_refs,
-                        embedding, embedding_model_id,
+                        payload.agent_id,
+                        payload.scope,
+                        payload.project_id,
+                        payload.parent_id,
+                        payload.layer,
+                        payload.kind,
+                        payload.title,
+                        payload.summary,
+                        payload.content,
+                        payload.source_quest_id,
+                        payload.source_session_id,
+                        payload.source_events,
+                        payload.file_refs,
+                        embedding,
+                        embedding_model_id,
                         payload.supersedes_id,
                     ],
                 )?;
@@ -1707,7 +1817,8 @@ impl Database {
                      WHERE agent_id = ?1 AND archived_at IS NULL
                      ORDER BY created_at DESC",
                 )?;
-                let rows = stmt.query_map(params![agent_id], map_memory)?
+                let rows = stmt
+                    .query_map(params![agent_id], map_memory)?
                     .collect::<rusqlite::Result<Vec<_>>>();
                 rows
             })
@@ -1727,7 +1838,11 @@ impl Database {
                      FROM memories WHERE id = ?1",
                 )?;
                 let mut rows = stmt.query_map(params![id], map_memory)?;
-                if let Some(row) = rows.next() { Ok(Some(row?)) } else { Ok(None) }
+                if let Some(row) = rows.next() {
+                    Ok(Some(row?))
+                } else {
+                    Ok(None)
+                }
             })
             .await?)
     }
@@ -1754,10 +1869,14 @@ impl Database {
                     Ok(s) => s,
                     Err(_) => return Ok(vec![]),
                 };
-                let rows = stmt.query_map(params![query, agent_id, limit], |row| {
-                    Ok(FtsMemoryResult { memory_id: row.get(0)?, rank: row.get(1)? })
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>();
+                let rows = stmt
+                    .query_map(params![query, agent_id, limit], |row| {
+                        Ok(FtsMemoryResult {
+                            memory_id: row.get(0)?,
+                            rank: row.get(1)?,
+                        })
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>();
                 rows
             })
             .await?)
@@ -1805,10 +1924,11 @@ impl Database {
                     "SELECT id, embedding FROM memories
                      WHERE agent_id = ?1 AND archived_at IS NULL AND embedding IS NOT NULL",
                 )?;
-                let rows = stmt.query_map(params![agent_id], |row| {
-                    Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>();
+                let rows = stmt
+                    .query_map(params![agent_id], |row| {
+                        Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>();
                 rows
             })
             .await?)
@@ -2272,11 +2392,7 @@ impl Database {
             .await?)
     }
 
-    pub async fn set_ui_state_internal(
-        &self,
-        key: &str,
-        value: &str,
-    ) -> Result<(), MonarchError> {
+    pub async fn set_ui_state_internal(&self, key: &str, value: &str) -> Result<(), MonarchError> {
         let key = key.to_string();
         let value = value.to_string();
         self.conn
@@ -2468,8 +2584,14 @@ impl Database {
         payload: &CreateQuestPayload,
     ) -> Result<String, MonarchError> {
         let payload = payload.clone();
-        let id = payload.id.clone().unwrap_or_else(crate::util::uuid_v4_simple);
-        let status = payload.status.clone().unwrap_or_else(|| "pending".to_string());
+        let id = payload
+            .id
+            .clone()
+            .unwrap_or_else(crate::util::uuid_v4_simple);
+        let status = payload
+            .status
+            .clone()
+            .unwrap_or_else(|| "pending".to_string());
         let grade = payload.grade.clone().unwrap_or_else(|| "C".to_string());
         let exec_hint = payload
             .exec_hint
@@ -2572,10 +2694,7 @@ impl Database {
                 if sets.is_empty() {
                     return Ok(());
                 }
-                let sql = format!(
-                    "UPDATE quest_nodes SET {} WHERE id = ?",
-                    sets.join(", ")
-                );
+                let sql = format!("UPDATE quest_nodes SET {} WHERE id = ?", sets.join(", "));
                 args.push(rusqlite::types::Value::Text(payload.id.clone()));
                 let params_slice: Vec<&dyn rusqlite::ToSql> =
                     args.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
@@ -2687,8 +2806,11 @@ impl Database {
         self.conn
             .call(move |conn| {
                 conn.execute(
-                    "INSERT INTO quest_events (id, quest_id, event_type, actor, payload_json, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT INTO quest_events (
+                        id, quest_id, event_type, actor, payload_json, created_at,
+                        parent_event_id, author, surface_override, payload_schema_version
+                     )
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     params![
                         id,
                         payload.quest_id,
@@ -2696,6 +2818,10 @@ impl Database {
                         payload.actor,
                         payload.payload_json,
                         now,
+                        payload.parent_event_id,
+                        payload.author,
+                        payload.surface_override,
+                        payload.payload_schema_version.unwrap_or(1),
                     ],
                 )?;
                 Ok(())
@@ -2713,13 +2839,310 @@ impl Database {
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, quest_id, event_type, actor, payload_json, created_at
+                    "SELECT id, quest_id, event_type, actor, payload_json, created_at,
+                            parent_event_id, author, surface_override, payload_schema_version
                      FROM quest_events WHERE quest_id = ?1 ORDER BY created_at ASC",
                 )?;
                 let rows = stmt
                     .query_map(params![quest_id], map_quest_event)?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok(rows)
+            })
+            .await?)
+    }
+
+    pub async fn get_working_memory_internal(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<WorkingMemoryPayload>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let payload: Option<String> = conn
+                    .query_row(
+                        "SELECT payload_json FROM agent_working_memory WHERE agent_id = ?1",
+                        params![agent_id],
+                        |row| row.get(0),
+                    )
+                    .ok();
+                Ok(payload.and_then(|p| serde_json::from_str(&p).ok()))
+            })
+            .await?)
+    }
+
+    pub async fn record_action_transition_internal(
+        &self,
+        agent_id: &str,
+        quest_id: &str,
+        intent: &str,
+        previous_outcome: Option<&str>,
+    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        let quest_id = quest_id.to_string();
+        let intent = intent.to_string();
+        let previous_outcome = previous_outcome.map(str::to_string);
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let tx = conn.unchecked_transaction()?;
+                let now = crate::util::chrono_now();
+                let mut notes = Vec::new();
+                let mut wm = load_working_memory_tx(&tx, &agent_id)
+                    .unwrap_or_else(|| empty_working_memory(&quest_id, &now));
+
+                if let Some(current) = wm.current_action.clone() {
+                    let (outcome, auto_closed, reason) = match previous_outcome.as_deref() {
+                        Some(o) if !o.trim().is_empty() => (o.trim().to_string(), false, None),
+                        _ => (
+                            "Moved on before recording an outcome.".to_string(),
+                            true,
+                            Some("new_action_started".to_string()),
+                        ),
+                    };
+                    close_action_tx(
+                        &tx,
+                        &agent_id,
+                        &mut wm,
+                        &current,
+                        &outcome,
+                        auto_closed,
+                        reason,
+                        &now,
+                        &mut notes,
+                    )?;
+                }
+
+                let event_id = crate::util::uuid_v4_simple();
+                let payload = serde_json::json!({
+                    "intent": intent,
+                    "status": "active",
+                    "started_at": now,
+                })
+                .to_string();
+                tx.execute(
+                    "INSERT INTO quest_events (
+                        id, quest_id, event_type, actor, payload_json, created_at,
+                        parent_event_id, author, surface_override, payload_schema_version
+                     )
+                     VALUES (?1, ?2, 'coherent_action', ?3, ?4, ?5, NULL, 'executor', NULL, 1)",
+                    params![event_id, quest_id, agent_id, payload, now],
+                )?;
+                wm.current_quest_id = Some(quest_id.clone());
+                wm.current_quest_path = quest_path_tx(&tx, &quest_id);
+                wm.current_action = Some(WorkingMemoryCurrentAction {
+                    event_id: event_id.clone(),
+                    quest_id: quest_id.clone(),
+                    intent,
+                    started_at: now.clone(),
+                });
+                wm.updated_at = now.clone();
+                save_working_memory_tx(&tx, &agent_id, &wm)?;
+                notes.push(QuestEventNotification {
+                    quest_id,
+                    event_id,
+                    event_type: "coherent_action".to_string(),
+                });
+                tx.commit()?;
+                Ok(notes)
+            })
+            .await?)
+    }
+
+    pub async fn complete_action_internal(
+        &self,
+        agent_id: &str,
+        outcome: &str,
+    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        let outcome = outcome.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let tx = conn.unchecked_transaction()?;
+                let now = crate::util::chrono_now();
+                let mut notes = Vec::new();
+                let Some(mut wm) = load_working_memory_tx(&tx, &agent_id) else {
+                    tx.commit()?;
+                    return Ok(notes);
+                };
+                let Some(current) = wm.current_action.clone() else {
+                    tx.commit()?;
+                    return Ok(notes);
+                };
+                close_action_tx(
+                    &tx,
+                    &agent_id,
+                    &mut wm,
+                    &current,
+                    outcome.trim(),
+                    false,
+                    None,
+                    &now,
+                    &mut notes,
+                )?;
+                wm.current_action = None;
+                wm.updated_at = now;
+                save_working_memory_tx(&tx, &agent_id, &wm)?;
+                tx.commit()?;
+                Ok(notes)
+            })
+            .await?)
+    }
+
+    pub async fn record_executor_decision_internal(
+        &self,
+        agent_id: &str,
+        quest_id: &str,
+        decision: &str,
+        rationale: Option<&str>,
+    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        let quest_id = quest_id.to_string();
+        let decision = decision.to_string();
+        let rationale = rationale.map(str::to_string);
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let tx = conn.unchecked_transaction()?;
+                let now = crate::util::chrono_now();
+                let parent = load_working_memory_tx(&tx, &agent_id)
+                    .and_then(|wm| wm.current_action.map(|a| a.event_id));
+                let event_id = crate::util::uuid_v4_simple();
+                let payload = serde_json::json!({
+                    "decision": decision,
+                    "rationale": rationale,
+                })
+                .to_string();
+                tx.execute(
+                    "INSERT INTO quest_events (
+                        id, quest_id, event_type, actor, payload_json, created_at,
+                        parent_event_id, author, surface_override, payload_schema_version
+                     )
+                     VALUES (?1, ?2, 'executor_decision', ?3, ?4, ?5, ?6, 'executor', NULL, 1)",
+                    params![event_id, quest_id, agent_id, payload, now, parent],
+                )?;
+                tx.commit()?;
+                Ok(vec![QuestEventNotification {
+                    quest_id,
+                    event_id,
+                    event_type: "executor_decision".to_string(),
+                }])
+            })
+            .await?)
+    }
+
+    pub async fn record_tool_call_start_internal(
+        &self,
+        agent_id: &str,
+        quest_id: &str,
+        tool_call_id: &str,
+        tool_name: &str,
+        args: Option<Value>,
+    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        let quest_id = quest_id.to_string();
+        let tool_call_id = tool_call_id.to_string();
+        let tool_name = tool_name.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let tx = conn.unchecked_transaction()?;
+                let Some(wm) = load_working_memory_tx(&tx, &agent_id) else {
+                    tx.commit()?;
+                    return Ok(Vec::new());
+                };
+                let Some(parent) = wm.current_action.map(|a| a.event_id) else {
+                    tx.commit()?;
+                    return Ok(Vec::new());
+                };
+                let now = crate::util::chrono_now();
+                let event_id = crate::util::uuid_v4_simple();
+                let payload = serde_json::json!({
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "args_preview": preview_value(args.as_ref()),
+                    "status": "running",
+                    "started_at": now,
+                })
+                .to_string();
+                tx.execute(
+                    "INSERT INTO quest_events (
+                        id, quest_id, event_type, actor, payload_json, created_at,
+                        parent_event_id, author, surface_override, payload_schema_version
+                     )
+                     VALUES (?1, ?2, 'tool_call', ?3, ?4, ?5, ?6, 'executor', NULL, 1)",
+                    params![event_id, quest_id, agent_id, payload, now, parent],
+                )?;
+                tx.commit()?;
+                Ok(vec![QuestEventNotification {
+                    quest_id,
+                    event_id,
+                    event_type: "tool_call".to_string(),
+                }])
+            })
+            .await?)
+    }
+
+    pub async fn record_tool_call_end_internal(
+        &self,
+        tool_call_id: &str,
+        result: Option<Value>,
+        is_error: bool,
+        duration_ms: Option<i64>,
+    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+        let tool_call_id = tool_call_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let tx = conn.unchecked_transaction()?;
+                let found: Option<(String, String, String)> = tx
+                    .query_row(
+                        "SELECT id, quest_id, payload_json
+                         FROM quest_events
+                         WHERE event_type = 'tool_call'
+                           AND json_extract(payload_json, '$.tool_call_id') = ?1
+                         ORDER BY created_at DESC
+                         LIMIT 1",
+                        params![tool_call_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .ok();
+                let Some((event_id, quest_id, raw_payload)) = found else {
+                    tx.commit()?;
+                    return Ok(Vec::new());
+                };
+                let now = crate::util::chrono_now();
+                let mut payload: Value =
+                    serde_json::from_str(&raw_payload).unwrap_or_else(|_| serde_json::json!({}));
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert(
+                        "status".to_string(),
+                        Value::String(if is_error { "error" } else { "done" }.to_string()),
+                    );
+                    obj.insert("is_error".to_string(), Value::Bool(is_error));
+                    obj.insert(
+                        "result_preview".to_string(),
+                        Value::String(preview_value(result.as_ref())),
+                    );
+                    obj.insert("completed_at".to_string(), Value::String(now));
+                    if let Some(duration_ms) = duration_ms {
+                        obj.insert(
+                            "duration_ms".to_string(),
+                            Value::Number(serde_json::Number::from(duration_ms)),
+                        );
+                    }
+                }
+                tx.execute(
+                    "UPDATE quest_events SET payload_json = ?1 WHERE id = ?2",
+                    params![payload.to_string(), event_id],
+                )?;
+                tx.commit()?;
+                Ok(vec![QuestEventNotification {
+                    quest_id,
+                    event_id,
+                    event_type: "tool_call".to_string(),
+                }])
             })
             .await?)
     }
@@ -2860,9 +3283,9 @@ const CLASSIFICATION_BASE_SELECT: &str = "SELECT \
 /// Map tool names to specialization categories and compute normalized scores.
 fn compute_specialization(tool_usage: &[ToolUsageEntry]) -> SpecializationScores {
     let mut scores = [0.0f64; 12]; // indexed by category
-    // Categories: 0=coding, 1=research, 2=testing, 3=debugging, 4=devops,
-    //   5=documentation, 6=database, 7=configuration, 8=design, 9=communication,
-    //   10=refactoring, 11=security
+                                   // Categories: 0=coding, 1=research, 2=testing, 3=debugging, 4=devops,
+                                   //   5=documentation, 6=database, 7=configuration, 8=design, 9=communication,
+                                   //   10=refactoring, 11=security
 
     for entry in tool_usage {
         let count = entry.call_count as f64;
@@ -2871,8 +3294,8 @@ fn compute_specialization(tool_usage: &[ToolUsageEntry]) -> SpecializationScores
             // Coding tools
             "Edit" | "Write" | "NotebookEdit" => scores[0] += count,
             // Research tools
-            "Read" | "Grep" | "Glob" | "LS" | "ListDir" | "Search"
-            | "WebSearch" | "WebFetch" | "NotebookRead" => scores[1] += count,
+            "Read" | "Grep" | "Glob" | "LS" | "ListDir" | "Search" | "WebSearch" | "WebFetch"
+            | "NotebookRead" => scores[1] += count,
             // Devops tools
             "Bash" => {
                 // Bash is ambiguous — split across coding/devops
@@ -2882,8 +3305,8 @@ fn compute_specialization(tool_usage: &[ToolUsageEntry]) -> SpecializationScores
             // Agent/communication tools
             "Agent" | "SendMessage" | "AskUser" | "AskUserQuestion" => scores[9] += count,
             // Task/planning tools
-            "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet"
-            | "TodoWrite" | "TodoRead" | "EnterPlanMode" | "ExitPlanMode" => scores[0] += count * 0.5,
+            "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet" | "TodoWrite" | "TodoRead"
+            | "EnterPlanMode" | "ExitPlanMode" => scores[0] += count * 0.5,
             // Everything else — distribute lightly to coding
             _ => scores[0] += count * 0.3,
         }
@@ -2986,10 +3409,14 @@ fn map_memory(row: &Row<'_>) -> rusqlite::Result<MemoryRow> {
     Ok(MemoryRow {
         id: row.get(0)?,
         agent_id: row.get(1)?,
-        scope: row.get::<_, Option<String>>(2)?.unwrap_or_else(|| "self".into()),
+        scope: row
+            .get::<_, Option<String>>(2)?
+            .unwrap_or_else(|| "self".into()),
         project_id: row.get(3)?,
         parent_id: row.get(4)?,
-        layer: row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "leaf".into()),
+        layer: row
+            .get::<_, Option<String>>(5)?
+            .unwrap_or_else(|| "leaf".into()),
         kind: row.get(6)?,
         title: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
         summary: row.get::<_, Option<String>>(8)?.unwrap_or_default(),
@@ -3071,6 +3498,173 @@ fn map_quest(row: &Row<'_>) -> rusqlite::Result<QuestRow> {
     })
 }
 
+fn empty_working_memory(current_quest_id: &str, now: &str) -> WorkingMemoryPayload {
+    WorkingMemoryPayload {
+        schema_version: 1,
+        current_quest_id: Some(current_quest_id.to_string()),
+        current_quest_path: Vec::new(),
+        current_action: None,
+        recent_actions: Vec::new(),
+        updated_at: now.to_string(),
+    }
+}
+
+fn load_working_memory_tx(
+    tx: &rusqlite::Transaction<'_>,
+    agent_id: &str,
+) -> Option<WorkingMemoryPayload> {
+    let payload: String = tx
+        .query_row(
+            "SELECT payload_json FROM agent_working_memory WHERE agent_id = ?1",
+            params![agent_id],
+            |row| row.get(0),
+        )
+        .ok()?;
+    serde_json::from_str(&payload).ok()
+}
+
+fn save_working_memory_tx(
+    tx: &rusqlite::Transaction<'_>,
+    agent_id: &str,
+    wm: &WorkingMemoryPayload,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO agent_working_memory (agent_id, payload_json, updated_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(agent_id) DO UPDATE SET
+            payload_json = excluded.payload_json,
+            updated_at = excluded.updated_at",
+        params![
+            agent_id,
+            serde_json::to_string(wm).unwrap_or_default(),
+            wm.updated_at
+        ],
+    )?;
+    Ok(())
+}
+
+fn quest_path_tx(tx: &rusqlite::Transaction<'_>, quest_id: &str) -> Vec<String> {
+    let mut path = Vec::new();
+    let mut current = Some(quest_id.to_string());
+    while let Some(id) = current {
+        let row: Option<(String, Option<String>)> = tx
+            .query_row(
+                "SELECT title, parent_id FROM quest_nodes WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+        let Some((title, parent_id)) = row else {
+            break;
+        };
+        path.push(title);
+        current = parent_id;
+    }
+    path.reverse();
+    path
+}
+
+#[allow(clippy::too_many_arguments)]
+fn close_action_tx(
+    tx: &rusqlite::Transaction<'_>,
+    agent_id: &str,
+    wm: &mut WorkingMemoryPayload,
+    current: &WorkingMemoryCurrentAction,
+    outcome: &str,
+    auto_closed: bool,
+    auto_closed_reason: Option<String>,
+    completed_at: &str,
+    notes: &mut Vec<QuestEventNotification>,
+) -> rusqlite::Result<()> {
+    let status = if auto_closed {
+        "auto_closed"
+    } else {
+        "completed"
+    };
+    let mut parent_payload = serde_json::json!({
+        "intent": current.intent,
+        "status": status,
+        "started_at": current.started_at,
+        "completed_at": completed_at,
+        "outcome": outcome,
+    });
+    if let Some(obj) = parent_payload.as_object_mut() {
+        if auto_closed {
+            obj.insert("auto_closed".to_string(), Value::Bool(true));
+        }
+        if let Some(reason) = auto_closed_reason.clone() {
+            obj.insert("auto_closed_reason".to_string(), Value::String(reason));
+        }
+    }
+    tx.execute(
+        "UPDATE quest_events SET payload_json = ?1 WHERE id = ?2",
+        params![parent_payload.to_string(), current.event_id],
+    )?;
+
+    let outcome_event_id = crate::util::uuid_v4_simple();
+    let outcome_payload = serde_json::json!({
+        "outcome": outcome,
+        "auto_closed": auto_closed,
+        "auto_closed_reason": auto_closed_reason,
+    })
+    .to_string();
+    tx.execute(
+        "INSERT INTO quest_events (
+            id, quest_id, event_type, actor, payload_json, created_at,
+            parent_event_id, author, surface_override, payload_schema_version
+         )
+         VALUES (?1, ?2, 'action_outcome', ?3, ?4, ?5, ?6, 'executor', NULL, 1)",
+        params![
+            outcome_event_id,
+            current.quest_id,
+            agent_id,
+            outcome_payload,
+            completed_at,
+            current.event_id
+        ],
+    )?;
+
+    wm.recent_actions.push(WorkingMemoryRecentAction {
+        event_id: current.event_id.clone(),
+        quest_id: current.quest_id.clone(),
+        intent: current.intent.clone(),
+        outcome: outcome.to_string(),
+        completed_at: completed_at.to_string(),
+        auto_closed: auto_closed.then_some(true),
+    });
+    if wm.recent_actions.len() > 10 {
+        let overflow = wm.recent_actions.len() - 10;
+        wm.recent_actions.drain(0..overflow);
+    }
+    notes.push(QuestEventNotification {
+        quest_id: current.quest_id.clone(),
+        event_id: current.event_id.clone(),
+        event_type: "coherent_action".to_string(),
+    });
+    notes.push(QuestEventNotification {
+        quest_id: current.quest_id.clone(),
+        event_id: outcome_event_id,
+        event_type: "action_outcome".to_string(),
+    });
+    Ok(())
+}
+
+fn preview_value(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return String::new();
+    };
+    let raw = match value {
+        Value::String(s) => s.clone(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    };
+    let compact = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.len() <= 500 {
+        compact
+    } else {
+        format!("{}...", compact.chars().take(497).collect::<String>())
+    }
+}
+
 fn map_quest_event(row: &Row<'_>) -> rusqlite::Result<QuestEventRow> {
     Ok(QuestEventRow {
         id: row.get(0)?,
@@ -3079,6 +3673,10 @@ fn map_quest_event(row: &Row<'_>) -> rusqlite::Result<QuestEventRow> {
         actor: row.get(3)?,
         payload_json: row.get(4)?,
         created_at: row.get(5)?,
+        parent_event_id: row.get(6)?,
+        author: row.get(7)?,
+        surface_override: row.get(8)?,
+        payload_schema_version: row.get(9)?,
     })
 }
 
@@ -3127,7 +3725,8 @@ pub async fn db_get_agents(
     db: tauri::State<'_, Arc<Database>>,
     include_archived: Option<bool>,
 ) -> Result<Vec<AgentRow>, MonarchError> {
-    db.get_agents_internal(include_archived.unwrap_or(false)).await
+    db.get_agents_internal(include_archived.unwrap_or(false))
+        .await
 }
 
 #[tauri::command]
@@ -3461,6 +4060,7 @@ pub(crate) async fn handle_quest_update_side_effects(
             event_type: "status_change".to_string(),
             actor: Some("monarch".to_string()),
             payload_json: Some(event_payload),
+            ..Default::default()
         })
         .await?;
     crate::agent::emit_event(
@@ -3480,7 +4080,10 @@ pub(crate) async fn handle_quest_update_side_effects(
     };
     db.clear_agent_current_quest_if_matches_internal(&agent_id, &after.id)
         .await?;
-    let since = after.started_at.clone().or_else(|| Some(after.created_at.clone()));
+    let since = after
+        .started_at
+        .clone()
+        .or_else(|| Some(after.created_at.clone()));
     if let Err(e) = agent_mgr
         .dispatch_keeper_run(
             db,
@@ -3581,4 +4184,196 @@ pub async fn db_get_classification_for_message(
     message_id: i64,
 ) -> Result<Option<ClassificationRow>, MonarchError> {
     db.get_classification_for_message_internal(message_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_agent(id: &str) -> AgentRow {
+        let now = crate::util::chrono_now();
+        AgentRow {
+            id: id.to_string(),
+            name: id.to_string(),
+            project_id: None,
+            shadow_name: Some("Igris".to_string()),
+            shadow_title: Some("Test Shadow".to_string()),
+            shadow_grade: Some("Knight".to_string()),
+            provider: Some("lmstudio".to_string()),
+            model: Some("test-model".to_string()),
+            thinking_level: Some("off".to_string()),
+            cwd: Some("/tmp".to_string()),
+            custom_prompt: None,
+            context_window: None,
+            created_at: now.clone(),
+            updated_at: now,
+            archived_at: None,
+            avatar_type: None,
+            avatar_path: None,
+        }
+    }
+
+    async fn seed_agent_and_quest(db: &Database) -> (String, String) {
+        let agent_id = "agent-p4".to_string();
+        db.ensure_agent_exists_internal(&test_agent(&agent_id))
+            .await
+            .expect("agent");
+        let quest_id = db
+            .create_quest_internal(&CreateQuestPayload {
+                id: None,
+                parent_id: None,
+                title: "Test quest".to_string(),
+                description: None,
+                status: Some("in_progress".to_string()),
+                grade: Some("C".to_string()),
+                exec_hint: Some("in_context".to_string()),
+                assignee_shadow_id: Some(agent_id.clone()),
+                created_by: Some("monarch".to_string()),
+            })
+            .await
+            .expect("quest");
+        (agent_id, quest_id)
+    }
+
+    #[tokio::test]
+    async fn action_transition_sets_current_action() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+
+        db.record_action_transition_internal(
+            &agent_id,
+            &quest_id,
+            "Understand the failing authentication test",
+            None,
+        )
+        .await
+        .expect("transition");
+
+        let wm = db
+            .get_working_memory_internal(&agent_id)
+            .await
+            .expect("wm")
+            .expect("wm row");
+        let current = wm.current_action.expect("current action");
+        assert_eq!(current.intent, "Understand the failing authentication test");
+        assert_eq!(current.quest_id, quest_id);
+        assert!(wm.recent_actions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn action_transition_closes_previous_action_with_outcome() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+
+        db.record_action_transition_internal(&agent_id, &quest_id, "Map auth flow", None)
+            .await
+            .expect("first");
+        db.record_action_transition_internal(
+            &agent_id,
+            &quest_id,
+            "Patch expiry handler",
+            Some("Found expired sessions return 401 instead of redirecting."),
+        )
+        .await
+        .expect("second");
+
+        let wm = db
+            .get_working_memory_internal(&agent_id)
+            .await
+            .expect("wm")
+            .expect("wm row");
+        assert_eq!(
+            wm.current_action.expect("current").intent,
+            "Patch expiry handler"
+        );
+        assert_eq!(wm.recent_actions.len(), 1);
+        assert_eq!(wm.recent_actions[0].intent, "Map auth flow");
+        assert_eq!(
+            wm.recent_actions[0].outcome,
+            "Found expired sessions return 401 instead of redirecting."
+        );
+        assert_eq!(wm.recent_actions[0].auto_closed, None);
+    }
+
+    #[tokio::test]
+    async fn complete_action_clears_current_action_and_records_outcome_child() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+
+        db.record_action_transition_internal(&agent_id, &quest_id, "Edit session restore", None)
+            .await
+            .expect("transition");
+        db.complete_action_internal(&agent_id, "Session restore now follows ancestry.")
+            .await
+            .expect("complete");
+
+        let wm = db
+            .get_working_memory_internal(&agent_id)
+            .await
+            .expect("wm")
+            .expect("wm row");
+        assert!(wm.current_action.is_none());
+        assert_eq!(wm.recent_actions.len(), 1);
+        assert_eq!(
+            wm.recent_actions[0].outcome,
+            "Session restore now follows ancestry."
+        );
+
+        let events = db
+            .list_quest_events_internal(&quest_id)
+            .await
+            .expect("events");
+        let action = events
+            .iter()
+            .find(|ev| ev.event_type == "coherent_action")
+            .expect("action");
+        let outcome = events
+            .iter()
+            .find(|ev| ev.event_type == "action_outcome")
+            .expect("outcome");
+        assert_eq!(outcome.parent_event_id.as_deref(), Some(action.id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn tool_call_start_and_end_update_one_child_event() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        db.record_action_transition_internal(&agent_id, &quest_id, "Run focused test", None)
+            .await
+            .expect("transition");
+
+        db.record_tool_call_start_internal(
+            &agent_id,
+            &quest_id,
+            "tc-1",
+            "bash",
+            Some(serde_json::json!({ "cmd": "cargo test auth" })),
+        )
+        .await
+        .expect("tool start");
+        db.record_tool_call_end_internal(
+            "tc-1",
+            Some(serde_json::json!({ "output": "ok" })),
+            false,
+            Some(123),
+        )
+        .await
+        .expect("tool end");
+
+        let events = db
+            .list_quest_events_internal(&quest_id)
+            .await
+            .expect("events");
+        let tools: Vec<_> = events
+            .iter()
+            .filter(|ev| ev.event_type == "tool_call")
+            .collect();
+        assert_eq!(tools.len(), 1);
+        assert!(tools[0].parent_event_id.is_some());
+        let payload: serde_json::Value =
+            serde_json::from_str(tools[0].payload_json.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["tool_call_id"], "tc-1");
+        assert_eq!(payload["status"], "done");
+        assert_eq!(payload["duration_ms"], 123);
+    }
 }

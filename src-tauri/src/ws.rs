@@ -124,7 +124,10 @@ async fn handle_message(
 
     let id = parsed.get("id").cloned();
     let cmd = parsed.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
-    let args = parsed.get("args").cloned().unwrap_or(Value::Object(Default::default()));
+    let args = parsed
+        .get("args")
+        .cloned()
+        .unwrap_or(Value::Object(Default::default()));
 
     // Event subscription management
     match cmd {
@@ -176,7 +179,11 @@ fn make_response(id: Option<Value>, result: Result<Value, MonarchError>) -> Stri
 
 /// Dispatch a command to the appropriate internal handler.
 /// Adding a new command = adding one match arm here.
-pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) -> Result<Value, MonarchError> {
+pub(crate) async fn dispatch_command(
+    state: &WsState,
+    cmd: &str,
+    args: Value,
+) -> Result<Value, MonarchError> {
     match cmd {
         // ---- Agent lifecycle ----
         "spawn_agent" => {
@@ -257,11 +264,12 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
         "list_paths" => {
             let cwd = str_field(&args, "cwd")?;
             let query = str_field(&args, "query")?;
-            let result = tokio::task::spawn_blocking(move || {
-                crate::mention::list_paths_inner(&cwd, &query)
-            })
-            .await
-            .map_err(|e| MonarchError::persistence(format!("list_paths join error: {e}")))??;
+            let result =
+                tokio::task::spawn_blocking(move || crate::mention::list_paths_inner(&cwd, &query))
+                    .await
+                    .map_err(|e| {
+                        MonarchError::persistence(format!("list_paths join error: {e}"))
+                    })??;
             serde_json::to_value(result).map_err(MonarchError::from)
         }
 
@@ -272,12 +280,8 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
                 .get("forceRefresh")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let models = crate::models::ws_get_models(
-                &state.model_cache,
-                provider,
-                force_refresh,
-            )
-            .await?;
+            let models =
+                crate::models::ws_get_models(&state.model_cache, provider, force_refresh).await?;
             serde_json::to_value(models).map_err(MonarchError::from)
         }
         "get_provider_auth_status" => {
@@ -298,9 +302,9 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             crate::persistence::write_agent_prompt_file(&agent_id, &prompt).await?;
             Ok(Value::Null)
         }
-        "get_prompts_dir" => {
-            Ok(Value::String(crate::persistence::prompts_dir_string().await?))
-        }
+        "get_prompts_dir" => Ok(Value::String(
+            crate::persistence::prompts_dir_string().await?,
+        )),
 
         // ---- DB: Agents ----
         "db_upsert_agent" => {
@@ -310,8 +314,9 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             Ok(Value::Null)
         }
         "db_update_agent" => {
-            let payload = serde_json::from_value(args.get("payload").cloned().unwrap_or(args.clone()))
-                .map_err(|e| MonarchError::invalid_input(format!("Invalid payload: {}", e)))?;
+            let payload =
+                serde_json::from_value(args.get("payload").cloned().unwrap_or(args.clone()))
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid payload: {}", e)))?;
             state.db.update_agent_internal(&payload).await?;
             Ok(Value::Null)
         }
@@ -341,8 +346,9 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
 
         // ---- DB: Sessions ----
         "db_create_session" => {
-            let session = serde_json::from_value(args.get("session").cloned().unwrap_or(args.clone()))
-                .map_err(|e| MonarchError::invalid_input(format!("Invalid session: {}", e)))?;
+            let session =
+                serde_json::from_value(args.get("session").cloned().unwrap_or(args.clone()))
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid session: {}", e)))?;
             state.db.create_session_internal(&session).await?;
             Ok(Value::Null)
         }
@@ -354,8 +360,9 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
 
         // ---- DB: Messages ----
         "db_save_message" => {
-            let message = serde_json::from_value(args.get("message").cloned().unwrap_or(args.clone()))
-                .map_err(|e| MonarchError::invalid_input(format!("Invalid message: {}", e)))?;
+            let message =
+                serde_json::from_value(args.get("message").cloned().unwrap_or(args.clone()))
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid message: {}", e)))?;
             let id = state.db.save_message_internal(&message).await?;
             Ok(Value::Number(id.into()))
         }
@@ -377,7 +384,9 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             serde_json::to_value(memories).map_err(MonarchError::from)
         }
         "db_get_memory" => {
-            let id: i64 = args.get("id").and_then(|v| v.as_i64())
+            let id: i64 = args
+                .get("id")
+                .and_then(|v| v.as_i64())
                 .ok_or_else(|| MonarchError::invalid_input("missing id"))?;
             let memory = state.db.get_memory_internal(id).await?;
             serde_json::to_value(memory).map_err(MonarchError::from)
@@ -421,21 +430,26 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             serde_json::to_value(templates).map_err(MonarchError::from)
         }
         "db_save_agent_template" => {
-            let template = serde_json::from_value(args.get("template").cloned().unwrap_or(args.clone()))
-                .map_err(|e| MonarchError::invalid_input(format!("Invalid template: {}", e)))?;
+            let template =
+                serde_json::from_value(args.get("template").cloned().unwrap_or(args.clone()))
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid template: {}", e)))?;
             state.db.save_agent_template_internal(&template).await?;
             Ok(Value::Null)
         }
         "db_delete_agent_template" => {
             let template_id = str_field(&args, "templateId")?;
-            state.db.delete_agent_template_internal(&template_id).await?;
+            state
+                .db
+                .delete_agent_template_internal(&template_id)
+                .await?;
             Ok(Value::Null)
         }
 
         // ---- DB: Projects ----
         "db_upsert_project" => {
-            let project = serde_json::from_value(args.get("project").cloned().unwrap_or(args.clone()))
-                .map_err(|e| MonarchError::invalid_input(format!("Invalid project: {}", e)))?;
+            let project =
+                serde_json::from_value(args.get("project").cloned().unwrap_or(args.clone()))
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid project: {}", e)))?;
             state.db.upsert_project_internal(&project).await?;
             Ok(Value::Null)
         }
@@ -601,8 +615,15 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             let req: crate::agent::commands::UpsertCaptainIdentityRequest =
                 serde_json::from_value(args)
                     .map_err(|e| MonarchError::invalid_input(format!("Invalid request: {}", e)))?;
-            state.db.upsert_captain_identity_internal(&req.name, &req.payload, req.edit_note.as_deref()).await?;
-            let payload = if req.payload.is_empty() { None } else { Some(req.payload) };
+            state
+                .db
+                .upsert_captain_identity_internal(&req.name, &req.payload, req.edit_note.as_deref())
+                .await?;
+            let payload = if req.payload.is_empty() {
+                None
+            } else {
+                Some(req.payload)
+            };
             state.agent_mgr.refresh_captain_identity(payload).await?;
             Ok(Value::Null)
         }
@@ -615,9 +636,23 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             let req: crate::agent::commands::UpsertShadowIdentityRequest =
                 serde_json::from_value(args)
                     .map_err(|e| MonarchError::invalid_input(format!("Invalid request: {}", e)))?;
-            state.db.upsert_shadow_identity_internal(&req.agent_id, &req.payload, req.edit_note.as_deref()).await?;
-            let payload = if req.payload.is_empty() { None } else { Some(req.payload) };
-            state.agent_mgr.refresh_shadow_identity(&req.agent_id, payload).await?;
+            state
+                .db
+                .upsert_shadow_identity_internal(
+                    &req.agent_id,
+                    &req.payload,
+                    req.edit_note.as_deref(),
+                )
+                .await?;
+            let payload = if req.payload.is_empty() {
+                None
+            } else {
+                Some(req.payload)
+            };
+            state
+                .agent_mgr
+                .refresh_shadow_identity(&req.agent_id, payload)
+                .await?;
             Ok(Value::Null)
         }
 
@@ -627,8 +662,10 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             serde_json::to_value(cfg).map_err(MonarchError::from)
         }
         "memory_set_config" => {
-            let raw: crate::memory_config::MemoryConfig = serde_json::from_value(args)
-                .map_err(|e| MonarchError::invalid_input(format!("Invalid memory config: {}", e)))?;
+            let raw: crate::memory_config::MemoryConfig =
+                serde_json::from_value(args).map_err(|e| {
+                    MonarchError::invalid_input(format!("Invalid memory config: {}", e))
+                })?;
             let resolved = crate::memory_config::resolve(raw.clone());
             crate::memory_config::write_raw_ws(&raw).await?;
             serde_json::to_value(resolved).map_err(MonarchError::from)
@@ -637,9 +674,7 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
             let path = crate::memory_config::config_path_ws()?;
             Ok(Value::String(path))
         }
-        "memory_index_status" => {
-            Ok(Value::Bool(state.memory_index.is_initialized()))
-        }
+        "memory_index_status" => Ok(Value::Bool(state.memory_index.is_initialized())),
         "memory_download_and_init" => {
             state.memory_index.ensure_model_downloaded().await?;
             state.memory_index.init_embedder().await?;
@@ -677,7 +712,10 @@ pub(crate) async fn dispatch_command(state: &WsState, cmd: &str, args: Value) ->
                 .db
                 .insert_memory_internal(payload, Some(embedding), Some(cfg.embedding_model_id))
                 .await?;
-            let pairs = state.db.load_embeddings_for_agent_internal(&agent_id).await?;
+            let pairs = state
+                .db
+                .load_embeddings_for_agent_internal(&agent_id)
+                .await?;
             state.memory_index.rebuild(pairs).await?;
             Ok(Value::Number(new_id.into()))
         }

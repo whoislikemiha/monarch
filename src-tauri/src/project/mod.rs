@@ -134,4 +134,3 @@ pub fn read_project_instructions(cwd: &str) -> Option<String> {
     let cwd_path = Path::new(cwd);
     find_project_root(cwd_path).and_then(|root| read_instructions_from_root(&root))
 }
-

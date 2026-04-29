@@ -101,34 +101,60 @@ L2 exists so that the chat thread can answer "what are you working on?" by readi
 
 ### Schema
 
-L2 is **structured, not prose** — both the executor and chat thread must agree deterministically on what counts as the current state. Per-agent JSON blob (or column-decomposed if querying needs it):
+L2 is **structured, not prose** — both the executor and chat thread must agree deterministically on what counts as the current state. It lives as a per-agent JSON payload in `agent_working_memory`, not as a column on `agents`; the payload can be column-decomposed later if querying needs it.
+
+```sql
+CREATE TABLE agent_working_memory (
+  agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+  payload_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+```
+
+The P4 v0 shape is intentionally narrow:
+
+```typescript
+interface WorkingMemoryV0 {
+  schema_version: 1;
+  current_quest_id: string | null;        // FK into quest_nodes
+  current_quest_path: string[];           // ["Project: Monarch", "MON-82", "Slice 1"]
+  current_action: CurrentAction | null;   // active coherent_action event
+  recent_actions: RecentAction[];         // last N (~10) completed / auto-closed coherent actions
+  updated_at: string;
+}
+
+interface CurrentAction {
+  event_id: string;
+  quest_id: string;
+  intent: string;
+  started_at: string;
+}
+
+interface RecentAction {
+  event_id: string;
+  quest_id: string;
+  intent: string;
+  outcome: string;
+  completed_at: string;
+  auto_closed?: boolean;
+}
+```
+
+Later phases extend the payload with plan, thread, blocker, and environment slices:
 
 ```typescript
 interface WorkingMemory {
   current_quest_id: string | null;        // FK into quest_nodes
   current_quest_path: string[];           // ["Project: Monarch", "MON-82", "Slice 1"]
-  current_action: string;                 // "investigating sidecar event ordering"
-  recent_actions: ActionSummary[];        // last N (~10) significant events
-  planned_actions: PlannedAction[];       // executor's tactical plan (see "Three layers of intention")
+  current_action: CurrentAction | null;
+  recent_actions: RecentAction[];
+  active_plan_item_id: string | null;     // P4b: current intended plan item
+  next_plan_item_ids: string[];           // P4b: compact next-step slice
   blockers: string[];                     // ["awaiting captain on architecture choice"]
   open_threads: string[];                 // things not yet wrapped, may surface in next turn
   attention_threads: AttentionThread[];   // executor + chat + ... (see attention.md)
   environment: EnvironmentSnapshot;       // ambient state of the world
   updated_at: string;
-}
-
-interface ActionSummary {
-  kind: "tool" | "decision" | "message" | "compaction";
-  summary: string;        // one line
-  timestamp: string;
-  artifact_refs?: string[];
-}
-
-interface PlannedAction {
-  intent: string;                         // "read the failing test files"
-  rationale?: string;
-  added_by: "executor" | "chat_shadow";
-  added_at: string;
 }
 
 interface EnvironmentSnapshot {
@@ -145,9 +171,11 @@ interface EnvironmentSnapshot {
 }
 ```
 
+L2 stores pointers and compact summaries. It does **not** duplicate file contents, full tool results, or the execution plan. Evidence lives in the nested quest events (`tool_call` children); durable intended route lives in `quest_plan_items` once P4b lands.
+
 ### Two writers, strict separation of concerns
 
-**The executor writes ephemeral fields in real-time.** As the executor takes actions, it mutates `current_action`, appends to `recent_actions`, updates `blockers`. This is its own working state and it owns the freshness.
+**The executor writes ephemeral fields in real-time.** As the executor takes actions, it mutates `current_action`, appends to `recent_actions`, updates blockers when that field exists. This is its own working state and it owns the freshness.
 
 **The Keeper writes consolidation at compaction ticks.** When distillation runs, the Keeper:
 1. Reads the raw stream since the last tick.
@@ -166,12 +194,12 @@ Despite two writers, only one process at a time mutates L2. This is the same pat
 Working memory and the quest tree (defined in `attention.md`) together express *what* a shadow is doing across three timescales:
 
 - **Quest** — *what* the captain wants. Goals, scope, direction. Captain-managed via chat-shadow's plan-manipulation tools. Coarse-grained, deliberate, rationale-required to change. Lives in the quest tree.
-- **Internal plan** — *how* the executor intends to solve the current quest. Lives in L2 as `planned_actions`. Executor-managed, with chat-shadow able to insert tactical steps. Frictionless — no rationale required, no captain-visible event ritual. Surfaces only on drill-in.
-- **Coherent action** — *doing*. The current chunk of work the executor is narrating to the timeline (see `attention.md`). Drawn from the internal plan as the executor dequeues and executes.
+- **Execution plan** — *how* the shadow currently intends to solve the current quest. Lives in durable quest-scoped `quest_plan_items` once P4b lands. Executor-managed and chat-shadow-editable. Provisional, reorderable, and allowed to be wrong. L2 carries only the active/next plan slice.
+- **Coherent action** — *doing*. The current chunk of work the executor is narrating to the timeline (see `attention.md`). It may link to an execution plan item after P4b, but it is actual history, not the plan itself.
 
-This separation matters because most "next steps" are tactical, not strategic. When the captain says *"after this, also grep for X,"* that's an addition to the internal plan — it doesn't merit a quest-tree subtask, doesn't surface as a captain-visible scope change, doesn't require a rationale event. Frictionless.
+This separation matters because most "next steps" are tactical, not strategic. When the captain says *"after this, also grep for X,"* that's an addition to the execution plan — it doesn't merit a quest-tree subtask and doesn't surface as a captain-visible scope change. Frictionless.
 
-Quest changes, by contrast, are first-class. Scope expansion, direction change, subtask addition — all carry rationale and surface to the captain on the timeline. The cost of changing a quest is intentional friction: it's the lever that actually defines the work. Chat-shadow's classification (`add_to_internal_plan` vs `add_subtask`) makes this distinction explicit per turn.
+Quest changes, by contrast, are first-class. Scope expansion, direction change, subtask addition — all carry rationale and surface to the captain on the timeline. The cost of changing a quest is intentional friction: it's the lever that actually defines the work. Chat-shadow's classification (`add_to_execution_plan` vs `add_subtask`) makes this distinction explicit per turn.
 
 ## L3 — Knowledge tree
 
@@ -310,7 +338,7 @@ Branching is therefore *git for the cognitive substrate*: code, working state, a
 - `captain_identity_versions` table. Row-per-version with supersedes chain.
 - `shadow_identity_versions` table. Same pattern, FK to `agents`.
 - `agents.identity_version_id` column, FK to `shadow_identity_versions`.
-- `agent_working_memory` storage. Either column on `agents` (JSON blob) or sibling table; decided in implementation.
+- `agent_working_memory` table. Per-agent JSON payload for L2; starts with `current_action` / `recent_actions` and grows by phase.
 - `memories` table redesign per `distillation.md`. Includes `parent_id` (tree edge), `scope` (self|project|captain|global), `project_id`, `supersedes_id`, `archived_at`, `file_refs`, `embedding_model_id`, etc.
 - `memories_fts` virtual table (FTS5).
 - Vector index: SQLite BLOBs + Rust-side HNSW sidecar file via `instant-distance`. Rebuildable from BLOBs on cold start. **Validated by [MON-91](../spike/MON-91-storage.md)** — at 1M synthetic vectors, p99 query = 5.8 ms, binary +25 MiB; at 10k real embeddings from `bge-small-en-v1.5`, recall@10 = 1.000.

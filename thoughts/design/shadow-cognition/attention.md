@@ -77,11 +77,13 @@ What is **not** on the chat surface: tool calls, internal reasoning, low-level s
 
 ### Execution timeline
 
-Chronological list of **coherent actions** the executor takes. Each item shows a one-line declared intent ("I will read the relevant test files"). Underneath, collapsed by default, are the actual tool calls, reasoning steps, and decisions that fulfilled the intent.
+Chronological list of **coherent actions** the executor takes. Each item shows a one-line declared intent ("Understand the failing authentication test"). Underneath, collapsed by default, are the actual tool calls and explicit decisions that fulfilled the intent.
 
 The captain reading the timeline scrolls at the *intent level* — they see the work narrative, not the tool-call transcript. They can drill into any item to see what happened underneath if they care.
 
 Plan-level changes (scope, direction, subtask added, fork) also appear on the timeline as first-class entries — when chat-shadow modifies the quest based on conversation, that modification is part of the work record.
+
+The timeline is **actual history**, not the plan. Durable execution plans are a separate layer: the plan says what the shadow currently intends to do; the timeline says what actually happened. A future `plan_item_id` may link actions to plan items, but coherent actions are not themselves plan items.
 
 ### Surface routing
 
@@ -90,7 +92,8 @@ Each event kind has a default surface:
 | Event kind | Default surface | Notes |
 |------------|-----------------|-------|
 | `coherent_action` | timeline | Always visible at top level |
-| `tool_call`, `thinking` | timeline (collapsed) | Children of an action |
+| `tool_call` | timeline (collapsed) | Child of an action |
+| `executor_decision` | timeline (collapsed) | Explicit decision; child of current action when possible |
 | `chat_message` (captain → shadow) | chat | |
 | `chat_message` (shadow → captain) | chat | The shadow's *spoken* turns |
 | `observation` (shadow surfacing something) | chat | "I noticed the build is broken" |
@@ -101,7 +104,7 @@ Each event kind has a default surface:
 | `question` (executor → captain) | chat | Dialogue-shaped |
 | `answer` (captain → executor, via chat-shadow) | chat | |
 | `investigation` (chat-shadow finding) | timeline | A chat-shadow-authored action |
-| `scope_change`, `direction_change`, `subtask_added` | timeline | Plan changes are work |
+| `scope_change`, `direction_change`, `subtask_added` | timeline | Quest changes are work |
 | `note` | timeline | Free-form context |
 | `forked`, `merged` | timeline | Branch points |
 | `executor_action_outcome` | timeline | One-line closure of an action |
@@ -113,21 +116,28 @@ The chat surface is therefore *sparse and curated*; the timeline is *full but ac
 
 ## Coherent atomic actions
 
-The unit of executor narration. Defined as: **one declared intent that bundles however many tool calls, reasoning steps, and observations are needed to fulfill it.**
+The unit of executor narration. Defined as: **one declared intent that bundles several tool calls and observations needed to fulfill it.**
 
 Granularity examples:
 
-- *"Read relevant test files"* — 5x read tool calls underneath.
-- *"Search for usages of `verify`"* — 1 grep underneath.
-- *"Change mocking framework in user tests"* — 3 reads + 8 edits + 1 bash underneath.
-- *"Run the failing test to see the error"* — 1 bash underneath.
-- *"Investigate why the migration is failing"* — multiple reads + greps + thinking events underneath.
+- *"Understand the failing authentication test"* — read the failing test, inspect the related handler, identify the expected behavior.
+- *"Patch the session-expiry behavior"* — edit the handler and helper it calls.
+- *"Verify the focused fix"* — run the relevant test or package check.
+- *"Trace where the payment status is normalized"* — search for status mapping, read the service and serializer.
+- *"Reproduce the reported build failure"* — run the failing command and inspect the first actionable error.
+
+Counterexamples: *"Read file"*, *"Run grep"*, *"Use bash"*, *"Fix bug"*, *"Keep going"*, *"Implement feature"*, *"Check stuff"*. These are either tool-level noise or too broad to produce a useful outcome.
 
 Mechanically, the executor model is prompted to:
 
-1. **Before each chunk**, declare the intent in one short sentence (becomes the action's title).
-2. **Execute** the tool calls and reasoning that fulfill it (become the action's children, nested by `parent_event_id`).
-3. **On completion**, mark the action done with a one-line outcome ("found 3 callers", "tests pass now", "no usages outside the deprecated module").
+1. **At each chunk boundary**, call `set_current_action(intent, previous_outcome?)`. When switching from one action to the next, `previous_outcome` closes the prior action and the new `intent` starts the next one.
+2. **Execute** the tool calls that fulfill it. Tool calls become children of the active action, nested by `parent_event_id`.
+3. **When done without starting a next action**, call `complete_action(outcome)` with a one-line result.
+4. **When a significant approach decision happens**, optionally call `record_decision(decision, rationale?)`. Decisions are sparse and explicit, not a dump of raw model thinking.
+
+If the executor starts a new action without closing the previous one, Rust auto-closes the previous action and marks it as such. If the executor ends/aborts while an action is open, Rust auto-closes it at the lifecycle boundary. Auto-close is a resilience mechanism, not the desired rhythm.
+
+Action granularity is prompt guidance, not backend enforcement. A good action may include several tool calls. If one action grows beyond roughly 5-8 tool calls, the executor should consider whether the intent has become too broad and whether it should close with an outcome and start a sharper action.
 
 The captain reading the timeline gets a narrative of the work — like reading a commit log instead of a diff. Drill in for the diff when needed.
 
@@ -139,18 +149,19 @@ This is the executor's *per-action* narration. The shadow reports about itself a
 2. **Per quest** — first-person quest report at quest end. Structured: summary, outcome, decisions, learned, artifacts, open threads, reflection. Drives the quest summary view and feeds the Keeper. (Detail in `distillation.md`.)
 3. **Continuous** — Keeper compaction ticks. Distills raw stream + reports into events/memories/artifacts. Drives long-term memory.
 
-All three are first-person. All three produce structured records. All three serve different consumers. The executor's system prompt has to teach this rhythm: think in coherent chunks, narrate the chunk, finish with a closure.
+All three are first-person. All three produce structured records. All three serve different consumers. The executor's prompt has to teach this rhythm: work in coherent chunks, record the chunk, finish with a closure.
 
 ## Event taxonomy
 
-The rich set of typed events that can appear on a quest. Each event has: `id`, `quest_id`, `parent_event_id` (nullable, for nesting), `kind`, `payload` (JSON), `author` (executor / chat-shadow / captain / keeper), `created_at`, `surface_override` (nullable).
+The rich set of typed events that can appear on a quest. Each event has: `id`, `quest_id`, `parent_event_id` (nullable, for nesting), `kind`, `payload` (JSON), `author` (executor / chat-shadow / captain / keeper / system), `actor` (concrete agent/captain/process id or name), `created_at`, `surface_override` (nullable), and `payload_schema_version`.
 
 **Executor activity (timeline):**
 - `coherent_action` — declared intent, parent of nested tool calls.
 - `tool_call` — single tool invocation with args + result.
-- `thinking` — internal reasoning step (rendered only on drill-in).
 - `executor_action_outcome` — closure of a coherent action.
-- `executor_decision` — explicit decision the executor made, with rationale.
+- `executor_decision` — explicit decision the executor made, with optional rationale.
+
+Raw model thinking is not persisted as quest timeline content in v1. If rationale matters, the shadow records an explicit `executor_decision`; otherwise the action intent, tool children, and outcome are the narrative.
 
 **Captain↔shadow dialogue (chat):**
 - `chat_message` — captain or shadow turn.
@@ -224,11 +235,13 @@ The executor and chat-shadow have different capabilities, by design.
 
 - `read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`
 - `memory_search`, `recall_actions`
-- `update_internal_plan(actions)` — manages own `planned_actions` in L2 (see `substrate.md` § Three layers of intention). Add, reorder, remove.
+- `set_current_action(intent, previous_outcome?)` — records the current coherent action. If another action is already active, `previous_outcome` closes it before opening the new one.
+- `complete_action(outcome)` — closes the current coherent action when the executor is done without immediately starting another action.
+- `record_decision(decision, rationale?)` — records a sparse, explicit approach/architecture/safety/scope decision. Child of current action when possible.
+- `update_execution_plan(actions)` — manages durable quest plan items once P4b exists. Add, reorder, skip, mark active/done. Before P4b, the executor uses only coherent action narration, not a durable plan table.
 - `propose_pending_action(action, context, reason)` — **rare**: only for actions that genuinely need captain eyes (destructive, irreversible, out-of-scope, or against a captain-set permission gate). See "When pending actions apply" below.
 - `request_information(question, reason)` — emits a `question` event.
 - `report_blocker(reason, hypotheses)` — emits a `blocker` event.
-- `complete_action(outcome)` — closes a coherent action.
 - `complete_quest(report)` — emits the first-person quest report and transitions status.
 
 The executor is the only thread that mutates the codebase, runs destructive bash, or otherwise changes external state.
@@ -253,8 +266,8 @@ Default permission posture is **trust within scope**. Most quests have zero pend
 - Read-only bash: `git status`, `git log`, `git diff`, `cargo check`, `cargo test` — idempotent observation, even if it touches the build cache.
 - `memory_search`, `recall_actions`
 
-**Plan manipulation (writes events to the quest or L2):**
-- `add_to_internal_plan(intent, rationale?)` — **tactical, frictionless.** Inserts an action into the executor's `planned_actions` (L2). No quest mutation. Use for "after this, also do X" type instructions.
+**Plan manipulation (writes events to the quest or plan store):**
+- `add_to_execution_plan(intent, rationale?)` — **tactical, frictionless.** Inserts a plan item into the current quest's durable execution plan (P4b). Use for "after this, also do X" type instructions.
 - `add_subtask(parent_quest_id, description, rationale)` — **strategic, surfaced.** Creates a sub-quest. Use when the addition is its own piece of work the captain should see as scope.
 - `change_quest_scope(quest_id, addition_or_removal, rationale)`
 - `change_quest_direction(quest_id, new_approach, rationale)`
@@ -263,7 +276,7 @@ Default permission posture is **trust within scope**. Most quests have zero pend
 - `fork_quest(quest_id, branches, rationale)`
 - `complete_quest_intent(quest_id)` — captain says "we're done with this," chat-shadow closes it.
 
-The `add_to_internal_plan` vs `add_subtask` distinction is the most-used classification chat-shadow makes per turn. Most captain instructions are tactical and go into the plan. A subtask is reserved for genuinely separable work the captain wants to see as a unit.
+The `add_to_execution_plan` vs `add_subtask` distinction is the most-used classification chat-shadow makes per turn. Most captain instructions are tactical and go into the plan. A subtask is reserved for genuinely separable work the captain wants to see as a unit.
 
 **Pending action mediation:**
 - `modify_pending_action(action_id, patch, rationale)`
@@ -292,9 +305,9 @@ When the captain types something into chat, chat-shadow classifies intent and ta
 |----------------|---------------------|
 | Question about the work | `read` / `grep` / `memory_search` to investigate, then `speak` answer. Optionally emit `investigation` event if findings are durable. |
 | Question about something orthogonal | Answer from L3 / external lookups. No quest event. |
-| Tactical addition ("also rename X", "after this, grep for Y") | `add_to_internal_plan` — frictionless, no quest mutation. |
+| Tactical addition ("also rename X", "after this, grep for Y") | `add_to_execution_plan` — frictionless plan update, no quest scope mutation. |
 | New piece of work ("now let's also refactor the test suite") | `add_subtask` with rationale. Surfaces as scope. |
-| Routine command ("commit and push") | Default to `add_to_internal_plan` (executor does it next). Promote to `add_subtask` only if it's genuinely separable work. Either way reply: "on it." |
+| Routine command ("commit and push") | Default to `add_to_execution_plan` (executor does it next). Promote to `add_subtask` only if it's genuinely separable work. Either way reply: "on it." |
 | Redirect ("change of plans, do Y") | Default to queued: `change_quest_direction` only — executor picks up at next action boundary. Captain can say "now" to escalate to immediate (`pause_executor` → change → `resume_executor`). |
 | Mid-action tweak ("but use pub(crate) instead of pub") | `pause_executor` → `note_on_quest` with the tweak → `resume_executor`. Executor adapts mid-action. |
 | Approval/rejection of pending action | `approve_pending_action` or `reject_pending_action` (with rationale if reject). Rare — pending actions are escalation-only. |
@@ -363,7 +376,7 @@ Igris: done. verify_token is pub(crate).
 
 Captain: *"also rename `verify` to `validate` in the same file."*
 
-Chat-shadow classifies this as tactical follow-up, not a quest scope expansion. Calls `add_to_internal_plan("rename verify → validate in auth.rs and callers", rationale: "captain follow-up after middleware extraction")`. No quest mutation, no rationale event on the timeline — the planned action is just queued in L2.
+Chat-shadow classifies this as tactical follow-up, not a quest scope expansion. Calls `add_to_execution_plan("rename verify → validate in auth.rs and callers", rationale: "captain follow-up after middleware extraction")`. No quest scope mutation — the planned action is queued in the quest's execution plan.
 
 Executor picks it up after closing current action:
 
@@ -490,4 +503,4 @@ Listed for cross-doc reference. Treat as current direction, not final calls. Mos
 12. **Branching = code worktrees + working memory forks + quest subtree forks + per-fork attention threads.** L1 + L3 stay shared (read).
 13. **Each thread = one Pi session.** Same identity in the system prompt. Substrate makes them coherent.
 14. **Active chat + execution timeline is a transferable agent UX pattern.** We adopt it as default; worth surfacing beyond Monarch.
-15. **Three layers of intention: quest, plan, action.** Quest = captain's lever (deliberate, surfaced, rationale-required). Internal plan in L2 = executor's tactical decomposition (lightweight). Coherent action = current narrated chunk. Chat-shadow distinguishes tactical-plan-additions (`add_to_internal_plan`) from quest-changes (`add_subtask`, `change_quest_direction`) per turn.
+15. **Three layers of intention: quest, plan, action.** Quest = captain's lever (deliberate, surfaced, rationale-required). Durable execution plan = provisional intended route. Coherent action = actual narrated execution chunk. Chat-shadow distinguishes tactical plan additions (`add_to_execution_plan`) from quest changes (`add_subtask`, `change_quest_direction`) per turn.

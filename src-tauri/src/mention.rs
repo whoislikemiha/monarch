@@ -211,10 +211,7 @@ pub fn list_paths_inner(cwd: &str, query: &str) -> Result<Vec<PathSuggestion>, M
 /// `spawn_blocking` keeps the async runtime unclogged on huge trees.
 #[tauri::command]
 #[specta::specta]
-pub async fn list_paths(
-    cwd: String,
-    query: String,
-) -> Result<Vec<PathSuggestion>, MonarchError> {
+pub async fn list_paths(cwd: String, query: String) -> Result<Vec<PathSuggestion>, MonarchError> {
     let cwd = Arc::new(cwd);
     let query = Arc::new(query);
     let c = cwd.clone();

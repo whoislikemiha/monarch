@@ -206,14 +206,8 @@ pub(super) async fn handle_sidecar_event(
             // apply clears the turn anchor and writes the duration onto the
             // ToolExecution — peeking after would see the mutation.
             let durations = compute_event_durations(live_states, &agent_id, &inner_event).await;
-            let current_quest_id = if matches!(inner_event, InnerEvent::MemorySuggestion { .. }) {
-                db.get_agent_current_quest_id_internal(&agent_id)
-                    .await
-                    .ok()
-                    .flatten()
-            } else {
-                None
-            };
+            let current_quest_id =
+                current_quest_for_event(app, ws_tx, db, &agent_id, &inner_event).await;
             for cmd in build_persist_commands(
                 &agent_id,
                 session_id,
@@ -449,6 +443,74 @@ async fn push_status_for_agent(
     emit_state_event(app, ws_tx, &entry.topic, &snap);
 }
 
+async fn current_quest_for_event(
+    app: &AppHandle,
+    ws_tx: &broadcast::Sender<WsBroadcast>,
+    db: &Arc<Database>,
+    agent_id: &str,
+    event: &InnerEvent,
+) -> Option<String> {
+    match event {
+        InnerEvent::MemorySuggestion { .. }
+        | InnerEvent::ToolExecutionStart { .. }
+        | InnerEvent::ToolExecutionEnd { .. }
+        | InnerEvent::ExecutorDecision { .. } => db
+            .get_agent_current_quest_id_internal(agent_id)
+            .await
+            .ok()
+            .flatten(),
+        InnerEvent::ActionTransition { intent, .. } => {
+            if let Some(qid) = db
+                .get_agent_current_quest_id_internal(agent_id)
+                .await
+                .ok()
+                .flatten()
+            {
+                return Some(qid);
+            }
+            let title = intent.trim();
+            if title.is_empty() {
+                return None;
+            }
+            match db
+                .auto_create_current_quest_internal(agent_id, title, None)
+                .await
+            {
+                Ok(Some(qid)) => {
+                    let payload = serde_json::json!({ "id": qid, "agentId": agent_id });
+                    emit_event(
+                        app,
+                        ws_tx,
+                        &format!("quest-created-{}", qid),
+                        &payload.to_string(),
+                    );
+                    emit_event(
+                        app,
+                        ws_tx,
+                        &format!("quest-created-for-agent-{}", agent_id),
+                        &payload.to_string(),
+                    );
+                    Some(qid)
+                }
+                Ok(None) => db
+                    .get_agent_current_quest_id_internal(agent_id)
+                    .await
+                    .ok()
+                    .flatten(),
+                Err(e) => {
+                    eprintln!(
+                        "[monarch] P4 action narration could not create quest for {}: {:?}",
+                        agent_id, e
+                    );
+                    None
+                }
+            }
+        }
+        InnerEvent::ActionComplete { .. } => None,
+        _ => None,
+    }
+}
+
 /// MON-100: enqueue a Keeper run when the running token sum crosses a
 /// threshold at the right boundary. Soft threshold fires at `TurnEnd` (next
 /// natural breakpoint after crossing); hard threshold fires at `MessageEnd`
@@ -655,6 +717,8 @@ async fn handle_keeper_result(
                     event_type: "compaction_tick".to_string(),
                     actor: Some("keeper".to_string()),
                     payload_json: Some(payload_json),
+                    author: Some("keeper".to_string()),
+                    ..Default::default()
                 },
             })
             .await;

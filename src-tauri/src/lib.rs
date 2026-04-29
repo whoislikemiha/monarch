@@ -57,97 +57,97 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         // (db_get_classification_for_message).
         .typ::<db::ClassificationRow>()
         .commands(collect_commands![
-        // Agent lifecycle (sidecar-based)
-        agent::commands::spawn_agent,
-        agent::commands::send_command,
-        agent::commands::kill_agent,
-        agent::commands::get_agent_state,
-        agent::commands::rebuild_agent_state_from_session,
-        agent::commands::load_session_context,
-        agent::commands::new_agent_session,
-        agent::commands::switch_agent_session,
-        agent::commands::respond_extension_ui,
-        agent::commands::get_captain_identity,
-        agent::commands::upsert_captain_identity,
-        agent::commands::get_shadow_identity,
-        agent::commands::upsert_shadow_identity,
-        // Models
-        models::get_models,
-        models::get_provider_auth_status,
-        // Prompt file management
-        persistence::get_agent_prompt,
-        persistence::save_agent_prompt,
-        persistence::get_prompts_dir,
-        persistence::save_avatar_image,
-        persistence::read_avatar_data_url,
-        persistence::read_attachment_data_url,
-        // SQLite persistence
-        db::db_upsert_agent,
-        db::db_update_agent,
-        db::db_get_agents,
-        db::db_archive_agent,
-        db::db_unarchive_agent,
-        db::db_delete_agent,
-        db::db_create_session,
-        db::db_get_sessions,
-        db::db_save_message,
-        db::db_get_messages,
-        db::db_get_messages_with_ancestry,
-        db::db_list_memories_for_agent,
-        db::db_get_memory,
-        db::db_log_event,
-        // Agent templates
-        db::db_list_agent_templates,
-        db::db_save_agent_template,
-        db::db_delete_agent_template,
-        // Projects
-        db::db_upsert_project,
-        db::db_get_projects,
-        db::db_get_project_by_path,
-        db::db_rename_project,
-        db::db_update_project_instructions,
-        db::db_delete_project,
-        // Project detection
-        project::commands::detect_project,
-        project::commands::read_project_instructions,
-        // Mention autocomplete (MON-76)
-        mention::list_paths,
-        // UI state
-        db::db_get_ui_state,
-        db::db_set_ui_state,
-        // Agent stats
-        db::db_get_agent_stats,
-        // Quests (MON-83)
-        db::db_create_quest,
-        db::db_update_quest,
-        db::db_get_quest,
-        db::db_list_quests_for_agent,
-        db::db_get_quest_tree_for_root,
-        db::db_record_quest_event,
-        db::db_list_quest_events,
-        // MON-82
-        db::db_list_classifications_for_agent,
-        db::db_get_classification_for_message,
-        // Toolbox
-        toolbox::toolbox_list_tools,
-        toolbox::placeholder::toolbox_placeholder_ping,
-        // Zoom
-        zoom::set_zoom,
-        // Thinking defaults (MON-78)
-        thinking_config::get_thinking_default,
-        thinking_config::get_thinking_config_path,
-        classifier_config::classifier_get_config,
-        classifier_config::classifier_set_config,
-        classifier_config::classifier_get_config_path,
-        // Memory config + embedding index (MON-99)
-        memory_config::memory_get_config,
-        memory_config::memory_set_config,
-        memory_config::memory_get_config_path,
-        memory_index::memory_index_status,
-        memory_index::memory_download_and_init,
-        memory_search::memory_search_for_agent,
-        memory_smoke::memory_smoke_insert,
-    ])
+            // Agent lifecycle (sidecar-based)
+            agent::commands::spawn_agent,
+            agent::commands::send_command,
+            agent::commands::kill_agent,
+            agent::commands::get_agent_state,
+            agent::commands::rebuild_agent_state_from_session,
+            agent::commands::load_session_context,
+            agent::commands::new_agent_session,
+            agent::commands::switch_agent_session,
+            agent::commands::respond_extension_ui,
+            agent::commands::get_captain_identity,
+            agent::commands::upsert_captain_identity,
+            agent::commands::get_shadow_identity,
+            agent::commands::upsert_shadow_identity,
+            // Models
+            models::get_models,
+            models::get_provider_auth_status,
+            // Prompt file management
+            persistence::get_agent_prompt,
+            persistence::save_agent_prompt,
+            persistence::get_prompts_dir,
+            persistence::save_avatar_image,
+            persistence::read_avatar_data_url,
+            persistence::read_attachment_data_url,
+            // SQLite persistence
+            db::db_upsert_agent,
+            db::db_update_agent,
+            db::db_get_agents,
+            db::db_archive_agent,
+            db::db_unarchive_agent,
+            db::db_delete_agent,
+            db::db_create_session,
+            db::db_get_sessions,
+            db::db_save_message,
+            db::db_get_messages,
+            db::db_get_messages_with_ancestry,
+            db::db_list_memories_for_agent,
+            db::db_get_memory,
+            db::db_log_event,
+            // Agent templates
+            db::db_list_agent_templates,
+            db::db_save_agent_template,
+            db::db_delete_agent_template,
+            // Projects
+            db::db_upsert_project,
+            db::db_get_projects,
+            db::db_get_project_by_path,
+            db::db_rename_project,
+            db::db_update_project_instructions,
+            db::db_delete_project,
+            // Project detection
+            project::commands::detect_project,
+            project::commands::read_project_instructions,
+            // Mention autocomplete (MON-76)
+            mention::list_paths,
+            // UI state
+            db::db_get_ui_state,
+            db::db_set_ui_state,
+            // Agent stats
+            db::db_get_agent_stats,
+            // Quests (MON-83)
+            db::db_create_quest,
+            db::db_update_quest,
+            db::db_get_quest,
+            db::db_list_quests_for_agent,
+            db::db_get_quest_tree_for_root,
+            db::db_record_quest_event,
+            db::db_list_quest_events,
+            // MON-82
+            db::db_list_classifications_for_agent,
+            db::db_get_classification_for_message,
+            // Toolbox
+            toolbox::toolbox_list_tools,
+            toolbox::placeholder::toolbox_placeholder_ping,
+            // Zoom
+            zoom::set_zoom,
+            // Thinking defaults (MON-78)
+            thinking_config::get_thinking_default,
+            thinking_config::get_thinking_config_path,
+            classifier_config::classifier_get_config,
+            classifier_config::classifier_set_config,
+            classifier_config::classifier_get_config_path,
+            // Memory config + embedding index (MON-99)
+            memory_config::memory_get_config,
+            memory_config::memory_set_config,
+            memory_config::memory_get_config_path,
+            memory_index::memory_index_status,
+            memory_index::memory_download_and_init,
+            memory_search::memory_search_for_agent,
+            memory_smoke::memory_smoke_insert,
+        ])
 }
 
 /// Export the tauri-specta command collection to `src/lib/bindings.ts`.
@@ -164,7 +164,9 @@ pub fn export_bindings() -> Result<(), MonarchError> {
     let output_path = "../src/lib/bindings.ts";
     specta_builder()
         .export(Typescript::default().header(header), output_path)
-        .map_err(|e| MonarchError::persistence(format!("Failed to export TypeScript bindings: {}", e)))?;
+        .map_err(|e| {
+            MonarchError::persistence(format!("Failed to export TypeScript bindings: {}", e))
+        })?;
 
     // Post-process: specta rc.24 emits `serde_json::Value` references as raw
     // Rust type names (`Value`, `Vec<Value>`) instead of translating them to
@@ -207,8 +209,7 @@ pub fn run() {
     }
 
     let database = Arc::new(
-        tauri::async_runtime::block_on(Database::new())
-            .expect("Failed to initialize database"),
+        tauri::async_runtime::block_on(Database::new()).expect("Failed to initialize database"),
     );
     let memory_index = Arc::new({
         let cfg = tauri::async_runtime::block_on(memory_config::resolved());
@@ -260,8 +261,8 @@ pub fn run() {
             persistence::save_agent_prompt,
             persistence::get_prompts_dir,
             persistence::save_avatar_image,
-        persistence::read_avatar_data_url,
-        persistence::read_attachment_data_url,
+            persistence::read_avatar_data_url,
+            persistence::read_attachment_data_url,
             db::db_upsert_agent,
             db::db_update_agent,
             db::db_get_agents,

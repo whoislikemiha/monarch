@@ -102,10 +102,9 @@ impl MonarchError {
             Self::Http(e) => Some(e.to_string()),
             Self::Io(e) => Some(e.to_string()),
             Self::Serde(e) => Some(e.to_string()),
-            Self::Persistence(_)
-            | Self::InvalidInput(_)
-            | Self::NotFound(_)
-            | Self::Lock(_) => None,
+            Self::Persistence(_) | Self::InvalidInput(_) | Self::NotFound(_) | Self::Lock(_) => {
+                None
+            }
         }
     }
 }

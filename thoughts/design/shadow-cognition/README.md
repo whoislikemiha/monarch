@@ -16,6 +16,8 @@ Implementation lives in feature tickets, not here.
 
 4. **[`distillation.md`](./distillation.md)** — The Keeper. Compaction triggers (token threshold, quest end, idle). What gets distilled (events, memories, artifacts, working-memory updates). Three-layer record (raw stream → first-person quest report → third-person atomic claims). Atomic claim definition, types, what to capture, what to exclude. Stale-flagging, multi-shadow project memory, observability, captain edits. *The cognitive metabolism.*
 
+5. **[`roadmap.md`](./roadmap.md)** — Implementation phasing. Turns the idea docs into testable product slices. The P4/P4b split is especially important: P4 is actual executor narration (coherent actions, nested tool calls, L2 current/recent actions); P4b is durable execution plans (intended route, plan item UI, action-to-plan links).
+
 ## What's outside this folder
 
 - **CLAUDE.md / VISION.md / ONBOARDING.md** — current product/architecture documentation. These docs propose evolutions of those.

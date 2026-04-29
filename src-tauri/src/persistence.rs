@@ -51,9 +51,9 @@ pub async fn write_attachment_bytes(
     };
     let filename = format!("{}.{}", uuid::Uuid::new_v4(), ext);
     let dest = attachments_dir().await?.join(filename);
-    tokio::fs::write(&dest, &bytes).await.map_err(|e| {
-        MonarchError::persistence(format!("Failed to write attachment: {}", e))
-    })?;
+    tokio::fs::write(&dest, &bytes)
+        .await
+        .map_err(|e| MonarchError::persistence(format!("Failed to write attachment: {}", e)))?;
     Ok(dest)
 }
 
@@ -62,9 +62,9 @@ pub async fn write_attachment_bytes(
 /// restored chat bubbles) and by session replay (for hydrating image
 /// content blocks back into the prompt the sidecar re-feeds to the LLM).
 pub async fn read_attachment_bytes_base64(path: &str) -> Result<String, MonarchError> {
-    let bytes = tokio::fs::read(path).await.map_err(|e| {
-        MonarchError::persistence(format!("Failed to read attachment: {}", e))
-    })?;
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| MonarchError::persistence(format!("Failed to read attachment: {}", e)))?;
     use base64::Engine;
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
@@ -112,9 +112,9 @@ pub async fn get_prompts_dir() -> Result<String, MonarchError> {
 #[tauri::command]
 #[specta::specta]
 pub async fn read_avatar_data_url(path: String) -> Result<String, MonarchError> {
-    let bytes = tokio::fs::read(&path).await.map_err(|e| {
-        MonarchError::persistence(format!("Failed to read avatar image: {}", e))
-    })?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| MonarchError::persistence(format!("Failed to read avatar image: {}", e)))?;
     let ext = std::path::Path::new(&path)
         .extension()
         .and_then(|e| e.to_str())
@@ -138,9 +138,9 @@ pub async fn read_avatar_data_url(path: String) -> Result<String, MonarchError> 
 #[tauri::command]
 #[specta::specta]
 pub async fn read_attachment_data_url(path: String) -> Result<String, MonarchError> {
-    let bytes = tokio::fs::read(&path).await.map_err(|e| {
-        MonarchError::persistence(format!("Failed to read attachment: {}", e))
-    })?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| MonarchError::persistence(format!("Failed to read attachment: {}", e)))?;
     let ext = std::path::Path::new(&path)
         .extension()
         .and_then(|e| e.to_str())
@@ -169,11 +169,9 @@ pub async fn save_avatar_image(agent_id: String, src_path: String) -> Result<Str
         .and_then(|e| e.to_str())
         .unwrap_or("png")
         .to_lowercase();
-    let dest = avatars_dir()
-        .await?
-        .join(format!("{}.{}", agent_id, ext));
-    tokio::fs::copy(&src, &dest).await.map_err(|e| {
-        MonarchError::persistence(format!("Failed to copy avatar image: {}", e))
-    })?;
+    let dest = avatars_dir().await?.join(format!("{}.{}", agent_id, ext));
+    tokio::fs::copy(&src, &dest)
+        .await
+        .map_err(|e| MonarchError::persistence(format!("Failed to copy avatar image: {}", e)))?;
     Ok(dest.to_string_lossy().to_string())
 }

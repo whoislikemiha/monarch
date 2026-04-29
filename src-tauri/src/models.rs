@@ -263,8 +263,8 @@ struct LmStudioNativeModel {
 /// OpenAI-compatible path — strip a trailing `/v1` so callers can append
 /// either `/v1/models` or `/api/v0/models`.
 fn lmstudio_host_root() -> String {
-    let raw = std::env::var("LMSTUDIO_BASE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:1234".to_string());
+    let raw =
+        std::env::var("LMSTUDIO_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:1234".to_string());
     let trimmed = raw.trim_end_matches('/');
     trimmed
         .strip_suffix("/v1")
@@ -486,12 +486,9 @@ async fn get_models_inner(
         // key and should see why it broke.
         "anthropic" => {
             if let Some(api_key) = env_var_nonempty("ANTHROPIC_API_KEY") {
-                cached_or_fetch(
-                    &cache.anthropic,
-                    "anthropic cache",
-                    force_refresh,
-                    || fetch_anthropic_models(api_key),
-                )
+                cached_or_fetch(&cache.anthropic, "anthropic cache", force_refresh, || {
+                    fetch_anthropic_models(api_key)
+                })
                 .await
             } else {
                 Ok(anthropic_curated())

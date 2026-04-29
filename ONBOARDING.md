@@ -222,12 +222,22 @@ CREATE TABLE quest_nodes (
 );
 
 CREATE TABLE quest_events (
-  id           TEXT PRIMARY KEY,
-  quest_id     TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
-  event_type   TEXT NOT NULL,                    -- status_change | compaction_tick | memory_suggestion | ...
-  actor        TEXT,                             -- role or shadow_id
-  payload_json TEXT,
-  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  id                     TEXT PRIMARY KEY,
+  quest_id               TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
+  event_type             TEXT NOT NULL,          -- coherent_action | tool_call | action_outcome | status_change | ...
+  actor                  TEXT,                   -- concrete writer id/name, usually shadow_id
+  payload_json           TEXT,
+  created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+  parent_event_id        TEXT REFERENCES quest_events(id) ON DELETE CASCADE,
+  author                 TEXT,                   -- executor | chat_shadow | captain | keeper | system
+  surface_override       TEXT,                   -- optional renderer hint
+  payload_schema_version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE agent_working_memory (
+  agent_id     TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+  payload_json TEXT NOT NULL,                    -- L2 v0: current_action, recent_actions, current quest path
+  updated_at   TEXT NOT NULL
 );
 
 -- FK extensions on existing tables. messages.quest_id is still mostly
@@ -240,8 +250,11 @@ CREATE INDEX idx_quest_nodes_root           ON quest_nodes(root_id);
 CREATE INDEX idx_quest_nodes_parent         ON quest_nodes(parent_id);
 CREATE INDEX idx_quest_nodes_assignee_status ON quest_nodes(assignee_shadow_id, status);
 CREATE INDEX idx_quest_events_quest         ON quest_events(quest_id, created_at);
+CREATE INDEX idx_quest_events_parent        ON quest_events(parent_event_id);
 CREATE INDEX idx_messages_quest             ON messages(quest_id);
 ```
+
+`quest_events` is the execution narrative spine. Top-level `coherent_action` events describe what the executor is doing; child `tool_call`, `action_outcome`, and `executor_decision` events attach evidence and decisions to the action. `actor` remains the concrete writer id/name; `author` answers which semantic role wrote the event. `agent_working_memory` stores L2 v0 for fast rehydration (`current_action`, `recent_actions`, current quest path). P4b adds durable `quest_plan_items` plus `quest_events.plan_item_id` so intended plan items can link to actual coherent actions.
 
 ### Session ancestry — the key concept
 
@@ -642,6 +655,8 @@ A quick map of the delta between [VISION.md](./VISION.md) and reality. Not exhau
 | Multi-agent delegation & hierarchy | ❌ | Agents are flat; no parent/child or role-based dispatch. |
 | Tool-call interception & approval flows | ❌ | Events flow through Rust but there's no gate to pause a tool call. Tracked under the *Agent loop* project in Linear. |
 | Memory keeper / layered memory | ⚠️ Partial | P2 substrate, Keeper writes, and user-turn retrieval are wired. Editing, project sharing, reranking/evals, stale-file validation, and polished Inspector workflows remain roadmap work. |
+| Executor narration / L2 working memory | ❌ | P4 roadmap work: explicit narration tools (`set_current_action`, `complete_action`, `record_decision`), nested `quest_events`, `agent_working_memory`, timeline action rendering, and Agent View `Now`/recent-action strip. |
+| Durable execution plans | ❌ | P4b roadmap work: `quest_plan_items`, active/next plan slice in L2, action-to-plan links, and lightweight plan UI. Quests are the canonical work object; plans are intended route; timeline is actual execution. |
 | Context inspector / manipulation UI | ❌ | No way to see what Pi actually has in context. Tracked under *Memory & context tools*. |
 | Time travel / branching UI | ⚠️ Partial | Session ancestry supports branching in the data model, but no UI for rewind/fork. |
 | Headless loop / mobile / remote | ❌ | Tauri desktop only. No web server, no tunnel. |
