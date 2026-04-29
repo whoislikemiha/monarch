@@ -5072,6 +5072,159 @@ pub async fn db_get_working_memory(
     db.get_working_memory_internal(&agent_id).await
 }
 
+// ---- P4b (MON-111): Quest plan items ----
+//
+// Read-only commands and manual-edit write commands. The executor's
+// plan-lifecycle path goes through the sidecar (Slice B) → InnerEvent →
+// PersistCommand pipeline; the captain UI talks to these commands
+// directly. Both end up calling the same `*_internal` methods, so plan
+// state stays consistent across origins.
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_list_plan_items(
+    db: tauri::State<'_, Arc<Database>>,
+    quest_id: String,
+) -> Result<Vec<PlanItemRow>, MonarchError> {
+    db.list_plan_items_internal(&quest_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_get_plan_item(
+    db: tauri::State<'_, Arc<Database>>,
+    item_id: String,
+) -> Result<Option<PlanItemRow>, MonarchError> {
+    db.get_plan_item_internal(&item_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_set_plan(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    payload: SetPlanPayload,
+) -> Result<(), MonarchError> {
+    let notes = db.set_plan_internal(&payload).await?;
+    emit_plan_notifications(&app, &agent_mgr.ws_broadcast, notes);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_add_plan_item(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    payload: AddPlanItemPayload,
+) -> Result<String, MonarchError> {
+    let (id, notes) = db.add_plan_item_internal(&payload).await?;
+    emit_plan_notifications(&app, &agent_mgr.ws_broadcast, notes);
+    Ok(id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_update_plan_item(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    payload: UpdatePlanItemPayload,
+) -> Result<(), MonarchError> {
+    let notes = db.update_plan_item_internal(&payload).await?;
+    emit_plan_notifications(&app, &agent_mgr.ws_broadcast, notes);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_delete_plan_item(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    item_id: String,
+) -> Result<(), MonarchError> {
+    let notes = db.delete_plan_item_internal(&item_id).await?;
+    emit_plan_notifications(&app, &agent_mgr.ws_broadcast, notes);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_start_plan_item(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    item_id: String,
+) -> Result<(), MonarchError> {
+    let notes = db.start_plan_item_internal(&item_id).await?;
+    emit_plan_notifications(&app, &agent_mgr.ws_broadcast, notes);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_complete_plan_item(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    item_id: String,
+    outcome: Option<String>,
+) -> Result<(), MonarchError> {
+    let notes = db
+        .complete_plan_item_internal(&item_id, outcome.as_deref())
+        .await?;
+    emit_plan_notifications(&app, &agent_mgr.ws_broadcast, notes);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_skip_plan_item(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    item_id: String,
+    reason: Option<String>,
+) -> Result<(), MonarchError> {
+    let notes = db
+        .skip_plan_item_internal(&item_id, reason.as_deref())
+        .await?;
+    emit_plan_notifications(&app, &agent_mgr.ws_broadcast, notes);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_block_plan_item(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    item_id: String,
+    reason: String,
+) -> Result<(), MonarchError> {
+    let notes = db.block_plan_item_internal(&item_id, &reason).await?;
+    emit_plan_notifications(&app, &agent_mgr.ws_broadcast, notes);
+    Ok(())
+}
+
+fn emit_plan_notifications(
+    app: &tauri::AppHandle,
+    ws_tx: &tokio::sync::broadcast::Sender<crate::agent::WsBroadcast>,
+    notes: Vec<QuestEventNotification>,
+) {
+    for note in notes {
+        crate::agent::emit_event(
+            app,
+            ws_tx,
+            &format!("quest-event-{}", note.quest_id),
+            &serde_json::json!({ "id": note.event_id, "eventType": note.event_type })
+                .to_string(),
+        );
+    }
+}
+
 // ---- MON-82: Classifications ----
 //
 // Writes are sidecar-originated and flow through the MON-37 persistence
