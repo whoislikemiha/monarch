@@ -20,6 +20,7 @@
   } from "./toolbox/liveAgentStore.svelte";
   import type { LiveAgentState } from "./toolbox/types";
   import { agentStore } from "./stores/agentStore.svelte";
+  import { questStore } from "./toolbox/questStore.svelte";
 
   // Dev-only desync indicator. Opt-in via VITE_MONARCH_DEBUG_DESYNC=true.
   // Rationale: MON-14 Phase 2 is the first time the frontend can observe
@@ -88,6 +89,7 @@
   let boundSessionId: string | undefined = $state(undefined);
   let activationVersion = 0;
   let lightboxSrc = $state<string | null>(null);
+  let questBoundAgentId = "";
 
   // Ephemeral map of sent-with-message images, keyed by the user message's
   // 0-based index among user messages in `items`. Cleared whenever we bind a
@@ -103,9 +105,21 @@
     (boundAgentId && liveAgentStore.byAgent.get(boundAgentId)) || DETACHED_LIVE,
   );
   let classifications = $derived(classifierStore.byAgent.get(agent.id)?.ordinalMap);
+  let questState = $derived(
+    boundAgentId ? (questStore.byAgent.get(boundAgentId) ?? null) : null,
+  );
+  let workingMemory = $derived(questState?.workingMemory ?? null);
 
   $effect(() => {
     classifierStore.ensure(agent.id);
+  });
+
+  $effect(() => {
+    if (boundAgentId && boundAgentId !== questBoundAgentId) {
+      questBoundAgentId = boundAgentId;
+      questStore.ensure(boundAgentId);
+      questStore.refresh(boundAgentId);
+    }
   });
 
   export function focusInput() {
@@ -702,6 +716,30 @@
           onimageclick={(src) => (lightboxSrc = src)}
         />
 
+        {#if workingMemory?.currentAction || workingMemory?.recentActions.length}
+          <div class="now-strip">
+            {#if workingMemory.currentAction}
+              <div class="now-current">
+                <span class="now-label">Now</span>
+                <span class="now-text">{workingMemory.currentAction.intent}</span>
+                {#if workingMemory.currentQuestPath.length}
+                  <span class="now-path">{workingMemory.currentQuestPath.join(" / ")}</span>
+                {/if}
+              </div>
+            {/if}
+            {#if workingMemory.recentActions.length}
+              <div class="now-recent">
+                {#each workingMemory.recentActions.slice(-3).reverse() as action (action.eventId)}
+                  <div class="recent-action" title={action.outcome}>
+                    <span class="recent-dot" class:auto={action.autoClosed}></span>
+                    <span class="recent-text">{action.intent}</span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+
         {#if agent.status === "stopped" && !isStandby}
           <div class="exit-banner">
             <span>Agent stopped</span>
@@ -1201,6 +1239,93 @@
     font-size: 11px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     opacity: 0.7;
+  }
+
+  .now-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 12px 0 4px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: var(--bg-panel-2);
+    font-size: 11px;
+  }
+
+  .now-current {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .now-label {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    color: var(--accent);
+    font-size: 9px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .now-text {
+    min-width: 0;
+    color: var(--text-primary);
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
+  .now-path {
+    flex-shrink: 1;
+    min-width: 80px;
+    color: var(--text-muted);
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .now-recent {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .recent-action {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    max-width: 260px;
+    padding: 2px 6px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    background: var(--bg-panel);
+    color: var(--text-secondary);
+    font-size: 10px;
+  }
+
+  .recent-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #4da36b;
+    flex-shrink: 0;
+  }
+
+  .recent-dot.auto {
+    background: #c45a5a;
+  }
+
+  .recent-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   @keyframes pulse {

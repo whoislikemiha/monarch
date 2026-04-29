@@ -5,6 +5,7 @@ import type {
   QuestEventRow,
   QuestRow,
   UpdateQuestPayload,
+  WorkingMemoryPayload,
 } from "../bindings";
 
 /**
@@ -28,6 +29,8 @@ export interface AgentQuestState {
   eventsByQuest: SvelteMap<string, QuestEventRow[]>;
   /** Quest ids currently expanded inline in the timeline view. */
   expandedQuestIds: SvelteSet<string>;
+  /** L2 v0: current action + recent actions for quick "what now?" UI. */
+  workingMemory: WorkingMemoryPayload | null;
   /** True while the create-quest form is visible. */
   creating: boolean;
   /** Optional parent id preselected when opening the create form. */
@@ -56,6 +59,7 @@ class QuestStore {
       treesByRoot: new SvelteMap(),
       eventsByQuest: new SvelteMap(),
       expandedQuestIds: new SvelteSet(),
+      workingMemory: null,
       creating: false,
       creatingParentId: null,
       loading: false,
@@ -78,6 +82,10 @@ class QuestStore {
       const all = await invoke<QuestRow[]>("db_list_quests_for_agent", {
         agentId,
       });
+      entry.workingMemory = await invoke<WorkingMemoryPayload | null>(
+        "db_get_working_memory",
+        { agentId },
+      );
       // Keep only roots (parent_id null) in the timeline header list.
       const roots = all.filter((q) => q.parentId === null);
       entry.roots = roots;
@@ -131,6 +139,18 @@ class QuestStore {
       });
       entry.eventsByQuest.set(questId, events);
       return; // only need to write once; the Map lookup is shared via reference
+    }
+  }
+
+  async refreshWorkingMemory(agentId: string): Promise<void> {
+    const entry = this.ensure(agentId);
+    try {
+      entry.workingMemory = await invoke<WorkingMemoryPayload | null>(
+        "db_get_working_memory",
+        { agentId },
+      );
+    } catch (e) {
+      entry.error = String(e);
     }
   }
 
@@ -191,19 +211,35 @@ class QuestStore {
         this.refresh(entry.agentId),
       ),
     );
+    const questIds = new Set<string>();
+    for (const tree of entry.treesByRoot.values()) {
+      for (const quest of tree) questIds.add(quest.id);
+    }
+    for (const root of entry.roots) questIds.add(root.id);
+
     for (const root of entry.roots) {
       subs.unlisten.push(
         listen<string>(`quest-updated-${root.id}`, () =>
           this.refresh(entry.agentId),
         ),
-        listen<string>(`quest-event-${root.id}`, () => {
-          // Events on a root: invalidate that root's event cache.
-          entry.eventsByQuest.delete(root.id);
-          if (entry.expandedQuestIds.has(root.id)) {
-            this.loadEvents(root.id).catch((e) => {
+      );
+    }
+
+    for (const questId of questIds) {
+      subs.unlisten.push(
+        listen<string>(`quest-event-${questId}`, () => {
+          // Events on any visible quest: invalidate that quest's event cache
+          // and refresh L2, because current/recent action pointers are updated
+          // by the same persistence path.
+          entry.eventsByQuest.delete(questId);
+          if (entry.expandedQuestIds.has(questId)) {
+            this.loadEvents(questId).catch((e) => {
               entry.error = String(e);
             });
           }
+          this.refreshWorkingMemory(entry.agentId).catch((e) => {
+            entry.error = String(e);
+          });
         }),
       );
     }

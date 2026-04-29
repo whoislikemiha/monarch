@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ToolProps } from "../types";
-  import type { QuestRow } from "../../bindings";
+  import type { QuestEventRow, QuestRow } from "../../bindings";
   import { questStore } from "../questStore.svelte";
   import ShadowAvatar from "../../avatar/ShadowAvatar.svelte";
 
@@ -216,6 +216,103 @@
   function formatTrigger(trigger: string): string {
     return trigger === "quest_close" ? "quest close" : "continuous";
   }
+
+  interface ActionPayload {
+    intent: string;
+    status: string;
+    outcome: string;
+  }
+  interface ToolCallPayload {
+    toolName: string;
+    status: string;
+    argsPreview: string;
+    resultPreview: string;
+    durationMs: number | null;
+    isError: boolean;
+  }
+  interface OutcomePayload {
+    outcome: string;
+    autoClosed: boolean;
+  }
+  interface DecisionPayload {
+    decision: string;
+    rationale: string;
+  }
+  interface EventNode {
+    event: QuestEventRow;
+    children: QuestEventRow[];
+  }
+
+  function parsePayload(raw: string | null): Record<string, unknown> {
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function eventTree(events: QuestEventRow[]): EventNode[] {
+    const childrenByParent = new Map<string, QuestEventRow[]>();
+    const roots: QuestEventRow[] = [];
+    for (const ev of events) {
+      if (ev.parentEventId) {
+        const list = childrenByParent.get(ev.parentEventId) ?? [];
+        list.push(ev);
+        childrenByParent.set(ev.parentEventId, list);
+      } else {
+        roots.push(ev);
+      }
+    }
+    return roots.map((event) => ({
+      event,
+      children: childrenByParent.get(event.id) ?? [],
+    }));
+  }
+
+  function actionPayload(raw: string | null): ActionPayload {
+    const obj = parsePayload(raw);
+    return {
+      intent: typeof obj.intent === "string" ? obj.intent : "",
+      status: typeof obj.status === "string" ? obj.status : "",
+      outcome: typeof obj.outcome === "string" ? obj.outcome : "",
+    };
+  }
+
+  function toolCallPayload(raw: string | null): ToolCallPayload {
+    const obj = parsePayload(raw);
+    return {
+      toolName: typeof obj.tool_name === "string" ? obj.tool_name : "tool",
+      status: typeof obj.status === "string" ? obj.status : "",
+      argsPreview: typeof obj.args_preview === "string" ? obj.args_preview : "",
+      resultPreview: typeof obj.result_preview === "string" ? obj.result_preview : "",
+      durationMs: typeof obj.duration_ms === "number" ? obj.duration_ms : null,
+      isError: obj.is_error === true,
+    };
+  }
+
+  function outcomePayload(raw: string | null): OutcomePayload {
+    const obj = parsePayload(raw);
+    return {
+      outcome: typeof obj.outcome === "string" ? obj.outcome : "",
+      autoClosed: obj.auto_closed === true,
+    };
+  }
+
+  function decisionPayload(raw: string | null): DecisionPayload {
+    const obj = parsePayload(raw);
+    return {
+      decision: typeof obj.decision === "string" ? obj.decision : "",
+      rationale: typeof obj.rationale === "string" ? obj.rationale : "",
+    };
+  }
+
+  function durationLabel(ms: number | null): string {
+    if (ms == null) return "";
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
+  }
 </script>
 
 <div class="quest-tool">
@@ -396,14 +493,84 @@
                     {#if quest.description}
                       <p class="description">{quest.description}</p>
                     {/if}
-	                    <div class="event-log">
-	                      <div class="log-title">Event log</div>
-	                      {#if events.length === 0}
-	                        <div class="muted small">No events.</div>
-	                      {:else}
-	                        {#each events as ev (ev.id)}
-	                          {#if ev.eventType === "compaction_tick"}
-	                            {@const cp = parseCompactionPayload(ev.payloadJson)}
+                    <div class="event-log">
+                      <div class="log-title">Event log</div>
+                      {#if events.length === 0}
+                        <div class="muted small">No events.</div>
+                      {:else}
+                        {#each eventTree(events) as node (node.event.id)}
+                          {@const ev = node.event}
+                          {#if ev.eventType === "coherent_action"}
+                            {@const action = actionPayload(ev.payloadJson)}
+                            <div class="event-row action-row">
+                              <span class="action-icon" title="Coherent action">◆</span>
+                              <span class="event-type action-type">{action.intent || "Current action"}</span>
+                              {#if action.status}
+                                <span class="status-chip status-{action.status}">{action.status}</span>
+                              {/if}
+                              <span class="muted small">{formatRelative(ev.createdAt)}</span>
+                            </div>
+                            {#if action.outcome}
+                              <div class="action-outcome-inline">{action.outcome}</div>
+                            {/if}
+                            {#if node.children.length}
+                              <div class="event-children">
+                                {#each node.children as child (child.id)}
+                                  {#if child.eventType === "tool_call"}
+                                    {@const tool = toolCallPayload(child.payloadJson)}
+                                    <div class="event-row child-row tool-row" class:error={tool.isError}>
+                                      <span class="child-marker"></span>
+                                      <span class="event-type">{tool.toolName}</span>
+                                      {#if tool.status}
+                                        <span class="status-chip status-{tool.status}">{tool.status}</span>
+                                      {/if}
+                                      {#if tool.durationMs != null}
+                                        <span class="muted small">{durationLabel(tool.durationMs)}</span>
+                                      {/if}
+                                    </div>
+                                    {#if tool.argsPreview || tool.resultPreview}
+                                      <div class="child-summary">
+                                        {#if tool.argsPreview}<span>{tool.argsPreview}</span>{/if}
+                                        {#if tool.resultPreview}<span>{tool.resultPreview}</span>{/if}
+                                      </div>
+                                    {/if}
+                                  {:else if child.eventType === "action_outcome"}
+                                    {@const outcome = outcomePayload(child.payloadJson)}
+                                    <div class="event-row child-row outcome-row">
+                                      <span class="child-marker"></span>
+                                      <span class="event-type">outcome</span>
+                                      {#if outcome.autoClosed}
+                                        <span class="status-chip status-auto_closed">auto</span>
+                                      {/if}
+                                      <span class="muted small">{formatRelative(child.createdAt)}</span>
+                                    </div>
+                                    <div class="child-summary">{outcome.outcome || "(no outcome)"}</div>
+                                  {:else if child.eventType === "executor_decision"}
+                                    {@const decision = decisionPayload(child.payloadJson)}
+                                    <div class="event-row child-row decision-row">
+                                      <span class="child-marker"></span>
+                                      <span class="event-type">decision</span>
+                                      <span class="muted small">{formatRelative(child.createdAt)}</span>
+                                    </div>
+                                    <div class="child-summary">
+                                      <span>{decision.decision || "(decision)"}</span>
+                                      {#if decision.rationale}<span>{decision.rationale}</span>{/if}
+                                    </div>
+                                  {:else}
+                                    <div class="event-row child-row">
+                                      <span class="child-marker"></span>
+                                      <span class="event-type">{child.eventType}</span>
+                                      <span class="muted small">{formatRelative(child.createdAt)}</span>
+                                    </div>
+                                    {#if child.payloadJson}
+                                      <pre class="event-payload child-payload">{child.payloadJson}</pre>
+                                    {/if}
+                                  {/if}
+                                {/each}
+                              </div>
+                            {/if}
+                          {:else if ev.eventType === "compaction_tick"}
+                            {@const cp = parseCompactionPayload(ev.payloadJson)}
                             <div class="event-row compaction-row">
                               <span class="compaction-icon" title="Keeper compaction tick">◈</span>
                               <span class="event-type compaction-type">
@@ -422,45 +589,45 @@
                               <div class="compaction-meta muted small">
                                 run #{cp.keeperRunId ?? "?"}
                               </div>
-	                            {:else if ev.payloadJson}
-	                              <pre class="event-payload">{ev.payloadJson}</pre>
-	                            {/if}
-	                          {:else if ev.eventType === "memory_suggestion"}
-	                            {@const suggestion = parseMemorySuggestionPayload(ev.payloadJson)}
-	                            <div class="event-row memory-suggestion-row">
-	                              <span class="memory-suggestion-icon" title="Executor memory suggestion">◇</span>
-	                              <span class="event-type memory-suggestion-type">memory suggestion</span>
-	                              <span class="muted small">{ev.actor ?? "—"}</span>
-	                              <span class="muted small">{formatRelative(ev.createdAt)}</span>
-	                            </div>
-	                            {#if suggestion}
-	                              <div class="memory-suggestion-card">
-	                                <div class="memory-suggestion-title">{suggestion.title || "(untitled)"}</div>
-	                                {#if suggestion.summary}
-	                                  <div class="memory-suggestion-summary">{suggestion.summary}</div>
-	                                {/if}
-	                                {#if suggestion.content}
-	                                  <details class="memory-suggestion-details">
-	                                    <summary>Details</summary>
-	                                    <div>{suggestion.content}</div>
-	                                  </details>
-	                                {/if}
-	                              </div>
-	                            {:else if ev.payloadJson}
-	                              <pre class="event-payload">{ev.payloadJson}</pre>
-	                            {/if}
-	                          {:else}
-	                            <div class="event-row">
-	                              <span class="event-type">{ev.eventType}</span>
-	                              <span class="muted small">{ev.actor ?? "—"}</span>
-	                              <span class="muted small">{formatRelative(ev.createdAt)}</span>
-	                            </div>
-	                            {#if ev.payloadJson}
-	                              <pre class="event-payload">{ev.payloadJson}</pre>
-	                            {/if}
-	                          {/if}
-	                        {/each}
-	                      {/if}
+                            {:else if ev.payloadJson}
+                              <pre class="event-payload">{ev.payloadJson}</pre>
+                            {/if}
+                          {:else if ev.eventType === "memory_suggestion"}
+                            {@const suggestion = parseMemorySuggestionPayload(ev.payloadJson)}
+                            <div class="event-row memory-suggestion-row">
+                              <span class="memory-suggestion-icon" title="Executor memory suggestion">◇</span>
+                              <span class="event-type memory-suggestion-type">memory suggestion</span>
+                              <span class="muted small">{ev.actor ?? "—"}</span>
+                              <span class="muted small">{formatRelative(ev.createdAt)}</span>
+                            </div>
+                            {#if suggestion}
+                              <div class="memory-suggestion-card">
+                                <div class="memory-suggestion-title">{suggestion.title || "(untitled)"}</div>
+                                {#if suggestion.summary}
+                                  <div class="memory-suggestion-summary">{suggestion.summary}</div>
+                                {/if}
+                                {#if suggestion.content}
+                                  <details class="memory-suggestion-details">
+                                    <summary>Details</summary>
+                                    <div>{suggestion.content}</div>
+                                  </details>
+                                {/if}
+                              </div>
+                            {:else if ev.payloadJson}
+                              <pre class="event-payload">{ev.payloadJson}</pre>
+                            {/if}
+                          {:else}
+                            <div class="event-row">
+                              <span class="event-type">{ev.eventType}</span>
+                              <span class="muted small">{ev.actor ?? "—"}</span>
+                              <span class="muted small">{formatRelative(ev.createdAt)}</span>
+                            </div>
+                            {#if ev.payloadJson}
+                              <pre class="event-payload">{ev.payloadJson}</pre>
+                            {/if}
+                          {/if}
+                        {/each}
+                      {/if}
                     </div>
                     <div class="detail-actions">
                       {#if quest.status !== "done"}
@@ -784,6 +951,103 @@
     border-radius: 3px;
     white-space: pre-wrap;
     word-break: break-all;
+  }
+
+  .action-row {
+    align-items: flex-start;
+    padding: 4px 0;
+  }
+  .action-icon {
+    color: var(--accent);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .action-type {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-weight: 600;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .status-chip {
+    flex-shrink: 0;
+    padding: 1px 5px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    color: var(--text-muted);
+    font-size: 9px;
+    line-height: 1.2;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+  .status-active,
+  .status-running {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-bg-subtle);
+  }
+  .status-completed,
+  .status-done {
+    border-color: #4da36b;
+    color: #4da36b;
+    background: rgba(77, 163, 107, 0.1);
+  }
+  .status-error,
+  .status-auto_closed {
+    border-color: #c45a5a;
+    color: #c45a5a;
+    background: rgba(196, 90, 90, 0.1);
+  }
+  .action-outcome-inline {
+    margin: 0 0 2px 18px;
+    color: var(--text-secondary);
+    font-size: 10px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .event-children {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0 0 4px 18px;
+    padding-left: 10px;
+    border-left: 1px solid var(--border-subtle);
+  }
+  .child-row {
+    min-height: 18px;
+  }
+  .child-marker {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .tool-row.error .child-marker {
+    background: #c45a5a;
+  }
+  .outcome-row .child-marker {
+    background: #4da36b;
+  }
+  .decision-row .child-marker {
+    background: #d6a84d;
+  }
+  .child-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-left: 11px;
+    padding: 3px 6px;
+    border-radius: 3px;
+    background: var(--bg-sidebar);
+    color: var(--text-secondary);
+    font-size: 9px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .child-payload {
+    margin-left: 11px;
   }
 
   /* MON-100: compaction_tick visual treatment. Subtle accent border +
