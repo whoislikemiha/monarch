@@ -213,8 +213,16 @@
     }
   }
 
-  function formatTrigger(trigger: string): string {
-    return trigger === "quest_close" ? "quest close" : "continuous";
+  function keeperLabel(trigger: string): string {
+    if (trigger === "quest_close") return "Keeper quest close";
+    if (trigger === "continuous") return "Keeper checkpoint";
+    return "Keeper note";
+  }
+
+  function keeperHint(trigger: string): string {
+    if (trigger === "quest_close") return "Summary produced when the quest was marked done.";
+    if (trigger === "continuous") return "Background memory checkpoint from context compaction.";
+    return "Keeper memory summary.";
   }
 
   interface ActionPayload {
@@ -502,18 +510,28 @@
                           {@const ev = node.event}
                           {#if ev.eventType === "coherent_action"}
                             {@const action = actionPayload(ev.payloadJson)}
-                            <div class="event-row action-row">
+                            {@const actionOpen = questState.expandedEventIds.has(ev.id)}
+                            <button
+                              type="button"
+                              class="event-row event-toggle action-row"
+                              onclick={() => questStore.toggleEventExpand(agentContext.agentId, ev.id)}
+                              aria-expanded={actionOpen}
+                            >
+                              <span class="event-disclosure">{actionOpen ? "▾" : "▸"}</span>
                               <span class="action-icon" title="Coherent action">◆</span>
                               <span class="event-type action-type">{action.intent || "Current action"}</span>
                               {#if action.status}
                                 <span class="status-chip status-{action.status}">{action.status}</span>
                               {/if}
+                              {#if node.children.length}
+                                <span class="child-count">{node.children.length}</span>
+                              {/if}
                               <span class="muted small">{formatRelative(ev.createdAt)}</span>
-                            </div>
+                            </button>
                             {#if action.outcome}
                               <div class="action-outcome-inline">{action.outcome}</div>
                             {/if}
-                            {#if node.children.length}
+                            {#if actionOpen && node.children.length}
                               <div class="event-children">
                                 {#each node.children as child (child.id)}
                                   {#if child.eventType === "tool_call"}
@@ -529,10 +547,13 @@
                                       {/if}
                                     </div>
                                     {#if tool.argsPreview || tool.resultPreview}
-                                      <div class="child-summary">
-                                        {#if tool.argsPreview}<span>{tool.argsPreview}</span>{/if}
-                                        {#if tool.resultPreview}<span>{tool.resultPreview}</span>{/if}
-                                      </div>
+                                      <details class="child-details">
+                                        <summary>details</summary>
+                                        <div class="child-summary">
+                                          {#if tool.argsPreview}<span>{tool.argsPreview}</span>{/if}
+                                          {#if tool.resultPreview}<span>{tool.resultPreview}</span>{/if}
+                                        </div>
+                                      </details>
                                     {/if}
                                   {:else if child.eventType === "action_outcome"}
                                     {@const outcome = outcomePayload(child.payloadJson)}
@@ -571,10 +592,18 @@
                             {/if}
                           {:else if ev.eventType === "compaction_tick"}
                             {@const cp = parseCompactionPayload(ev.payloadJson)}
-                            <div class="event-row compaction-row">
+                            {@const keeperOpen = questState.expandedEventIds.has(ev.id)}
+                            <button
+                              type="button"
+                              class="event-row event-toggle compaction-row"
+                              onclick={() => questStore.toggleEventExpand(agentContext.agentId, ev.id)}
+                              aria-expanded={keeperOpen}
+                              title={cp ? keeperHint(cp.trigger) : "Keeper memory summary"}
+                            >
+                              <span class="event-disclosure">{keeperOpen ? "▾" : "▸"}</span>
                               <span class="compaction-icon" title="Keeper compaction tick">◈</span>
                               <span class="event-type compaction-type">
-                                {cp ? formatTrigger(cp.trigger) : "compaction"}
+                                {cp ? keeperLabel(cp.trigger) : "Keeper summary"}
                               </span>
                               <span class="muted small">{ev.actor ?? "—"}</span>
                               <span class="muted small">{formatRelative(ev.createdAt)}</span>
@@ -583,13 +612,13 @@
                                   +{cp.claimsCount} {cp.claimsCount === 1 ? "claim" : "claims"}
                                 </span>
                               {/if}
-                            </div>
-                            {#if cp}
+                            </button>
+                            {#if keeperOpen && cp}
                               <div class="compaction-summary">{cp.summary || "(no summary returned)"}</div>
                               <div class="compaction-meta muted small">
                                 run #{cp.keeperRunId ?? "?"}
                               </div>
-                            {:else if ev.payloadJson}
+                            {:else if keeperOpen && ev.payloadJson}
                               <pre class="event-payload">{ev.payloadJson}</pre>
                             {/if}
                           {:else if ev.eventType === "memory_suggestion"}
@@ -937,6 +966,25 @@
     gap: 6px;
     font-size: 10px;
   }
+  .event-toggle {
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .event-toggle:hover {
+    background: var(--bg-panel-2);
+  }
+  .event-disclosure {
+    width: 10px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+    font-size: 9px;
+    text-align: center;
+  }
   .event-type {
     color: var(--text-primary);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
@@ -956,6 +1004,7 @@
   .action-row {
     align-items: flex-start;
     padding: 4px 0;
+    border-radius: 4px;
   }
   .action-icon {
     color: var(--accent);
@@ -979,6 +1028,18 @@
     color: var(--text-muted);
     font-size: 9px;
     line-height: 1.2;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+  .child-count {
+    flex-shrink: 0;
+    min-width: 16px;
+    padding: 1px 5px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    color: var(--text-muted);
+    font-size: 9px;
+    line-height: 1.2;
+    text-align: center;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
   .status-active,
@@ -1046,6 +1107,19 @@
     line-height: 1.4;
     overflow-wrap: anywhere;
   }
+  .child-details {
+    margin-left: 11px;
+  }
+  .child-details summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 9px;
+    line-height: 1.4;
+    user-select: none;
+  }
+  .child-details .child-summary {
+    margin: 2px 0 0;
+  }
   .child-payload {
     margin-left: 11px;
   }
@@ -1054,7 +1128,8 @@
      dedicated icon set this kind of event apart from quest-status events
      without making it loud. */
   .compaction-row {
-    padding-left: 0;
+    padding: 3px 0;
+    border-radius: 4px;
   }
   .compaction-icon {
     color: var(--accent);

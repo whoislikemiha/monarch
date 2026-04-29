@@ -29,6 +29,8 @@ export interface AgentQuestState {
   eventsByQuest: SvelteMap<string, QuestEventRow[]>;
   /** Quest ids currently expanded inline in the timeline view. */
   expandedQuestIds: SvelteSet<string>;
+  /** Quest event ids expanded inside an open quest. */
+  expandedEventIds: SvelteSet<string>;
   /** L2 v0: current action + recent actions for quick "what now?" UI. */
   workingMemory: WorkingMemoryPayload | null;
   /** True while the create-quest form is visible. */
@@ -60,6 +62,7 @@ class QuestStore {
       treesByRoot: new SvelteMap(),
       eventsByQuest: new SvelteMap(),
       expandedQuestIds: new SvelteSet(),
+      expandedEventIds: new SvelteSet(),
       workingMemory: null,
       creating: false,
       creatingParentId: null,
@@ -171,6 +174,15 @@ class QuestStore {
           entry.error = String(e);
         });
       }
+    }
+  }
+
+  toggleEventExpand(agentId: string, eventId: string): void {
+    const entry = this.ensure(agentId);
+    if (entry.expandedEventIds.has(eventId)) {
+      entry.expandedEventIds.delete(eventId);
+    } else {
+      entry.expandedEventIds.add(eventId);
     }
   }
 
