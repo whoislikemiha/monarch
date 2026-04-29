@@ -107,7 +107,7 @@ Each event kind has a default surface:
 | `scope_change`, `direction_change`, `subtask_added` | timeline | Quest changes are work |
 | `note` | timeline | Free-form context |
 | `forked`, `merged` | timeline | Branch points |
-| `executor_action_outcome` | timeline | One-line closure of an action |
+| `action_outcome` | timeline | One-line closure of an action |
 | `paused_by_chat`, `resumed_by_chat`, `stopped_by_chat` | timeline | Control-plane |
 
 Surface is derived from kind by default; an event can carry an explicit `surface_override` if needed.
@@ -158,7 +158,7 @@ The rich set of typed events that can appear on a quest. Each event has: `id`, `
 **Executor activity (timeline):**
 - `coherent_action` — declared intent, parent of nested tool calls.
 - `tool_call` — single tool invocation with args + result.
-- `executor_action_outcome` — closure of a coherent action.
+- `action_outcome` — closure of a coherent action.
 - `executor_decision` — explicit decision the executor made, with optional rationale.
 
 Raw model thinking is not persisted as quest timeline content in v1. If rationale matters, the shadow records an explicit `executor_decision`; otherwise the action intent, tool children, and outcome are the narrative.

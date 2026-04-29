@@ -107,7 +107,7 @@ The executor runs continuously while a quest is active and not paused. Between c
 
 5. **Execute the chunk.** Run tool calls. Each non-narration tool is nested under the coherent action by `parent_event_id`.
 
-6. **Close or transition.** Call `complete_action(outcome)` if done without immediately starting another action, or provide `previous_outcome` on the next `set_current_action`. Rust writes an `executor_action_outcome`, clears/updates `current_action`, and appends to `recent_actions`.
+6. **Close or transition.** Call `complete_action(outcome)` if done without immediately starting another action, or provide `previous_outcome` on the next `set_current_action`. Rust writes an `action_outcome`, clears/updates `current_action`, and appends to `recent_actions`.
 
 7. **Loop.** Back to step 1.
 

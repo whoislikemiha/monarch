@@ -655,7 +655,7 @@ A quick map of the delta between [VISION.md](./VISION.md) and reality. Not exhau
 | Multi-agent delegation & hierarchy | ❌ | Agents are flat; no parent/child or role-based dispatch. |
 | Tool-call interception & approval flows | ❌ | Events flow through Rust but there's no gate to pause a tool call. Tracked under the *Agent loop* project in Linear. |
 | Memory keeper / layered memory | ⚠️ Partial | P2 substrate, Keeper writes, and user-turn retrieval are wired. Editing, project sharing, reranking/evals, stale-file validation, and polished Inspector workflows remain roadmap work. |
-| Executor narration / L2 working memory | ❌ | P4 roadmap work: explicit narration tools (`set_current_action`, `complete_action`, `record_decision`), nested `quest_events`, `agent_working_memory`, timeline action rendering, and Agent View `Now`/recent-action strip. |
+| Executor narration / L2 working memory | ⚠️ Partial | Backend substrate and sidecar narration tools are wired. Timeline action rendering and Agent View `Now`/recent-action strip remain P4 UI work. |
 | Durable execution plans | ❌ | P4b roadmap work: `quest_plan_items`, active/next plan slice in L2, action-to-plan links, and lightweight plan UI. Quests are the canonical work object; plans are intended route; timeline is actual execution. |
 | Context inspector / manipulation UI | ❌ | No way to see what Pi actually has in context. Tracked under *Memory & context tools*. |
 | Time travel / branching UI | ⚠️ Partial | Session ancestry supports branching in the data model, but no UI for rewind/fork. |

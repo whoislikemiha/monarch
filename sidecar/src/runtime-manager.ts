@@ -16,6 +16,7 @@ import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import { Type, type Api, type ImageContent, type Model, type TextContent } from "@mariozechner/pi-ai";
 import { buildSystemPrompt } from "./shadow-oath.js";
 import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
+import { createNarrationTools } from "./narration-tools.js";
 import type {
 	ClassifierInvocation,
 	CreateSessionCommand,
@@ -376,7 +377,10 @@ export class RuntimeManager {
 			thinkingLevel: initialLevel,
 			sessionManager: SessionManager.inMemory(cmd.cwd),
 			resourceLoader,
-			customTools: [createSuggestMemoryTool(cmd.agentId, this.emit)],
+			customTools: [
+				createSuggestMemoryTool(cmd.agentId, this.emit),
+				...createNarrationTools(cmd.agentId, this.emit),
+			],
 		});
 
 		if (cmd.provider === "lmstudio") {
