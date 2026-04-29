@@ -3827,10 +3827,10 @@ impl Database {
     }
 
     /// Resolve the agent's current active plan item — the row whose
-    /// `status = 'active'` on the agent's `current_quest_id`. Used by the
+    /// `status = 'active'` on the agent's L2 `currentQuestId`. Used by the
     /// persist pipeline when a sidecar plan-lifecycle event arrives
     /// without an explicit item id (the executor tool implicitly targets
-    /// the active item). Returns `None` if the agent has no current
+    /// the active item). Returns `None` if the agent's L2 has no current
     /// quest, or if no item is active on it.
     pub async fn get_active_plan_item_for_agent_internal(
         &self,
@@ -3843,8 +3843,9 @@ impl Database {
                 let item: Option<String> = conn
                     .query_row(
                         "SELECT pi.id FROM quest_plan_items pi
-                         INNER JOIN agents a ON a.current_quest_id = pi.quest_id
-                         WHERE a.id = ?1 AND pi.status = 'active'
+                         INNER JOIN agent_working_memory w
+                            ON json_extract(w.payload_json, '$.currentQuestId') = pi.quest_id
+                         WHERE w.agent_id = ?1 AND pi.status = 'active'
                          ORDER BY pi.order_index ASC
                          LIMIT 1",
                         params![agent_id],
@@ -4498,10 +4499,10 @@ fn recompute_plan_slice_tx(
 }
 
 /// If any agent's L2 currently points at this quest, recompute its plan
-/// slice and write it back. Per-quest assignee is the canonical owner of
-/// the L2 row, but we look up by `current_quest_id` to remain consistent
-/// with how MON-107 keeps L2 in sync — the action transition path also
-/// writes via the agent whose L2 already names the quest.
+/// slice and write it back. We filter by the L2 payload's own
+/// `currentQuestId` (not `agents.current_quest_id`) because action
+/// transitions update L2 directly and the column-side pointer can lag —
+/// L2 is the authoritative live state for which quest a shadow is on.
 fn sync_plan_l2_tx(
     tx: &rusqlite::Transaction<'_>,
     quest_id: &str,
@@ -4509,9 +4510,8 @@ fn sync_plan_l2_tx(
 ) -> rusqlite::Result<()> {
     let agent_ids: Vec<String> = {
         let mut stmt = tx.prepare(
-            "SELECT a.id FROM agents a
-             INNER JOIN agent_working_memory w ON w.agent_id = a.id
-             WHERE a.current_quest_id = ?1",
+            "SELECT agent_id FROM agent_working_memory
+             WHERE json_extract(payload_json, '$.currentQuestId') = ?1",
         )?;
         let rows = stmt
             .query_map(params![quest_id], |row| row.get::<_, String>(0))?
@@ -5441,5 +5441,386 @@ mod tests {
         assert_eq!(payload["tool_call_id"], "tc-1");
         assert_eq!(payload["status"], "done");
         assert_eq!(payload["duration_ms"], 123);
+    }
+
+    // ---- P4b (MON-111) plan lifecycle tests ----
+
+    fn plan_input(title: &str) -> PlanItemInput {
+        PlanItemInput {
+            id: None,
+            title: title.to_string(),
+            rationale: None,
+            status: None,
+            parent_id: None,
+        }
+    }
+
+    async fn seed_plan(db: &Database, quest_id: &str, titles: &[&str]) -> Vec<String> {
+        let payload = SetPlanPayload {
+            quest_id: quest_id.to_string(),
+            items: titles.iter().map(|t| plan_input(t)).collect(),
+            created_by: Some("captain".to_string()),
+            rationale: None,
+        };
+        db.set_plan_internal(&payload).await.expect("set plan");
+        let items = db
+            .list_plan_items_internal(quest_id)
+            .await
+            .expect("list items");
+        items.into_iter().map(|i| i.id).collect()
+    }
+
+    #[tokio::test]
+    async fn set_plan_inserts_ordered_items_and_emits_plan_created() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (_, quest_id) = seed_agent_and_quest(&db).await;
+
+        db.set_plan_internal(&SetPlanPayload {
+            quest_id: quest_id.clone(),
+            items: vec![plan_input("inspect auth flow"), plan_input("patch handler")],
+            created_by: Some("captain".to_string()),
+            rationale: Some("expiry redirect bug".to_string()),
+        })
+        .await
+        .expect("set plan");
+
+        let items = db.list_plan_items_internal(&quest_id).await.expect("list");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "inspect auth flow");
+        assert_eq!(items[0].order_index, 0);
+        assert_eq!(items[0].status, "pending");
+        assert_eq!(items[1].title, "patch handler");
+        assert_eq!(items[1].order_index, 1);
+
+        let events = db
+            .list_quest_events_internal(&quest_id)
+            .await
+            .expect("events");
+        let plan_events: Vec<_> = events
+            .iter()
+            .filter(|ev| ev.event_type == "plan_created")
+            .collect();
+        assert_eq!(plan_events.len(), 1, "exactly one plan_created event");
+    }
+
+    #[tokio::test]
+    async fn set_plan_replaces_existing_items_and_emits_plan_changed() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (_, quest_id) = seed_agent_and_quest(&db).await;
+        let ids = seed_plan(&db, &quest_id, &["A", "B", "C"]).await;
+
+        // Keep B (by id), drop A and C, add a new D at the end.
+        db.set_plan_internal(&SetPlanPayload {
+            quest_id: quest_id.clone(),
+            items: vec![
+                PlanItemInput {
+                    id: Some(ids[1].clone()),
+                    title: "B".to_string(),
+                    rationale: None,
+                    status: None,
+                    parent_id: None,
+                },
+                plan_input("D"),
+            ],
+            created_by: Some("captain".to_string()),
+            rationale: None,
+        })
+        .await
+        .expect("replace");
+
+        let items = db.list_plan_items_internal(&quest_id).await.expect("list");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].id, ids[1]);
+        assert_eq!(items[1].title, "D");
+
+        let events = db
+            .list_quest_events_internal(&quest_id)
+            .await
+            .expect("events");
+        assert!(events.iter().any(|ev| ev.event_type == "plan_changed"));
+    }
+
+    #[tokio::test]
+    async fn add_plan_item_appends_at_end_when_no_after_id() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (_, quest_id) = seed_agent_and_quest(&db).await;
+        seed_plan(&db, &quest_id, &["A", "B"]).await;
+
+        db.add_plan_item_internal(&AddPlanItemPayload {
+            quest_id: quest_id.clone(),
+            title: "C".to_string(),
+            rationale: None,
+            after_item_id: None,
+            created_by: Some("captain".to_string()),
+        })
+        .await
+        .expect("add");
+
+        let items = db.list_plan_items_internal(&quest_id).await.expect("list");
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[2].title, "C");
+        assert_eq!(items[2].order_index, 2);
+    }
+
+    #[tokio::test]
+    async fn add_plan_item_inserts_after_named_item_and_shifts_following() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (_, quest_id) = seed_agent_and_quest(&db).await;
+        let ids = seed_plan(&db, &quest_id, &["A", "B", "C"]).await;
+
+        db.add_plan_item_internal(&AddPlanItemPayload {
+            quest_id: quest_id.clone(),
+            title: "Between".to_string(),
+            rationale: None,
+            after_item_id: Some(ids[0].clone()),
+            created_by: Some("captain".to_string()),
+        })
+        .await
+        .expect("insert");
+
+        let items = db.list_plan_items_internal(&quest_id).await.expect("list");
+        assert_eq!(
+            items.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(),
+            vec!["A", "Between", "B", "C"]
+        );
+    }
+
+    #[tokio::test]
+    async fn start_plan_item_sets_active_and_resets_prior_active() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        // Anchor L2's currentQuestId so sync_plan_l2_tx picks up the row.
+        db.record_action_transition_internal(&agent_id, &quest_id, "warm up", None)
+            .await
+            .expect("anchor");
+        let ids = seed_plan(&db, &quest_id, &["A", "B"]).await;
+
+        db.start_plan_item_internal(&ids[0]).await.expect("start A");
+        let wm_after_a = db
+            .get_working_memory_internal(&agent_id)
+            .await
+            .expect("wm")
+            .expect("row");
+        assert_eq!(wm_after_a.active_plan_item_id.as_ref(), Some(&ids[0]));
+        assert_eq!(wm_after_a.next_plan_item_ids, vec![ids[1].clone()]);
+
+        db.start_plan_item_internal(&ids[1]).await.expect("start B");
+        let after_b = db.list_plan_items_internal(&quest_id).await.expect("list");
+        let by_id: std::collections::HashMap<&str, &str> = after_b
+            .iter()
+            .map(|i| (i.id.as_str(), i.status.as_str()))
+            .collect();
+        assert_eq!(by_id[ids[0].as_str()], "pending", "A reverts to pending");
+        assert_eq!(by_id[ids[1].as_str()], "active", "B is now active");
+
+        let wm_after_b = db
+            .get_working_memory_internal(&agent_id)
+            .await
+            .expect("wm")
+            .expect("row");
+        assert_eq!(wm_after_b.active_plan_item_id.as_ref(), Some(&ids[1]));
+    }
+
+    #[tokio::test]
+    async fn complete_plan_item_clears_active_no_auto_advance() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        db.record_action_transition_internal(&agent_id, &quest_id, "warm up", None)
+            .await
+            .expect("anchor");
+        let ids = seed_plan(&db, &quest_id, &["A", "B"]).await;
+        db.start_plan_item_internal(&ids[0]).await.expect("start");
+
+        db.complete_plan_item_internal(&ids[0], Some("done"))
+            .await
+            .expect("complete");
+
+        let item = db
+            .get_plan_item_internal(&ids[0])
+            .await
+            .expect("get")
+            .expect("row");
+        assert_eq!(item.status, "completed");
+        assert!(item.completed_at.is_some());
+
+        let wm = db
+            .get_working_memory_internal(&agent_id)
+            .await
+            .expect("wm")
+            .expect("row");
+        // No auto-advance — captain decides what's next.
+        assert!(wm.active_plan_item_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn skip_and_block_record_status_and_emit_events() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (_, quest_id) = seed_agent_and_quest(&db).await;
+        let ids = seed_plan(&db, &quest_id, &["A", "B"]).await;
+
+        db.skip_plan_item_internal(&ids[0], Some("not needed"))
+            .await
+            .expect("skip");
+        db.block_plan_item_internal(&ids[1], "waiting on review")
+            .await
+            .expect("block");
+
+        let items = db.list_plan_items_internal(&quest_id).await.expect("list");
+        assert_eq!(items[0].status, "skipped");
+        assert_eq!(items[1].status, "blocked");
+
+        let events = db
+            .list_quest_events_internal(&quest_id)
+            .await
+            .expect("events");
+        assert!(events.iter().any(|ev| ev.event_type == "plan_item_skipped"));
+        assert!(events.iter().any(|ev| ev.event_type == "plan_item_blocked"));
+    }
+
+    #[tokio::test]
+    async fn coherent_action_stamps_plan_item_id_when_item_active() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        db.record_action_transition_internal(&agent_id, &quest_id, "warm up", None)
+            .await
+            .expect("anchor");
+        let ids = seed_plan(&db, &quest_id, &["A"]).await;
+        db.start_plan_item_internal(&ids[0]).await.expect("start");
+
+        db.record_action_transition_internal(
+            &agent_id,
+            &quest_id,
+            "patch handler",
+            Some("warmed up"),
+        )
+        .await
+        .expect("transition");
+
+        let events = db
+            .list_quest_events_internal(&quest_id)
+            .await
+            .expect("events");
+        let action = events
+            .iter()
+            .filter(|ev| ev.event_type == "coherent_action")
+            .find(|ev| ev.payload_json.as_deref().map_or(false, |p| p.contains("patch handler")))
+            .expect("action row");
+        // We wrote the column directly; verify it lands by reading back.
+        let plan_item_id_in_row: Option<String> = db
+            .conn
+            .call({
+                let id = action.id.clone();
+                move |c| -> tokio_rusqlite::Result<Option<String>> {
+                    let v = c.query_row(
+                        "SELECT plan_item_id FROM quest_events WHERE id = ?1",
+                        params![id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )?;
+                    Ok(v)
+                }
+            })
+            .await
+            .expect("query");
+        assert_eq!(plan_item_id_in_row.as_ref(), Some(&ids[0]));
+    }
+
+    #[tokio::test]
+    async fn coherent_action_skips_plan_item_id_when_no_active_item() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        // Plan exists but nothing is active.
+        seed_plan(&db, &quest_id, &["A", "B"]).await;
+
+        db.record_action_transition_internal(
+            &agent_id,
+            &quest_id,
+            "freeform exploration",
+            None,
+        )
+        .await
+        .expect("transition");
+
+        let events = db
+            .list_quest_events_internal(&quest_id)
+            .await
+            .expect("events");
+        let action = events
+            .iter()
+            .find(|ev| ev.event_type == "coherent_action")
+            .expect("action");
+        let plan_item_id_in_row: Option<String> = db
+            .conn
+            .call({
+                let id = action.id.clone();
+                move |c| -> tokio_rusqlite::Result<Option<String>> {
+                    let v = c.query_row(
+                        "SELECT plan_item_id FROM quest_events WHERE id = ?1",
+                        params![id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )?;
+                    Ok(v)
+                }
+            })
+            .await
+            .expect("query");
+        assert!(plan_item_id_in_row.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_active_plan_item_for_agent_resolves_via_l2() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        db.record_action_transition_internal(&agent_id, &quest_id, "warm up", None)
+            .await
+            .expect("anchor");
+        let ids = seed_plan(&db, &quest_id, &["A"]).await;
+        db.start_plan_item_internal(&ids[0]).await.expect("start");
+
+        let resolved = db
+            .get_active_plan_item_for_agent_internal(&agent_id)
+            .await
+            .expect("resolve");
+        assert_eq!(resolved.as_ref(), Some(&ids[0]));
+    }
+
+    #[tokio::test]
+    async fn working_memory_v1_payload_deserializes_with_default_plan_slice() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (agent_id, _quest_id) = seed_agent_and_quest(&db).await;
+        // Manually write a v1-shaped payload (no plan slice fields).
+        let now = crate::util::chrono_now();
+        let v1_payload = serde_json::json!({
+            "schemaVersion": 1,
+            "currentQuestId": null,
+            "currentQuestPath": [],
+            "currentAction": null,
+            "recentActions": [],
+            "updatedAt": now,
+        });
+        db.conn
+            .call({
+                let agent_id = agent_id.clone();
+                let v1 = v1_payload.to_string();
+                let now = now.clone();
+                move |c| -> tokio_rusqlite::Result<()> {
+                    c.execute(
+                        "INSERT INTO agent_working_memory (agent_id, payload_json, updated_at)
+                         VALUES (?1, ?2, ?3)",
+                        params![agent_id, v1, now],
+                    )?;
+                    Ok(())
+                }
+            })
+            .await
+            .expect("insert v1 row");
+
+        let wm = db
+            .get_working_memory_internal(&agent_id)
+            .await
+            .expect("wm")
+            .expect("row");
+        assert_eq!(wm.schema_version, 1);
+        assert!(wm.active_plan_item_id.is_none());
+        assert!(wm.next_plan_item_ids.is_empty());
     }
 }
