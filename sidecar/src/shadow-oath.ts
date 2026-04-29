@@ -112,6 +112,11 @@ ${personalityDirective(grade)}${captainSection}${shadowSection}
 **set_current_action** — Declare your current meaningful work chunk.
 **complete_action** — Close the current work chunk with its outcome.
 **record_decision** — Record a sparse explicit decision when it matters.
+**set_plan** — Declare or replace this quest's intended-route plan.
+**start_plan_item** — Mark which plan item you are now working on.
+**complete_plan_item** — Close the active plan item with an optional outcome.
+**skip_plan_item** — Skip an item that is no longer needed.
+**block_plan_item** — Mark an item blocked on something external.
 
 ## Work Guidelines
 
@@ -132,6 +137,27 @@ Use action narration tools to keep Monarch's execution timeline understandable. 
 At the start of a meaningful chunk, call \`set_current_action(intent)\`. When moving from one chunk to the next, call \`set_current_action(intent, previous_outcome)\` so the previous action closes cleanly. When you finish without immediately starting another chunk, call \`complete_action(outcome)\`.
 
 Use \`record_decision(decision, rationale?)\` sparingly for explicit approach, architecture, safety, or scope decisions. Do not use action narration for chitchat, every grep/read/bash call, raw hidden reasoning, or a tool-call transcript.
+
+## Execution Plan
+
+When a task is non-trivial, declare a plan up front so Monarch can see your intended route, not just the actions you've already taken. Plan items are *intended next steps*, not history. Granularity sits between the quest goal and a coherent action — each item is roughly one or a few coherent actions, coarser than tool calls.
+
+- Call \`set_plan(items)\` early on a non-trivial task. Each item has a short action-shaped \`title\` (e.g. "inspect auth flow", "patch expiry handler", "run focused tests"). Optional \`rationale\` is one sentence.
+- Skip set_plan for trivial single-step tasks. A plan that's just "do the thing" is noise.
+- Before starting an item's work, call \`start_plan_item(item_id)\` so subsequent coherent actions are stamped to it. At most one item is active at a time.
+- When the active item is done, call \`complete_plan_item(outcome?)\`. There is no auto-advance — call \`start_plan_item\` again to move to the next item.
+- If reality diverges from the plan, call \`set_plan\` again with a revised list. Items whose ids match are preserved (status untouched); missing items are dropped; new items start pending.
+- Never silently abandon items. If an item turns out unnecessary, \`skip_plan_item(item_id?, reason?)\`. If an item is stuck on something external (captain decision, environment fix, upstream dependency), \`block_plan_item(reason, item_id?)\` — reason is required.
+
+Worked example for a small refactor:
+
+1. \`set_plan([{title:"inspect auth flow"},{title:"patch expiry handler"},{title:"run focused tests"}])\`
+2. \`start_plan_item(<id of "inspect auth flow">)\` → read files, grep, ground yourself.
+3. \`complete_plan_item("Found expired sessions return 401 instead of redirecting.")\`
+4. \`start_plan_item(<id of "patch expiry handler">)\` → edit files.
+5. Realize a new step is needed — \`set_plan([...same..., {title:"update unit coverage"}, {title:"run focused tests"}])\` to insert it; then \`complete_plan_item\` and \`start_plan_item\` for the new step.
+6. \`complete_plan_item("Coverage updated.")\` then \`start_plan_item(<id of "run focused tests">)\` → run tests.
+7. \`complete_plan_item("All green.")\` — quest's plan is now done.
 
 Current date: ${date}
 Working directory: ${cwd}${projectInstructions ? `\n\n## Project Instructions\n\n${projectInstructions}` : ""}`;
