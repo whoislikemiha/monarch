@@ -47,6 +47,7 @@ interface AgentSubs {
 class QuestStore {
   readonly byAgent = new SvelteMap<string, AgentQuestState>();
   private subs = new Map<string, AgentSubs>();
+  private workingMemoryUnavailable = false;
 
   ensure(agentId: string): AgentQuestState {
     const existing = this.byAgent.get(agentId);
@@ -82,10 +83,6 @@ class QuestStore {
       const all = await invoke<QuestRow[]>("db_list_quests_for_agent", {
         agentId,
       });
-      entry.workingMemory = await invoke<WorkingMemoryPayload | null>(
-        "db_get_working_memory",
-        { agentId },
-      );
       // Keep only roots (parent_id null) in the timeline header list.
       const roots = all.filter((q) => q.parentId === null);
       entry.roots = roots;
@@ -99,6 +96,7 @@ class QuestStore {
       );
       entry.treesByRoot.clear();
       roots.forEach((r, i) => entry.treesByRoot.set(r.id, trees[i]));
+      await this.refreshWorkingMemory(agentId);
 
       // Resubscribe event listeners for the current set of roots.
       this.wireRootSubscriptions(entry);
@@ -144,12 +142,22 @@ class QuestStore {
 
   async refreshWorkingMemory(agentId: string): Promise<void> {
     const entry = this.ensure(agentId);
+    if (this.workingMemoryUnavailable) return;
     try {
       entry.workingMemory = await invoke<WorkingMemoryPayload | null>(
         "db_get_working_memory",
         { agentId },
       );
     } catch (e) {
+      if (String(e).includes("db_get_working_memory")) {
+        // A frontend HMR refresh can briefly talk to an older Rust process
+        // that does not have MON-109's read command yet. L2 is optional for
+        // rendering the quest tree, so keep the timeline usable and let the
+        // command appear after a full Tauri restart.
+        this.workingMemoryUnavailable = true;
+        entry.workingMemory = null;
+        return;
+      }
       entry.error = String(e);
     }
   }
