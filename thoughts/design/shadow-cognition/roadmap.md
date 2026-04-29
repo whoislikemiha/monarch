@@ -63,7 +63,7 @@ The phases are *temporal*. The work itself runs on four cross-cutting tracks; ea
 | **P3b** Reranker | Top-K=20 → top-K=5 reranker pass | — | — | — |
 | **P3c** Rebuild worker | Background HNSW rebuild + atomic swap | — | — | — |
 | **P3d** Incremental insert | Per-memory write-into-graph path | — | — | — |
-| **P4** Executor narration | `agent_working_memory` L2 v0; executor narration tools + prompt block | `coherent_action`, `executor_action_outcome`, `tool_call`, `executor_decision` events with `parent_event_id` + `author` | **Becomes a real execution narrative** — collapsible action parents | Working-memory preview in agent view |
+| **P4** Executor narration | `agent_working_memory` L2 v0; executor narration tools + prompt block | `coherent_action`, `action_outcome`, `tool_call`, `executor_decision` events with `parent_event_id` + `author` | **Becomes a real execution narrative** — collapsible action parents | Working-memory preview in agent view |
 | **P4b** Execution plans | `quest_plan_items`; L2 active/next plan slice | Plan lifecycle events; actions link to `plan_item_id` | Plan-aware timeline: intended vs actual | Lightweight plan panel |
 | **P5** Rich quest + manual editor | Quest attachments / external refs | `status`, `scope`, `current_direction`, `rationale`, `grade`, `summary`, `subtask_added`, `scope_change`, `direction_change`, `note` | First-class quest/plan-change entries | Quest detail panel + manual editor |
 | **P6** Quest reports | `quest_reports` table; executor `complete_quest` tool | (uses `status` from P5) | — | First-person report rendered at close |
@@ -223,15 +223,12 @@ P2 ──► P2b ──► P4 ──► P4b ──► P5 ──► P6 ──► 
 
 **Test scenario.** Captain watches a quest run. The timeline shows a sequence of collapsible coherent actions ("Read failing test files", "Fix the off-by-one in `parser.rs`", "Run the test"), each expandable into its underlying tool calls. The agent view shows `current_action` + last few `recent_actions` from L2 — captain can answer "what is it doing right now?" without scrolling.
 
-**Tickets:** *(unticketed — file at phase open)*
-- *(new)* `quest_events` migration: add `parent_event_id`, `author`, `surface_override`, `payload_schema_version`. Keep `actor` as the concrete writer id/name; `author` is semantic (`executor` / `chat_shadow` / `captain` / `keeper` / `system`). Hot-table ALTER, idempotent block per AGENTS.md § schema evolves.
-- *(new)* New event kinds: `coherent_action`, `executor_action_outcome`, `tool_call`, `executor_decision`. **No raw `thinking` writer in P4**; if rationale matters, the executor records an explicit decision. Renderer in `QuestTimelineTool` for nested children.
-- *(new)* L2 schema in `agent_working_memory(agent_id, payload_json, updated_at)`. Fields for v0: `current_action`, `recent_actions`, `current_quest_id`, `current_quest_path`, `updated_at`. **Not in v0:** durable execution plan (`quest_plan_items`, P4b), `attention_threads` (P7), `environment` (P11 or its own phase if needed sooner), `blockers`/`open_threads` (P5).
-- *(new)* Single-writer pipeline extension for action / tool-call / L2 mutations (reuse MON-37 pattern). Each logical action transition is atomic once it reaches the consumer.
-- *(new)* Executor narration tools: `set_current_action(intent, previous_outcome?)`, `complete_action(outcome)`, `record_decision(decision, rationale?)`. Tools emit semantic inner events; Rust owns quest event IDs, active quest lookup, nesting, and L2 updates.
-- *(new)* Executor prompt block (separate from the identity oath): teach coherent chunk granularity, transition/outcome rhythm, and sparse decision recording. Guidance is taste-based, not hard-enforced.
-- *(new)* Working-memory preview in agent view UI.
-- *(new)* L2 rebuild fallback from quest events when `agent_working_memory` is missing or invalid.
+**Tickets:**
+- [**MON-107**](https://linear.app/monarch-commander/issue/MON-107) — `quest_events` migration: add `parent_event_id`, `author`, `surface_override`, `payload_schema_version`. Keep `actor` as the concrete writer id/name; `author` is semantic (`executor` / `chat_shadow` / `captain` / `keeper` / `system`). Adds event kinds `coherent_action`, `action_outcome`, `tool_call`, `executor_decision`; L2 schema in `agent_working_memory(agent_id, payload_json, updated_at)`; and single-writer persistence for action / tool-call / L2 mutations.
+- [**MON-108**](https://linear.app/monarch-commander/issue/MON-108) — Executor narration tools: `set_current_action(intent, previous_outcome?)`, `complete_action(outcome)`, `record_decision(decision, rationale?)`. Tools emit semantic inner events; Rust owns quest event IDs, active quest lookup, nesting, and L2 updates. Adds executor prompt guidance for coherent chunk granularity, transition/outcome rhythm, and sparse decision recording.
+- [**MON-109**](https://linear.app/monarch-commander/issue/MON-109) — Timeline renderer for nested children and working-memory preview in agent view UI.
+
+**Deferred from P4.** L2 rebuild fallback from quest events when `agent_working_memory` is missing or invalid. Durable plans stay in P4b.
 
 **Tracks.** Backend + Quest tree (event taxonomy expansion) + Timeline (collapsible-children rendering) + UI/UX (working-memory preview).
 
