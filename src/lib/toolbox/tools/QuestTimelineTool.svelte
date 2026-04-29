@@ -3,6 +3,7 @@
   import type { QuestEventRow, QuestRow } from "../../bindings";
   import { questStore } from "../questStore.svelte";
   import ShadowAvatar from "../../avatar/ShadowAvatar.svelte";
+  import { agentStore } from "../../stores/agentStore.svelte";
 
   let { agentContext }: ToolProps = $props();
 
@@ -91,6 +92,14 @@
       hour: "numeric",
       minute: "2-digit",
     }).format(date);
+  }
+
+  function assigneeLabel(agentId: string | null): string {
+    if (!agentId) return "Unassigned";
+    const agent = agentStore.getAgent(agentId);
+    if (!agent) return agentId;
+    const name = agent.shadow?.shadowName || agent.name || agentId;
+    return agent.shadow?.shadowTitle ? `${name}, ${agent.shadow.shadowTitle}` : name;
   }
 
   // --- New-quest form ------------------------------------------------------
@@ -476,6 +485,7 @@
                 {#if expanded}
                   <div class="detail">
                     <div class="quest-info">
+                      <div class="quest-title-full">{quest.title}</div>
                       <div class="detail-meta">
                         <span class="meta-row">
                           <span class="meta-label">Status</span>
@@ -497,6 +507,14 @@
                           <span class="meta-label">Created by</span>
                           <span class="meta-value">{quest.createdBy}</span>
                         </span>
+                        {#if quest.assigneeShadowId}
+                          <span class="meta-row">
+                            <span class="meta-label">Assignee</span>
+                            <span class="meta-value" title={quest.assigneeShadowId}>
+                              {assigneeLabel(quest.assigneeShadowId)}
+                            </span>
+                          </span>
+                        {/if}
                         <span class="meta-row">
                           <span class="meta-label">Created</span>
                           <span class="meta-value">{formatDateTime(quest.createdAt)}</span>
@@ -886,6 +904,7 @@
     background: var(--bg-panel-2);
   }
   .node.expanded > .node-row {
+    align-items: flex-start;
     background: var(--bg-panel-2);
   }
 
@@ -924,11 +943,19 @@
 
   .title {
     flex: 1;
+    min-width: 0;
     font-size: 11px;
     color: var(--text-primary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .node.expanded > .node-row .title {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
   }
 
   .ts {
@@ -951,6 +978,13 @@
     flex-direction: column;
     gap: 8px;
   }
+  .quest-title-full {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
   .detail-meta {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
@@ -971,9 +1005,7 @@
   }
   .meta-value {
     color: var(--text-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
   .description {
     margin: 0;
