@@ -93,8 +93,6 @@ Negative test: would a shadow benefit from finding this claim again in 6 months?
 
 If the slice produced no durable learning, return an empty `claims` array — that is correct. The compaction summary still goes out so the shadow has continuity.";
 
-
-
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KeeperModelConfig {
@@ -171,7 +169,12 @@ pub fn resolve(raw: MemoryConfig) -> ResolvedMemoryConfig {
 
 fn default_models_dir() -> String {
     dirs::config_dir()
-        .map(|d| d.join("monarch").join("models").to_string_lossy().to_string())
+        .map(|d| {
+            d.join("monarch")
+                .join("models")
+                .to_string_lossy()
+                .to_string()
+        })
         .unwrap_or_else(|| "~/.config/monarch/models".to_string())
 }
 
@@ -226,9 +229,7 @@ pub async fn memory_get_config() -> Result<ResolvedMemoryConfig, MonarchError> {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn memory_set_config(
-    config: MemoryConfig,
-) -> Result<ResolvedMemoryConfig, MonarchError> {
+pub async fn memory_set_config(config: MemoryConfig) -> Result<ResolvedMemoryConfig, MonarchError> {
     write_raw(&config).await?;
     Ok(resolve(config))
 }

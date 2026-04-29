@@ -639,6 +639,10 @@ export type QuestEventRow = {
 	actor: string | null,
 	payloadJson: string | null,
 	createdAt: string,
+	parentEventId: string | null,
+	author: string | null,
+	surfaceOverride: string | null,
+	payloadSchemaVersion: number,
 };
 
 export type QuestRow = {
@@ -674,6 +678,10 @@ export type RecordQuestEventPayload = {
 	eventType: string,
 	actor: string | null,
 	payloadJson: string | null,
+	parentEventId?: string | null,
+	author?: string | null,
+	surfaceOverride?: string | null,
+	payloadSchemaVersion?: number | null,
 };
 
 // Resolved view — all fields filled in, ready to ship to the sidecar.

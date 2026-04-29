@@ -130,13 +130,7 @@ pub async fn rebuild_agent_state_from_session(
     status_text: String,
 ) -> Result<LiveAgentState, MonarchError> {
     state
-        .rebuild_state_from_session(
-            &app,
-            &db,
-            &agent_id,
-            session_id.as_deref(),
-            &status_text,
-        )
+        .rebuild_state_from_session(&app, &db, &agent_id, session_id.as_deref(), &status_text)
         .await
 }
 
@@ -223,7 +217,11 @@ pub async fn upsert_captain_identity(
 ) -> Result<(), MonarchError> {
     db.upsert_captain_identity_internal(&req.name, &req.payload, req.edit_note.as_deref())
         .await?;
-    let payload = if req.payload.is_empty() { None } else { Some(req.payload) };
+    let payload = if req.payload.is_empty() {
+        None
+    } else {
+        Some(req.payload)
+    };
     state.refresh_captain_identity(payload).await
 }
 
@@ -245,7 +243,11 @@ pub async fn upsert_shadow_identity(
 ) -> Result<(), MonarchError> {
     db.upsert_shadow_identity_internal(&req.agent_id, &req.payload, req.edit_note.as_deref())
         .await?;
-    let payload = if req.payload.is_empty() { None } else { Some(req.payload) };
+    let payload = if req.payload.is_empty() {
+        None
+    } else {
+        Some(req.payload)
+    };
     state.refresh_shadow_identity(&req.agent_id, payload).await
 }
 

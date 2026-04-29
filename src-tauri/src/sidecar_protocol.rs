@@ -270,6 +270,17 @@ pub enum InnerEvent {
         summary: String,
         content: String,
     },
+    ActionTransition {
+        intent: String,
+        previous_outcome: Option<String>,
+    },
+    ActionComplete {
+        outcome: String,
+    },
+    ExecutorDecision {
+        decision: String,
+        rationale: Option<String>,
+    },
     CompactionStart {
         reason: Option<String>,
     },
@@ -334,6 +345,19 @@ enum KnownInnerEvent {
         summary: String,
         content: String,
     },
+    ActionTransition {
+        intent: String,
+        #[serde(default)]
+        previous_outcome: Option<String>,
+    },
+    ActionComplete {
+        outcome: String,
+    },
+    ExecutorDecision {
+        decision: String,
+        #[serde(default)]
+        rationale: Option<String>,
+    },
     CompactionStart {
         #[serde(default)]
         reason: Option<String>,
@@ -395,6 +419,21 @@ impl From<KnownInnerEvent> for InnerEvent {
                 summary,
                 content,
             },
+            KnownInnerEvent::ActionTransition {
+                intent,
+                previous_outcome,
+            } => Self::ActionTransition {
+                intent,
+                previous_outcome,
+            },
+            KnownInnerEvent::ActionComplete { outcome } => Self::ActionComplete { outcome },
+            KnownInnerEvent::ExecutorDecision {
+                decision,
+                rationale,
+            } => Self::ExecutorDecision {
+                decision,
+                rationale,
+            },
             KnownInnerEvent::CompactionStart { reason } => Self::CompactionStart { reason },
             KnownInnerEvent::CompactionEnd { aborted } => Self::CompactionEnd { aborted },
             KnownInnerEvent::AutoRetryStart { attempt } => Self::AutoRetryStart { attempt },
@@ -421,6 +460,9 @@ const KNOWN_INNER_TAGS: &[&str] = &[
     "tool_execution_start",
     "tool_execution_end",
     "memory_suggestion",
+    "action_transition",
+    "action_complete",
+    "executor_decision",
     "compaction_start",
     "compaction_end",
     "auto_retry_start",
@@ -1013,6 +1055,9 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
         InnerEvent::QueueUpdate => ApplyOutcome::NoOp,
         InnerEvent::ToolExecutionUpdate => ApplyOutcome::NoOp,
         InnerEvent::MemorySuggestion { .. } => ApplyOutcome::NoOp,
+        InnerEvent::ActionTransition { .. } => ApplyOutcome::NoOp,
+        InnerEvent::ActionComplete { .. } => ApplyOutcome::NoOp,
+        InnerEvent::ExecutorDecision { .. } => ApplyOutcome::NoOp,
         // MON-39 item 9: unknown events return NoOp so `state_version`
         // does not bump per event. The reader-side path in
         // `handle_sidecar_event` is the canonical entry that flips

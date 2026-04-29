@@ -63,8 +63,9 @@ The phases are *temporal*. The work itself runs on four cross-cutting tracks; ea
 | **P3b** Reranker | Top-K=20 → top-K=5 reranker pass | — | — | — |
 | **P3c** Rebuild worker | Background HNSW rebuild + atomic swap | — | — | — |
 | **P3d** Incremental insert | Per-memory write-into-graph path | — | — | — |
-| **P4** Executor narration | L2 schema (current_action, recent_actions); executor prompt update | `coherent_action`, `executor_action_outcome`, `tool_call`, `thinking` events with `parent_event_id` + `author` | **Becomes a real execution narrative** — collapsible action parents | Working-memory preview in agent view |
-| **P5** Rich quest + manual editor | — | `status`, `scope`, `current_direction`, `rationale`, `grade`, `summary`, `subtask_added`, `scope_change`, `direction_change`, `note` | First-class plan-change entries | Quest detail panel + manual editor |
+| **P4** Executor narration | `agent_working_memory` L2 v0; executor narration tools + prompt block | `coherent_action`, `executor_action_outcome`, `tool_call`, `executor_decision` events with `parent_event_id` + `author` | **Becomes a real execution narrative** — collapsible action parents | Working-memory preview in agent view |
+| **P4b** Execution plans | `quest_plan_items`; L2 active/next plan slice | Plan lifecycle events; actions link to `plan_item_id` | Plan-aware timeline: intended vs actual | Lightweight plan panel |
+| **P5** Rich quest + manual editor | Quest attachments / external refs | `status`, `scope`, `current_direction`, `rationale`, `grade`, `summary`, `subtask_added`, `scope_change`, `direction_change`, `note` | First-class quest/plan-change entries | Quest detail panel + manual editor |
 | **P6** Quest reports | `quest_reports` table; executor `complete_quest` tool | (uses `status` from P5) | — | First-person report rendered at close |
 | **P7** chat-shadow read-only | Pi multiplexing per agent; `attention_threads`; chat-shadow read tools + `speak`; pause/resume/stop control | `chat_message`, `observation`, `paused_by_chat`, `resumed_by_chat`, `stopped_by_chat` | **Promoted to primary panel** | Dual-surface layout (clean chat + timeline) |
 | **P8** chat-shadow full | Plan-manipulation tools, routing classifier, question/answer, pending-action mediation | All remaining event kinds; surface routing applied | Surface override respected | Routing-driven UX |
@@ -81,16 +82,16 @@ P1 ─────────────────────────�
 P2 ──► P3a ──► P3b
    └──► P3c, P3d (after P2; can run in parallel)
 
-P2 ──► P2b ──► P4 ──► P5 ──► P6 ──► P7 ──► P8 ──► (P9 | P10 | P11) ──► P12
+P2 ──► P2b ──► P4 ──► P4b ──► P5 ──► P6 ──► P7 ──► P8 ──► (P9 | P10 | P11) ──► P12
 ```
 
 - **P1 is independent.** Land any time. Replaces the auto-memory pattern in-app.
 - **P2 is the gate to everything cognitive.** Without it, no memory exists to read or write.
 - **P2b makes the quest spine real.** It is a bridge slice: no decomposition, just a current root quest so MON-103, P4, and later timeline work have somewhere to attach.
 - **P3a–d improves P2** but doesn't block P4+. Pick when memory volume warrants.
-- **P4 → P5 → P6** is sequential because each builds on the prior's surface (narration before manual editor before reports).
+- **P4 → P4b → P5 → P6** is sequential because each builds on the prior's surface: actual execution narrative, then intended execution plan, then rich quest editing, then reports.
 - **P7 needs P1 + P4** at minimum (shared identity + L2 to read).
-- **P8 needs P7** (the second voice exists before it gains plan-manipulation tools).
+- **P8 needs P7 + P4b + P5** (the second voice exists, durable plans exist to manipulate, and rich quest fields exist to mutate).
 - **P9, P10, P11** are independent of each other after P8. Pick by need.
 - **P12** is final-form polish, sits at the end.
 
@@ -140,7 +141,7 @@ P2 ──► P2b ──► P4 ──► P5 ──► P6 ──► P7 ──► P
 
 **Depends on.** P1 ([MON-98](https://linear.app/monarch-commander/issue/MON-98)) shipped — so captain preferences land cleanly into Keeper context.
 
-**Defers.** **L2 working memory** (P4 — Keeper consolidation in P2 lives only as text in `memory_keeper_runs.output_summary`; the structured `WorkingMemory` shape with `current_action` / `recent_actions` / `planned_actions` lands when P4 wires executor narration). Eval harness (P3a / [MON-94](https://linear.app/monarch-commander/issue/MON-94)). Reranker (P3b / [MON-93](https://linear.app/monarch-commander/issue/MON-93)). Background rebuild + incremental insert (P3c/d / [MON-96](https://linear.app/monarch-commander/issue/MON-96), [MON-97](https://linear.app/monarch-commander/issue/MON-97)). Quest-close + idle triggers (deferred above). Project subtree writes (P9). First-person reports as Keeper input (P6 backfills). Captain edit / archive / promote / supersede in Inspector (P12). Stale-flagging via `file_refs.anchor_sha` (P11). Two-tier Keeper (local / cloud) — P2 ships single-tier; tier split is a `memory.toml` extension, not a phase.
+**Defers.** **L2 working memory** (P4 — Keeper consolidation in P2 lives only as text in `memory_keeper_runs.output_summary`; the structured `WorkingMemory` shape with `current_action` / `recent_actions` lands when P4 wires executor narration; durable execution plans land in P4b). Eval harness (P3a / [MON-94](https://linear.app/monarch-commander/issue/MON-94)). Reranker (P3b / [MON-93](https://linear.app/monarch-commander/issue/MON-93)). Background rebuild + incremental insert (P3c/d / [MON-96](https://linear.app/monarch-commander/issue/MON-96), [MON-97](https://linear.app/monarch-commander/issue/MON-97)). Quest-close + idle triggers (deferred above). Project subtree writes (P9). First-person reports as Keeper input (P6 backfills). Captain edit / archive / promote / supersede in Inspector (P12). Stale-flagging via `file_refs.anchor_sha` (P11). Two-tier Keeper (local / cloud) — P2 ships single-tier; tier split is a `memory.toml` extension, not a phase.
 
 ---
 
@@ -216,46 +217,72 @@ P2 ──► P2b ──► P4 ──► P5 ──► P6 ──► P7 ──► P
 
 **Read first.** [`substrate.md`](./substrate.md) § L2 (full section, including "Two writers, strict separation of concerns" and "Three layers of intention"). [`attention.md`](./attention.md) § "Coherent atomic actions" + § "Three self-reporting cadences" + § "Event taxonomy" (executor-activity events). [`flows.md`](./flows.md) § "The executor per-turn loop" + § "Environment snapshot".
 
-**Goal.** Executor declares intent before each chunk of work, executes nested tool calls, and closes with a one-line outcome. The captain reads the timeline at intent level. L2 working memory carries the live present.
+**Goal.** Executor declares intent before each coherent work chunk, executes nested tool calls, and closes with a one-line outcome. The captain reads the timeline at intent level. L2 working memory carries the live present.
 
-**Note.** P2 leaves L2 textual-only (Keeper consolidation lives in `memory_keeper_runs.output_summary`). P4 is the first phase that introduces structured `WorkingMemory` — `current_action`, `recent_actions`, `current_quest_id`, `current_quest_path`, `updated_at`. Promotes the Keeper's per-tick consolidation from a free-form string into named fields the executor and chat-shadow can read deterministically.
+**Note.** P2 leaves L2 textual-only (Keeper consolidation lives in `memory_keeper_runs.output_summary`). P4 is the first phase that introduces structured `WorkingMemory` in a separate `agent_working_memory` table. V0 fields: `current_action`, `recent_actions`, `current_quest_id`, `current_quest_path`, `updated_at`. `current_action` and `recent_actions` are structured pointers into the quest event log, not free text. This makes L2 an index into the canonical timeline rather than a second history.
 
 **Test scenario.** Captain watches a quest run. The timeline shows a sequence of collapsible coherent actions ("Read failing test files", "Fix the off-by-one in `parser.rs`", "Run the test"), each expandable into its underlying tool calls. The agent view shows `current_action` + last few `recent_actions` from L2 — captain can answer "what is it doing right now?" without scrolling.
 
 **Tickets:** *(unticketed — file at phase open)*
-- *(new)* `quest_events` migration: add `parent_event_id`, `author`, `surface_override`, `payload_schema_version`. (Hot-table ALTER, idempotent block per CLAUDE.md § schema evolves.)
-- *(new)* New event kinds: `coherent_action`, `executor_action_outcome`, `tool_call`, `thinking`, `executor_decision`. Renderer in `QuestTimelineTool` for nested children.
-- *(new)* L2 schema. Start with JSON blob on `agents` (column-decompose later if querying needs it). Fields for v0: `current_action`, `recent_actions`, `current_quest_id`, `current_quest_path`, `updated_at`. **Not in v0:** `planned_actions` (P8), `attention_threads` (P7), `environment` (P11 or its own phase if needed sooner), `blockers`/`open_threads` (P5).
-- *(new)* Single-writer pipeline extension for L2 mutations (reuse MON-37 pattern).
-- *(new)* Executor system-prompt update: teach intent-declaration + outcome-closure rhythm.
-- *(new)* `complete_action(outcome)` tool for the executor.
+- *(new)* `quest_events` migration: add `parent_event_id`, `author`, `surface_override`, `payload_schema_version`. Keep `actor` as the concrete writer id/name; `author` is semantic (`executor` / `chat_shadow` / `captain` / `keeper` / `system`). Hot-table ALTER, idempotent block per AGENTS.md § schema evolves.
+- *(new)* New event kinds: `coherent_action`, `executor_action_outcome`, `tool_call`, `executor_decision`. **No raw `thinking` writer in P4**; if rationale matters, the executor records an explicit decision. Renderer in `QuestTimelineTool` for nested children.
+- *(new)* L2 schema in `agent_working_memory(agent_id, payload_json, updated_at)`. Fields for v0: `current_action`, `recent_actions`, `current_quest_id`, `current_quest_path`, `updated_at`. **Not in v0:** durable execution plan (`quest_plan_items`, P4b), `attention_threads` (P7), `environment` (P11 or its own phase if needed sooner), `blockers`/`open_threads` (P5).
+- *(new)* Single-writer pipeline extension for action / tool-call / L2 mutations (reuse MON-37 pattern). Each logical action transition is atomic once it reaches the consumer.
+- *(new)* Executor narration tools: `set_current_action(intent, previous_outcome?)`, `complete_action(outcome)`, `record_decision(decision, rationale?)`. Tools emit semantic inner events; Rust owns quest event IDs, active quest lookup, nesting, and L2 updates.
+- *(new)* Executor prompt block (separate from the identity oath): teach coherent chunk granularity, transition/outcome rhythm, and sparse decision recording. Guidance is taste-based, not hard-enforced.
 - *(new)* Working-memory preview in agent view UI.
+- *(new)* L2 rebuild fallback from quest events when `agent_working_memory` is missing or invalid.
 
 **Tracks.** Backend + Quest tree (event taxonomy expansion) + Timeline (collapsible-children rendering) + UI/UX (working-memory preview).
 
 **Depends on.** Nothing schema-wise that isn't already there; builds on MON-83's quest skeleton.
 
-**Defers.** Status/scope/direction/rationale on quest_nodes (P5). First-person reports (P6). `planned_actions` field (lands when chat-shadow can write it in P8).
+**Defers.** Durable execution plans / plan UI / plan-to-action linking (P4b). Status/scope/direction/rationale on quest_nodes and attachments / external refs (P5). First-person reports (P6). Chat-shadow, orchestrator, and automatic decomposition (P7/P8). Raw thinking persistence (intentionally not part of the roadmap unless replaced by explicit structured events).
+
+---
+
+### P4b — Execution plans (intended route)
+
+**Read first.** [`substrate.md`](./substrate.md) § L2 "Three layers of intention". [`attention.md`](./attention.md) § "Coherent atomic actions" (especially the distinction between plan and timeline). [`flows.md`](./flows.md) § "The executor per-turn loop".
+
+**Goal.** A quest has a durable, visible, provisional execution plan: what the shadow currently intends to do next. P4 showed what actually happened; P4b adds the intended route without conflating the two.
+
+**Test scenario.** Captain starts a medium coding task. The quest shows a lightweight plan ("inspect auth flow", "patch expiry handler", "run focused tests"). Executor marks the first item active, performs multiple coherent actions under it, marks it done, then moves to the next. The timeline shows both plan lifecycle events and actual actions, with actions linked to the active plan item.
+
+**Tickets:** *(unticketed — file at phase open)*
+- *(new)* `quest_plan_items` table: `id`, `quest_id`, optional `parent_id`, `title`, `status`, `order_index`, `created_by`, optional `rationale`, timestamps. V0 UI is mostly flat, but `parent_id` exists for future grouping.
+- *(new)* `quest_events.plan_item_id` migration + index. P4 did not add this because no writer existed yet.
+- *(new)* L2 plan slice: `active_plan_item_id`, `next_plan_item_ids`.
+- *(new)* Plan lifecycle event kinds: `plan_created`, `plan_item_started`, `plan_item_completed`, `plan_item_skipped`, `plan_item_blocked`, `plan_changed`.
+- *(new)* Lightweight plan panel for the active quest: read, manual edit/reorder, status changes.
+- *(new)* Executor tools for plan item lifecycle (`start_plan_item`, `complete_plan_item`, `skip_plan_item`, `update_plan`) and prompt guidance that plan items are intended route, not history.
+
+**Tracks.** Backend + Quest tree + Timeline + UI/UX.
+
+**Depends on.** P4 (actions exist and can link to plan items).
+
+**Defers.** Architect/orchestrator planning agent, automatic subquest decomposition, multi-agent delegation, and chat-shadow routing (P8). Rich quest fields and attachments (P5).
 
 ---
 
 ### P5 — Rich quest model + manual editor
 
-**Read first.** [`attention.md`](./attention.md) § "The quest tree is the spine" + § "Event taxonomy" (plan-manipulation events). [`substrate.md`](./substrate.md) § L2 "Three layers of intention" (quest vs internal plan vs coherent action distinction).
+**Read first.** [`attention.md`](./attention.md) § "The quest tree is the spine" + § "Event taxonomy" (quest-change events). [`substrate.md`](./substrate.md) § L2 "Three layers of intention" (quest vs execution plan vs coherent action distinction).
 
-**Goal.** Quests carry status, scope, current direction, rationale, grade, summary. Captain edits these manually. Plan-change events (`scope_change`, `direction_change`, `subtask_added`, `note`) appear on the timeline.
+**Goal.** Quests carry status, scope, current direction, rationale, grade, summary, and attachments / external refs. Captain edits these manually. Quest-change events (`scope_change`, `direction_change`, `subtask_added`, `note`) appear on the timeline.
 
 **Test scenario.** Captain opens a quest detail panel. Edits scope ("expanded to also cover the auth refactor"), supplies rationale. The change persists, surfaces on the timeline as a `scope_change` event with rationale. Closes the quest by setting `status='done'`. Status transition is reflected in the agent view.
 
 **Tickets:** *(unticketed — file at phase open)*
 - *(new)* `quest_nodes` migration: `status`, `scope`, `current_direction`, `rationale`, `fork_parent_id` (defined now, used in P10), `worktree_path` (same), `grade`, `summary`. Idempotent ALTER.
 - *(new)* New event kinds: `scope_change`, `direction_change`, `subtask_added`, `note`, `blocker`, `blocker_resolved`, `question`, `answer`. (Question/answer wired in event-only form here; chat-shadow consumes them in P8.)
-- *(new)* Quest detail panel UI (read + manual edit).
+- *(new)* Quest attachments / external refs (`linear`, `github_issue`, `github_pr`, `file`, `url`, `artifact`, etc.). Quests remain canonical; external trackers are references, not authorities.
+- *(new)* Quest detail panel UI (read + manual edit + attachments).
 - *(new)* Manual-editor write path (Tauri commands + Rust persistence, single-writer).
 
 **Tracks.** Backend + Quest tree + UI/UX.
 
-**Depends on.** P4 (timeline already renders events; P5 just adds new kinds).
+**Depends on.** P4b (timeline already renders actual actions and intended plan; P5 enriches the quest object around them).
 
 **Defers.** Auto-decomposition by Architect (P8 — subsumes [MON-84](https://linear.app/monarch-commander/issue/MON-84) here, since the Architect is conceptually a chat-shadow tool). Captain-set permission gates on quests (P8 territory).
 
@@ -305,7 +332,7 @@ P2 ──► P2b ──► P4 ──► P5 ──► P6 ──► P7 ──► P
 
 **Depends on.** P1 (shared L1 between threads) + P4 (L2 to read; coherent actions to filter to timeline).
 
-**Defers.** Plan-manipulation tools (`add_to_internal_plan`, `add_subtask`, `change_quest_*`, `note_on_quest`) — P8. Routing intent classifier — P8. Question/answer mediation — P8. Pending-action mediation — P8.
+**Defers.** Chat-shadow plan-manipulation tools (`add_to_execution_plan`, `add_subtask`, `change_quest_*`, `note_on_quest`) — P8. Routing intent classifier — P8. Question/answer mediation — P8. Pending-action mediation — P8.
 
 ---
 
@@ -315,11 +342,11 @@ P2 ──► P2b ──► P4 ──► P5 ──► P6 ──► P7 ──► P
 
 **Goal.** Captain types into chat; chat-shadow classifies intent and takes the appropriate action — adding to plan, expanding scope, redirecting, answering questions, mediating pending actions, speaking back. Subsumes the Architect ([MON-84](https://linear.app/monarch-commander/issue/MON-84)) as the auto-decomposer for high-complexity captain inputs.
 
-**Test scenario.** From the routing table in `attention.md`: captain says "after this also rename `verify` to `validate`" — `add_to_internal_plan`; executor picks up after current action. Captain says "now do Y instead" — `change_quest_direction`; executor switches at next boundary. Captain says "let's now also refactor the test suite" — Architect/auto-decomposer fires (high complexity classification from MON-82) → `add_subtask` with rationale. Captain answers a `question` event — typed `answer` flows back to executor.
+**Test scenario.** From the routing table in `attention.md`: captain says "after this also rename `verify` to `validate`" — `add_to_execution_plan`; executor picks up after current action. Captain says "now do Y instead" — `change_quest_direction`; executor switches at next boundary. Captain says "let's now also refactor the test suite" — Architect/auto-decomposer fires (high complexity classification from MON-82) → `add_subtask` with rationale. Captain answers a `question` event — typed `answer` flows back to executor.
 
 **Tickets:** *(unticketed — file at phase open; **subsumes [MON-84](https://linear.app/monarch-commander/issue/MON-84)** — the Architect's role is the auto-decomposer arm of the routing classifier)*
-- *(new)* Chat-shadow plan-manipulation tools: `add_to_internal_plan`, `add_subtask`, `change_quest_scope`, `change_quest_direction`, `note_on_quest`, `mark_quest_blocked`, `complete_quest_intent`.
-- *(new)* L2 `planned_actions` field (deferred from P4 — first writer is chat-shadow here).
+- *(new)* Chat-shadow plan-manipulation tools: `add_to_execution_plan`, `add_subtask`, `change_quest_scope`, `change_quest_direction`, `note_on_quest`, `mark_quest_blocked`, `complete_quest_intent`.
+- *(new)* Chat-shadow writes to the durable execution plan from P4b; L2 carries only active/next plan pointers.
 - *(new)* Routing intent classifier — chat-shadow's per-turn classification of captain input, consuming MON-82's classification authoritatively (vs MON-82 Slice 1 which is advisory). Plus the Architect's auto-decomposition path for high-complexity inputs.
 - *(new)* `pending_action` family of tools: `propose_pending_action` (executor), `modify_pending_action` / `approve_pending_action` / `reject_pending_action` (chat-shadow). Captain-set permission gates configurable per-quest.
 - *(new)* Question/answer mediation: chat-shadow's `answer_question` consumes captain's words and emits typed `answer` events.
@@ -327,7 +354,7 @@ P2 ──► P2b ──► P4 ──► P5 ──► P6 ──► P7 ──► P
 
 **Tracks.** Backend + Quest tree (full taxonomy) + UI/UX (routing-driven affordances; pending-action UI).
 
-**Depends on.** P7 (chat-shadow exists) + P5 (rich quest model to mutate).
+**Depends on.** P7 (chat-shadow exists) + P4b (durable execution plans to manipulate) + P5 (rich quest model to mutate).
 
 ---
 
@@ -417,7 +444,8 @@ P2 ──► P2b ──► P4 ──► P5 ──► P6 ──► P7 ──► P
 | **P3c** | Memory works at 1M scale without blocking writes. |
 | **P3d** | New memories queryable in seconds. |
 | **P4** | Timeline reads as a real execution narrative; captain sees `current_action` in the agent view. **Shadow stops feeling like a chat log.** |
-| **P5** | Quests have rich fields; captain edits scope/direction with rationale. |
+| **P4b** | Current quest has a visible intended plan; actions link to plan items. **Captain can distinguish intended route from actual execution.** |
+| **P5** | Quests have rich fields, attachments, and external refs; captain edits scope/direction with rationale. |
 | **P6** | Quests close with a first-person report. **Compelling captain UX moment.** |
 | **P7** | Chat surface stays clean during work; timeline panel runs in parallel; captain can ask "what are you doing?" while the shadow works. **Two-organ vision becomes the daily UX.** |
 | **P8** | Captain redirects, expands, mediates pending actions through chat without ritual; Architect auto-decomposes complex inputs into subquests. |

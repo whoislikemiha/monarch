@@ -29,7 +29,7 @@ A quest exists, executor is paused or between turns. Captain opens chat:
 
 ### Warm start, active shadow
 Captain opens chat while executor is mid-quest, possibly mid-coherent-action. Shadow:
-- Reads L2 working memory: `current_action`, `recent_actions`, `planned_actions`.
+- Reads L2 working memory: `current_action`, `recent_actions`, and the active/next plan slice once execution plans exist.
 - Reads recent quest events for fresh context.
 - Opens with a status: *"I'm in the middle of the auth refactor (extracting middleware now), what's up?"*
 - Captain can chat without disrupting; or interrupt explicitly.
@@ -48,9 +48,10 @@ Captain returns to an existing chat after time (hours, days). Chat history loads
 ### Captain-initiated quest creation
 Captain says: *"I want to add complexity classifier to user messages."* Shadow:
 - Recognizes quest-creation intent (no current matching quest).
-- May invoke `/linear-to-plan` or similar quest-creation tooling.
-- Drafts initial quest with scope, surfaces for captain confirmation.
+- Drafts or auto-creates an initial quest with scope. For routine work this can be silent; for large, ambiguous, or multi-agent work it should surface a proposed quest/subquest/plan outline for captain confirmation.
 - Once confirmed, ready to work on it.
+
+The captain should not have to fill out a quest form for ordinary work. Conversation comes first; a quest materializes when the captain's intent becomes work. Quests are Monarch-native and canonical. External trackers like Linear or GitHub issues can be attached later as references, but they are not the authority for the quest.
 
 ## The chat-shadow per-turn loop
 
@@ -80,7 +81,7 @@ When the captain types a message, chat-shadow runs:
 4. **Take the route action.** May involve:
    - Reading code/memory to investigate.
    - Writing events to the quest tree (`change_quest_direction`, `add_subtask`, `note_on_quest`, etc.).
-   - Updating the executor's internal plan in L2 (`add_to_internal_plan`).
+   - Updating the quest's execution plan (`add_to_execution_plan`) once P4b exists.
    - Pausing/resuming the executor.
 
 5. **`speak` the response.** Goes to chat surface. Captain-tuned, brief.
@@ -93,28 +94,31 @@ The whole loop should complete in seconds for routine cases. Investigative quest
 
 The executor runs continuously while a quest is active and not paused. Between coherent actions it runs:
 
-1. **Refresh L2.** Especially: `planned_actions` (chat-shadow may have inserted), pending redirects, environment if stale.
+1. **Refresh L2 and quest state.** Especially: active/current action, active plan item once P4b exists, pending redirects, environment if stale.
 
 2. **Check thread status.** Was I paused by chat? Has the quest's direction changed since last action? Are there new notes? If paused → halt and wait for `resume_executor`.
 
 3. **Determine next action.**
-   - If `planned_actions` is non-empty → dequeue the next one.
-   - If empty but quest has direction → generate a new planned action based on quest state + recent activity.
+   - If a durable execution plan exists (P4b) → select or continue the active plan item.
+   - If no durable plan exists but quest has direction → generate the next coherent action from quest state + recent activity.
    - If quest is `done` → `complete_quest` with first-person report, transition status, idle.
 
-4. **Declare intent.** Emit `coherent_action` event with the intent as title. Goes to timeline.
+4. **Set current action.** Call `set_current_action(intent, previous_outcome?)`. Goes to timeline as a `coherent_action`. If a prior action is active, `previous_outcome` closes it first.
 
-5. **Execute the chunk.** Run tool calls + reasoning. Each is nested under the coherent action by `parent_event_id`.
+5. **Execute the chunk.** Run tool calls. Each non-narration tool is nested under the coherent action by `parent_event_id`.
 
-6. **Close the action.** Emit `executor_action_outcome` with one-line summary. Update L2 (`current_action` cleared, `recent_actions` appended).
+6. **Close or transition.** Call `complete_action(outcome)` if done without immediately starting another action, or provide `previous_outcome` on the next `set_current_action`. Rust writes an `executor_action_outcome`, clears/updates `current_action`, and appends to `recent_actions`.
 
 7. **Loop.** Back to step 1.
 
 Within step 5 (executing the chunk):
 - After each tool call, briefly check L2 for `pause_signals` (allows fast pause without waiting for action boundary).
+- If the approach changes materially → `record_decision(decision, rationale?)` sparingly.
 - If a write conflict / risky / out-of-scope situation arises → `propose_pending_action`, halt, wait for chat-shadow decision.
 - If genuinely blocked → `report_blocker` with hypotheses, halt.
 - If need information from captain → `request_information`, halt.
+
+If the executor starts a new action without closing the previous one, Rust auto-closes the previous action with an `auto_closed` marker. If the agent ends, aborts, or the session is destroyed with an action still open, Rust auto-closes at that lifecycle boundary. Tool errors do not auto-close actions; failing tests and command errors are often the point of the current action.
 
 ## Environment snapshot
 
@@ -151,7 +155,7 @@ Without explicit coordination, chat-shadow could redirect mid-action and the exe
 
 Reads `L2.attention_threads.executor.status` (one of: `idle`, `running_action`, `awaiting_decision`, `paused`, `blocked`). Adapts:
 
-- `running_action` + tactical addition → `add_to_internal_plan` (no pause needed; executor reads on next loop).
+- `running_action` + tactical addition → `add_to_execution_plan` (no pause needed; executor reads on next loop once P4b exists).
 - `running_action` + immediate redirect → `pause_executor` first, then change, then resume.
 - `awaiting_decision` → handle the pending decision cleanly.
 - `paused` → write changes, then `resume_executor`.
@@ -166,7 +170,7 @@ Per the per-turn loop steps 1–2. Plan changes, redirects, notes are all picked
 
 ### Plan changes happen at action boundaries, not mid-action
 
-Adding to `planned_actions` while executor is mid-action just means the new action runs after current completes. Mid-action redirects via `note_on_quest` + `pause_executor` + `resume_executor` are explicit and intentional.
+Adding to the execution plan while executor is mid-action just means the new plan item runs after the current action completes. Mid-action redirects via `note_on_quest` + `pause_executor` + `resume_executor` are explicit and intentional.
 
 ### Conflict scenarios
 
@@ -181,7 +185,7 @@ What does a shadow do when there's nothing to do?
 - **Executor:**
   - If quest is `done` → wrote first-person report, transitioned status, idle.
   - If quest is `paused` (by chat or by blocker) → wait.
-  - If `planned_actions` is empty and quest has no remaining direction → typically a signal the quest needs new direction from captain; surface `observation` if appropriate.
+  - If the execution plan is empty and quest has no remaining direction → typically a signal the quest needs new direction from captain; surface `observation` if appropriate.
 
 - **Periodically while idle:**
   - Keeper compaction tick (per `distillation.md`).
@@ -216,8 +220,8 @@ Listed for cross-doc reference. Treat as current direction, not final calls. Mos
 
 1. **Conversations have entry conditions, not one mode.** Chat-shadow's opening behavior depends on cold/warm/active/notification/resumed/quest-creation start.
 2. **Chat-shadow per-turn loop is: load → read → classify → route → speak → optionally observe.**
-3. **Executor per-turn loop is: refresh L2 → check status → determine next action → declare intent → execute → close → loop.**
-4. **Mid-action interrupts go through pause + modify + resume.** Plan changes flow through L2 between actions; only hard stops break in-flight calls.
+3. **Executor per-turn loop is: refresh L2/quest state → check status → determine next action → set current action → execute → close/transition → loop.**
+4. **Mid-action interrupts go through pause + modify + resume.** Plan changes flow through durable execution-plan updates between actions; only hard stops break in-flight calls.
 5. **Each thread = one Pi session per agent.** Shared identity via L1; same shadow.
 6. **Idle shadows do periodic Keeper ticks and environment refreshes.** Proactive surfacing is out of scope for v1.
 7. **Substrate is canonical; everything else is reconstructable.** Crash recovery is "rebuild from DB."

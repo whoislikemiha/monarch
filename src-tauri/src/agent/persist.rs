@@ -19,7 +19,10 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::db::{Database, InsertMemoryPayload, MessageRow, RecordQuestEventPayload, SaveClassificationPayload};
+use crate::db::{
+    Database, InsertMemoryPayload, MessageRow, QuestEventNotification, RecordQuestEventPayload,
+    SaveClassificationPayload,
+};
 use crate::error::MonarchError;
 use crate::memory_index::MemoryIndex;
 use crate::persistence::write_attachment_bytes;
@@ -135,6 +138,36 @@ pub(super) enum PersistCommand {
     RecordQuestEvent {
         payload: RecordQuestEventPayload,
     },
+    ActionTransition {
+        agent_id: String,
+        quest_id: String,
+        intent: String,
+        previous_outcome: Option<String>,
+    },
+    ActionComplete {
+        agent_id: String,
+        outcome: String,
+    },
+    ExecutorDecision {
+        agent_id: String,
+        quest_id: String,
+        decision: String,
+        rationale: Option<String>,
+    },
+    ToolCallStart {
+        agent_id: String,
+        quest_id: String,
+        tool_call_id: String,
+        tool_name: String,
+        args: Option<serde_json::Value>,
+    },
+    ToolCallEnd {
+        agent_id: String,
+        tool_call_id: String,
+        result: Option<serde_json::Value>,
+        is_error: bool,
+        duration_ms: Option<i64>,
+    },
     /// MON-100: full-rebuild the per-agent HNSW index from current DB
     /// embeddings. Runs last in a Keeper-tick burst so the index is
     /// consistent before the next read. P3d (MON-97) replaces this with
@@ -154,7 +187,12 @@ impl PersistCommand {
             | Self::IncrementAgentTurns { agent_id, .. }
             | Self::RecordToolUsage { agent_id, .. }
             | Self::InsertMemory { agent_id, .. }
-            | Self::RebuildHnsw { agent_id, .. } => agent_id,
+            | Self::RebuildHnsw { agent_id, .. }
+            | Self::ActionTransition { agent_id, .. }
+            | Self::ActionComplete { agent_id, .. }
+            | Self::ExecutorDecision { agent_id, .. }
+            | Self::ToolCallStart { agent_id, .. }
+            | Self::ToolCallEnd { agent_id, .. } => agent_id,
             Self::SaveClassification { payload } => &payload.agent_id,
             // CompleteKeeperRun + RecordQuestEvent don't carry an agent id
             // directly — failures still log but cannot flip a per-agent
@@ -216,17 +254,12 @@ impl PersistCommand {
                         .await
                     {
                         Ok(rows) if rows == 0 => {
-                            ctx.pending_classification_links
-                                .insert(cid, message_id);
+                            ctx.pending_classification_links.insert(cid, message_id);
                         }
                         Ok(_) => {}
                         Err(e) => {
-                            eprintln!(
-                                "[monarch] classifier backfill failed for {}: {:?}",
-                                cid, e
-                            );
-                            ctx.pending_classification_links
-                                .insert(cid, message_id);
+                            eprintln!("[monarch] classifier backfill failed for {}: {:?}", cid, e);
+                            ctx.pending_classification_links.insert(cid, message_id);
                         }
                     }
                 }
@@ -277,17 +310,12 @@ impl PersistCommand {
                 db.increment_agent_stats(&agent_id, input_tokens, output_tokens, cost)
                     .await
             }
-            Self::IncrementAgentTurns { agent_id } => {
-                db.increment_agent_turns(&agent_id).await
-            }
+            Self::IncrementAgentTurns { agent_id } => db.increment_agent_turns(&agent_id).await,
             Self::RecordToolUsage {
                 agent_id,
                 tool_name,
                 is_error,
-            } => {
-                db.record_tool_usage(&agent_id, &tool_name, is_error)
-                    .await
-            }
+            } => db.record_tool_usage(&agent_id, &tool_name, is_error).await,
             Self::SaveClassification { mut payload } => {
                 // MON-82: if `SaveAssistantMessage` already stashed a
                 // message_id for this classification (the common case —
@@ -304,15 +332,16 @@ impl PersistCommand {
                 let _ = &mut payload;
                 Ok(())
             }
-            Self::InsertMemory { agent_id: _, payload } => {
+            Self::InsertMemory {
+                agent_id: _,
+                payload,
+            } => {
                 // MON-100: embed the summary before insert. If the embedder
                 // is not initialised (captain hasn't downloaded the model)
                 // we still write the row — FTS5 search keeps working off
                 // title+summary+content; only the HNSW vector path is
                 // skipped until the next rebuild after init.
-                let (embedding, embedding_model_id) = if memory_index
-                    .is_initialized()
-                {
+                let (embedding, embedding_model_id) = if memory_index.is_initialized() {
                     match memory_index.embed_to_blob(&payload.summary).await {
                         Ok(blob) => (
                             Some(blob),
@@ -364,16 +393,107 @@ impl PersistCommand {
                 }
                 Ok(())
             }
+            Self::ActionTransition {
+                agent_id,
+                quest_id,
+                intent,
+                previous_outcome,
+            } => {
+                let notes = db
+                    .record_action_transition_internal(
+                        &agent_id,
+                        &quest_id,
+                        &intent,
+                        previous_outcome.as_deref(),
+                    )
+                    .await?;
+                emit_quest_notifications(app, ws_tx, notes);
+                Ok(())
+            }
+            Self::ActionComplete { agent_id, outcome } => {
+                let notes = db.complete_action_internal(&agent_id, &outcome).await?;
+                emit_quest_notifications(app, ws_tx, notes);
+                Ok(())
+            }
+            Self::ExecutorDecision {
+                agent_id,
+                quest_id,
+                decision,
+                rationale,
+            } => {
+                let notes = db
+                    .record_executor_decision_internal(
+                        &agent_id,
+                        &quest_id,
+                        &decision,
+                        rationale.as_deref(),
+                    )
+                    .await?;
+                emit_quest_notifications(app, ws_tx, notes);
+                Ok(())
+            }
+            Self::ToolCallStart {
+                agent_id,
+                quest_id,
+                tool_call_id,
+                tool_name,
+                args,
+            } => {
+                let notes = db
+                    .record_tool_call_start_internal(
+                        &agent_id,
+                        &quest_id,
+                        &tool_call_id,
+                        &tool_name,
+                        args,
+                    )
+                    .await?;
+                emit_quest_notifications(app, ws_tx, notes);
+                Ok(())
+            }
+            Self::ToolCallEnd {
+                tool_call_id,
+                result,
+                is_error,
+                duration_ms,
+                ..
+            } => {
+                let notes = db
+                    .record_tool_call_end_internal(&tool_call_id, result, is_error, duration_ms)
+                    .await?;
+                emit_quest_notifications(app, ws_tx, notes);
+                Ok(())
+            }
             Self::RebuildHnsw { agent_id } => {
                 // P2 ships full-rebuild — instant-distance is fast enough for
                 // P2 volumes (<10k memories per agent). MON-97 (P3d) replaces
                 // this with incremental insert.
-                let data = db
-                    .load_embeddings_for_agent_internal(&agent_id)
-                    .await?;
+                let data = db.load_embeddings_for_agent_internal(&agent_id).await?;
                 memory_index.rebuild(data).await
             }
         }
+    }
+}
+
+fn emit_quest_notifications(
+    app: &Arc<PlMutex<Option<AppHandle>>>,
+    ws_tx: &broadcast::Sender<WsBroadcast>,
+    notes: Vec<QuestEventNotification>,
+) {
+    if notes.is_empty() {
+        return;
+    }
+    let app_opt = app.lock().clone();
+    let Some(app) = app_opt else {
+        return;
+    };
+    for note in notes {
+        emit_event(
+            &app,
+            ws_tx,
+            &format!("quest-event-{}", note.quest_id),
+            &serde_json::json!({ "id": note.event_id, "eventType": note.event_type }).to_string(),
+        );
     }
 }
 
@@ -519,7 +639,8 @@ pub(super) fn build_persist_commands(
                 "result": result_str,
                 "isError": *is_error,
             });
-            if let (Some(d), Some(obj)) = (durations.tool_duration_ms, content_obj.as_object_mut()) {
+            if let (Some(d), Some(obj)) = (durations.tool_duration_ms, content_obj.as_object_mut())
+            {
                 obj.insert("durationMs".to_string(), serde_json::json!(d));
             }
             let content = content_obj.to_string();
@@ -543,9 +664,67 @@ pub(super) fn build_persist_commands(
             // MON-63: record tool usage for specialization tracking
             cmds.push(PersistCommand::RecordToolUsage {
                 agent_id: agent_id.to_string(),
-                tool_name,
+                tool_name: tool_name.clone(),
                 is_error: *is_error,
             });
+            if !is_narration_tool(&tool_name) {
+                cmds.push(PersistCommand::ToolCallEnd {
+                    agent_id: agent_id.to_string(),
+                    tool_call_id: tool_call_id.clone(),
+                    result: result.clone(),
+                    is_error: *is_error,
+                    duration_ms: durations.tool_duration_ms,
+                });
+            }
+        }
+        InnerEvent::ToolExecutionStart {
+            tool_call_id,
+            tool_name,
+            args,
+        } => {
+            if let Some(quest_id) = current_quest_id {
+                if !is_narration_tool(tool_name) {
+                    cmds.push(PersistCommand::ToolCallStart {
+                        agent_id: agent_id.to_string(),
+                        quest_id,
+                        tool_call_id: tool_call_id.clone(),
+                        tool_name: tool_name.clone(),
+                        args: args.clone(),
+                    });
+                }
+            }
+        }
+        InnerEvent::ActionTransition {
+            intent,
+            previous_outcome,
+        } => {
+            if let Some(quest_id) = current_quest_id {
+                cmds.push(PersistCommand::ActionTransition {
+                    agent_id: agent_id.to_string(),
+                    quest_id,
+                    intent: intent.clone(),
+                    previous_outcome: previous_outcome.clone(),
+                });
+            }
+        }
+        InnerEvent::ActionComplete { outcome } => {
+            cmds.push(PersistCommand::ActionComplete {
+                agent_id: agent_id.to_string(),
+                outcome: outcome.clone(),
+            });
+        }
+        InnerEvent::ExecutorDecision {
+            decision,
+            rationale,
+        } => {
+            if let Some(quest_id) = current_quest_id {
+                cmds.push(PersistCommand::ExecutorDecision {
+                    agent_id: agent_id.to_string(),
+                    quest_id,
+                    decision: decision.clone(),
+                    rationale: rationale.clone(),
+                });
+            }
         }
         InnerEvent::TurnEnd => {
             // MON-63: increment per-agent turn counter
@@ -571,6 +750,7 @@ pub(super) fn build_persist_commands(
                         event_type: "memory_suggestion".to_string(),
                         actor: Some(agent_id.to_string()),
                         payload_json: Some(payload_json),
+                        ..Default::default()
                     },
                 });
             } else {
@@ -648,6 +828,9 @@ fn inner_event_tag(event: &InnerEvent) -> &'static str {
         InnerEvent::ToolExecutionStart { .. } => "tool_execution_start",
         InnerEvent::ToolExecutionEnd { .. } => "tool_execution_end",
         InnerEvent::MemorySuggestion { .. } => "memory_suggestion",
+        InnerEvent::ActionTransition { .. } => "action_transition",
+        InnerEvent::ActionComplete { .. } => "action_complete",
+        InnerEvent::ExecutorDecision { .. } => "executor_decision",
         InnerEvent::CompactionStart { .. } => "compaction_start",
         InnerEvent::CompactionEnd { .. } => "compaction_end",
         InnerEvent::AutoRetryStart { .. } => "auto_retry_start",
@@ -656,6 +839,13 @@ fn inner_event_tag(event: &InnerEvent) -> &'static str {
         InnerEvent::ToolExecutionUpdate => "tool_execution_update",
         InnerEvent::Unknown { .. } => "unknown",
     }
+}
+
+fn is_narration_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "set_current_action" | "complete_action" | "record_decision"
+    )
 }
 
 /// MON-37: the single-consumer persistence task. Drains the bounded mpsc

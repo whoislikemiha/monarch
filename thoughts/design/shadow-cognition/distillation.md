@@ -94,7 +94,7 @@ Each Keeper run emits some subset of:
 
 **Artifacts** (references to things produced). Files written, plans drafted, PRs created. These have their own existence outside the conversation; the memory tree references them, doesn't duplicate them.
 
-**Working-memory updates.** A clean post-compaction L2 state: condensed `recent_actions`, refreshed `current_action` summary, refined `open_threads`. The executor mutates L2 in real-time during work; the Keeper consolidates at compaction ticks (see `substrate.md` § L2).
+**Working-memory updates.** A clean post-compaction L2 state: condensed `recent_actions`, refreshed `current_action` pointer/summary, refined `open_threads` once that field exists. The executor mutates L2 in real-time during work; the Keeper consolidates at compaction ticks (see `substrate.md` § L2).
 
 The Keeper's output is structured JSON; Rust's persistence pipeline applies the writes atomically.
 

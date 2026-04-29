@@ -100,7 +100,11 @@ pub struct StreamingMessage {
 // matches what the frontend switches on.
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum DisplayItem {
     User {
         content: String,
@@ -271,9 +275,9 @@ impl LiveAgentState {
             // MON-71: at agent-end the message_end boundary may have been
             // skipped (older sidecar paths), so compute duration from the
             // stamped turn start now if available.
-            let duration_ms = sm.turn_started_at_ms.map(|start| {
-                chrono::Utc::now().timestamp_millis().saturating_sub(start)
-            });
+            let duration_ms = sm
+                .turn_started_at_ms
+                .map(|start| chrono::Utc::now().timestamp_millis().saturating_sub(start));
             self.items.push(DisplayItem::Assistant {
                 content: sm.content,
                 model: sm.model,
@@ -432,9 +436,7 @@ pub fn display_items_from_messages(
                             args,
                             result: result_entry.and_then(|e| e.result.clone()),
                             is_error: result_entry.and_then(|e| e.is_error),
-                            status: result_entry
-                                .map(|e| e.status)
-                                .unwrap_or(ToolStatus::Done),
+                            status: result_entry.map(|e| e.status).unwrap_or(ToolStatus::Done),
                             // MON-71: no started_at on recovery — we only
                             // persisted the final duration. Passing None
                             // renders a static duration chip (no ticker).
@@ -514,7 +516,10 @@ fn parse_stored_tool_result(content: &str, fallback_id: &str) -> Option<ToolExec
         .and_then(|v| v.as_str())
         .unwrap_or("tool")
         .to_string();
-    let is_error = obj.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
+    let is_error = obj
+        .get("isError")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     // MON-71: tool-call duration persisted inside the toolResult JSON blob.
     // Uses `durationMs` (camelCase) to match the serde wire shape.
     let duration_ms = obj.get("durationMs").and_then(|v| v.as_i64());
@@ -527,10 +532,7 @@ fn parse_stored_tool_result(content: &str, fallback_id: &str) -> Option<ToolExec
         }
     });
     // Skip rows that look empty (no id, no name, no result) — same as the TS version.
-    if obj.get("toolCallId").is_none()
-        && obj.get("toolName").is_none()
-        && result.is_none()
-    {
+    if obj.get("toolCallId").is_none() && obj.get("toolName").is_none() && result.is_none() {
         return None;
     }
     Some(ToolExecution {
@@ -550,8 +552,9 @@ fn parse_stored_tool_result(content: &str, fallback_id: &str) -> Option<ToolExec
 }
 
 fn has_visible_assistant_content(blocks: &[serde_json::Value]) -> bool {
-    blocks.iter().any(|b| {
-        match b.get("type").and_then(|t| t.as_str()) {
+    blocks
+        .iter()
+        .any(|b| match b.get("type").and_then(|t| t.as_str()) {
             Some("text") => b
                 .get("text")
                 .and_then(|t| t.as_str())
@@ -564,8 +567,7 @@ fn has_visible_assistant_content(blocks: &[serde_json::Value]) -> bool {
                 .unwrap_or(false),
             Some("image") => true,
             _ => false,
-        }
-    })
+        })
 }
 
 /// Parse a canonical RFC3339 UTC timestamp into Unix seconds. MON-39

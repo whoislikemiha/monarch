@@ -248,12 +248,11 @@ fn embed_batch(
         }
     }
 
-    let iids = Value::from_array(input_ids)
-        .map_err(|e| MonarchError::persistence(e.to_string()))?;
-    let amask = Value::from_array(attn_mask)
-        .map_err(|e| MonarchError::persistence(e.to_string()))?;
-    let tids = Value::from_array(type_ids)
-        .map_err(|e| MonarchError::persistence(e.to_string()))?;
+    let iids =
+        Value::from_array(input_ids).map_err(|e| MonarchError::persistence(e.to_string()))?;
+    let amask =
+        Value::from_array(attn_mask).map_err(|e| MonarchError::persistence(e.to_string()))?;
+    let tids = Value::from_array(type_ids).map_err(|e| MonarchError::persistence(e.to_string()))?;
 
     let outputs = session
         .run(ort::inputs![
