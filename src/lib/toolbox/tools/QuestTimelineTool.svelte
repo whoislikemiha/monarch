@@ -3,6 +3,7 @@
   import type { QuestEventRow, QuestRow } from "../../bindings";
   import { questStore } from "../questStore.svelte";
   import ShadowAvatar from "../../avatar/ShadowAvatar.svelte";
+  import { agentStore } from "../../stores/agentStore.svelte";
 
   let { agentContext }: ToolProps = $props();
 
@@ -79,6 +80,26 @@
     if (h < 24) return `${h}h ago`;
     const d = Math.floor(h / 24);
     return `${d}d ago`;
+  }
+
+  function formatDateTime(iso: string | null): string {
+    if (!iso) return "";
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return iso;
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date);
+  }
+
+  function assigneeLabel(agentId: string | null): string {
+    if (!agentId) return "Unassigned";
+    const agent = agentStore.getAgent(agentId);
+    if (!agent) return agentId;
+    const name = agent.shadow?.shadowName || agent.name || agentId;
+    return agent.shadow?.shadowTitle ? `${name}, ${agent.shadow.shadowTitle}` : name;
   }
 
   // --- New-quest form ------------------------------------------------------
@@ -213,8 +234,16 @@
     }
   }
 
-  function formatTrigger(trigger: string): string {
-    return trigger === "quest_close" ? "quest close" : "continuous";
+  function keeperLabel(trigger: string): string {
+    if (trigger === "quest_close") return "Keeper quest close";
+    if (trigger === "continuous") return "Keeper checkpoint";
+    return "Keeper note";
+  }
+
+  function keeperHint(trigger: string): string {
+    if (trigger === "quest_close") return "Summary produced when the quest was marked done.";
+    if (trigger === "continuous") return "Background memory checkpoint from context compaction.";
+    return "Keeper memory summary.";
   }
 
   interface ActionPayload {
@@ -257,6 +286,9 @@
     const childrenByParent = new Map<string, QuestEventRow[]>();
     const roots: QuestEventRow[] = [];
     for (const ev of events) {
+      // Status is already visible in the quest metadata; the auto-created
+      // and mark-done rows add noise to the execution narrative.
+      if (ev.eventType === "status_change") continue;
       if (ev.parentEventId) {
         const list = childrenByParent.get(ev.parentEventId) ?? [];
         list.push(ev);
@@ -452,47 +484,58 @@
                 </button>
                 {#if expanded}
                   <div class="detail">
-                    <div class="detail-meta">
-                      <span class="meta-row">
-                        <span class="meta-label">Status</span>
-                        <span class="meta-value">{quest.status}</span>
-                      </span>
-                      {#if quest.grade}
+                    <div class="quest-info">
+                      <div class="quest-title-full">{quest.title}</div>
+                      <div class="detail-meta">
                         <span class="meta-row">
-                          <span class="meta-label">Grade</span>
-                          <span class="meta-value">{quest.grade}</span>
+                          <span class="meta-label">Status</span>
+                          <span class="meta-value">{quest.status}</span>
                         </span>
-                      {/if}
-                      {#if quest.execHint}
+                        {#if quest.grade}
+                          <span class="meta-row">
+                            <span class="meta-label">Grade</span>
+                            <span class="meta-value">{quest.grade}</span>
+                          </span>
+                        {/if}
+                        {#if quest.execHint}
+                          <span class="meta-row">
+                            <span class="meta-label">Exec</span>
+                            <span class="meta-value">{quest.execHint}</span>
+                          </span>
+                        {/if}
                         <span class="meta-row">
-                          <span class="meta-label">Exec</span>
-                          <span class="meta-value">{quest.execHint}</span>
+                          <span class="meta-label">Created by</span>
+                          <span class="meta-value">{quest.createdBy}</span>
                         </span>
-                      {/if}
-                      <span class="meta-row">
-                        <span class="meta-label">Created by</span>
-                        <span class="meta-value">{quest.createdBy}</span>
-                      </span>
-                      <span class="meta-row">
-                        <span class="meta-label">Created</span>
-                        <span class="meta-value">{quest.createdAt}</span>
-                      </span>
-                      {#if quest.startedAt}
+                        {#if quest.assigneeShadowId}
+                          <span class="meta-row">
+                            <span class="meta-label">Assignee</span>
+                            <span class="meta-value" title={quest.assigneeShadowId}>
+                              {assigneeLabel(quest.assigneeShadowId)}
+                            </span>
+                          </span>
+                        {/if}
                         <span class="meta-row">
-                          <span class="meta-label">Started</span>
-                          <span class="meta-value">{quest.startedAt}</span>
+                          <span class="meta-label">Created</span>
+                          <span class="meta-value">{formatDateTime(quest.createdAt)}</span>
                         </span>
-                      {/if}
-                      {#if quest.completedAt}
-                        <span class="meta-row">
-                          <span class="meta-label">Completed</span>
-                          <span class="meta-value">{quest.completedAt}</span>
-                        </span>
+                        {#if quest.startedAt}
+                          <span class="meta-row">
+                            <span class="meta-label">Started</span>
+                            <span class="meta-value">{formatDateTime(quest.startedAt)}</span>
+                          </span>
+                        {/if}
+                        {#if quest.completedAt}
+                          <span class="meta-row">
+                            <span class="meta-label">Completed</span>
+                            <span class="meta-value">{formatDateTime(quest.completedAt)}</span>
+                          </span>
+                        {/if}
+                      </div>
+                      {#if quest.description}
+                        <p class="description">{quest.description}</p>
                       {/if}
                     </div>
-                    {#if quest.description}
-                      <p class="description">{quest.description}</p>
-                    {/if}
                     <div class="event-log">
                       <div class="log-title">Event log</div>
                       {#if events.length === 0}
@@ -502,23 +545,41 @@
                           {@const ev = node.event}
                           {#if ev.eventType === "coherent_action"}
                             {@const action = actionPayload(ev.payloadJson)}
-                            <div class="event-row action-row">
+                            {@const actionOpen = questState.expandedEventIds.has(ev.id)}
+                            <button
+                              type="button"
+                              class="event-row event-toggle action-row"
+                              onclick={() => questStore.toggleEventExpand(agentContext.agentId, ev.id)}
+                              aria-expanded={actionOpen}
+                            >
+                              <span class="event-disclosure">{actionOpen ? "▾" : "▸"}</span>
                               <span class="action-icon" title="Coherent action">◆</span>
                               <span class="event-type action-type">{action.intent || "Current action"}</span>
                               {#if action.status}
                                 <span class="status-chip status-{action.status}">{action.status}</span>
                               {/if}
+                              {#if node.children.length}
+                                <span class="child-count">{node.children.length}</span>
+                              {/if}
                               <span class="muted small">{formatRelative(ev.createdAt)}</span>
-                            </div>
+                            </button>
                             {#if action.outcome}
                               <div class="action-outcome-inline">{action.outcome}</div>
                             {/if}
-                            {#if node.children.length}
+                            {#if actionOpen && node.children.length}
                               <div class="event-children">
                                 {#each node.children as child (child.id)}
                                   {#if child.eventType === "tool_call"}
                                     {@const tool = toolCallPayload(child.payloadJson)}
-                                    <div class="event-row child-row tool-row" class:error={tool.isError}>
+                                    {@const toolOpen = questState.expandedEventIds.has(child.id)}
+                                    <button
+                                      type="button"
+                                      class="event-row event-toggle child-row tool-row"
+                                      class:error={tool.isError}
+                                      onclick={() => questStore.toggleEventExpand(agentContext.agentId, child.id)}
+                                      aria-expanded={toolOpen}
+                                    >
+                                      <span class="event-disclosure">{toolOpen ? "▾" : "▸"}</span>
                                       <span class="child-marker"></span>
                                       <span class="event-type">{tool.toolName}</span>
                                       {#if tool.status}
@@ -527,8 +588,8 @@
                                       {#if tool.durationMs != null}
                                         <span class="muted small">{durationLabel(tool.durationMs)}</span>
                                       {/if}
-                                    </div>
-                                    {#if tool.argsPreview || tool.resultPreview}
+                                    </button>
+                                    {#if toolOpen && (tool.argsPreview || tool.resultPreview)}
                                       <div class="child-summary">
                                         {#if tool.argsPreview}<span>{tool.argsPreview}</span>{/if}
                                         {#if tool.resultPreview}<span>{tool.resultPreview}</span>{/if}
@@ -571,10 +632,18 @@
                             {/if}
                           {:else if ev.eventType === "compaction_tick"}
                             {@const cp = parseCompactionPayload(ev.payloadJson)}
-                            <div class="event-row compaction-row">
+                            {@const keeperOpen = questState.expandedEventIds.has(ev.id)}
+                            <button
+                              type="button"
+                              class="event-row event-toggle compaction-row"
+                              onclick={() => questStore.toggleEventExpand(agentContext.agentId, ev.id)}
+                              aria-expanded={keeperOpen}
+                              title={cp ? keeperHint(cp.trigger) : "Keeper memory summary"}
+                            >
+                              <span class="event-disclosure">{keeperOpen ? "▾" : "▸"}</span>
                               <span class="compaction-icon" title="Keeper compaction tick">◈</span>
                               <span class="event-type compaction-type">
-                                {cp ? formatTrigger(cp.trigger) : "compaction"}
+                                {cp ? keeperLabel(cp.trigger) : "Keeper summary"}
                               </span>
                               <span class="muted small">{ev.actor ?? "—"}</span>
                               <span class="muted small">{formatRelative(ev.createdAt)}</span>
@@ -583,13 +652,13 @@
                                   +{cp.claimsCount} {cp.claimsCount === 1 ? "claim" : "claims"}
                                 </span>
                               {/if}
-                            </div>
-                            {#if cp}
+                            </button>
+                            {#if keeperOpen && cp}
                               <div class="compaction-summary">{cp.summary || "(no summary returned)"}</div>
                               <div class="compaction-meta muted small">
                                 run #{cp.keeperRunId ?? "?"}
                               </div>
-                            {:else if ev.payloadJson}
+                            {:else if keeperOpen && ev.payloadJson}
                               <pre class="event-payload">{ev.payloadJson}</pre>
                             {/if}
                           {:else if ev.eventType === "memory_suggestion"}
@@ -835,6 +904,7 @@
     background: var(--bg-panel-2);
   }
   .node.expanded > .node-row {
+    align-items: flex-start;
     background: var(--bg-panel-2);
   }
 
@@ -873,11 +943,19 @@
 
   .title {
     flex: 1;
+    min-width: 0;
     font-size: 11px;
     color: var(--text-primary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .node.expanded > .node-row .title {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
   }
 
   .ts {
@@ -888,22 +966,36 @@
   /* Detail — inline expansion */
   .detail {
     margin: 2px 0 6px 20px;
-    padding: 8px;
+    padding: 10px;
     border-left: 2px solid var(--border-subtle);
     background: var(--bg-panel);
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 10px;
+  }
+  .quest-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .quest-title-full {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
   }
   .detail-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+    gap: 8px 12px;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
   .meta-row {
     display: flex;
-    gap: 4px;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
     font-size: 10px;
   }
   .meta-label {
@@ -913,6 +1005,7 @@
   }
   .meta-value {
     color: var(--text-primary);
+    overflow-wrap: anywhere;
   }
   .description {
     margin: 0;
@@ -923,7 +1016,9 @@
   .event-log {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-subtle);
   }
   .log-title {
     font-size: 9px;
@@ -936,6 +1031,25 @@
     align-items: center;
     gap: 6px;
     font-size: 10px;
+  }
+  .event-toggle {
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .event-toggle:hover {
+    background: var(--bg-panel-2);
+  }
+  .event-disclosure {
+    width: 10px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+    font-size: 9px;
+    text-align: center;
   }
   .event-type {
     color: var(--text-primary);
@@ -956,6 +1070,7 @@
   .action-row {
     align-items: flex-start;
     padding: 4px 0;
+    border-radius: 4px;
   }
   .action-icon {
     color: var(--accent);
@@ -979,6 +1094,18 @@
     color: var(--text-muted);
     font-size: 9px;
     line-height: 1.2;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+  .child-count {
+    flex-shrink: 0;
+    min-width: 16px;
+    padding: 1px 5px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    color: var(--text-muted);
+    font-size: 9px;
+    line-height: 1.2;
+    text-align: center;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
   .status-active,
@@ -1016,6 +1143,8 @@
   }
   .child-row {
     min-height: 18px;
+    padding: 2px 0;
+    border-radius: 4px;
   }
   .child-marker {
     width: 5px;
@@ -1037,7 +1166,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    margin-left: 11px;
+    margin-left: 26px;
     padding: 3px 6px;
     border-radius: 3px;
     background: var(--bg-sidebar);
@@ -1047,14 +1176,15 @@
     overflow-wrap: anywhere;
   }
   .child-payload {
-    margin-left: 11px;
+    margin-left: 26px;
   }
 
   /* MON-100: compaction_tick visual treatment. Subtle accent border +
      dedicated icon set this kind of event apart from quest-status events
      without making it loud. */
   .compaction-row {
-    padding-left: 0;
+    padding: 3px 0;
+    border-radius: 4px;
   }
   .compaction-icon {
     color: var(--accent);

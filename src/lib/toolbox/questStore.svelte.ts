@@ -29,6 +29,8 @@ export interface AgentQuestState {
   eventsByQuest: SvelteMap<string, QuestEventRow[]>;
   /** Quest ids currently expanded inline in the timeline view. */
   expandedQuestIds: SvelteSet<string>;
+  /** Quest event ids expanded inside an open quest. */
+  expandedEventIds: SvelteSet<string>;
   /** L2 v0: current action + recent actions for quick "what now?" UI. */
   workingMemory: WorkingMemoryPayload | null;
   /** True while the create-quest form is visible. */
@@ -47,6 +49,7 @@ interface AgentSubs {
 class QuestStore {
   readonly byAgent = new SvelteMap<string, AgentQuestState>();
   private subs = new Map<string, AgentSubs>();
+  private workingMemoryUnavailable = false;
 
   ensure(agentId: string): AgentQuestState {
     const existing = this.byAgent.get(agentId);
@@ -59,6 +62,7 @@ class QuestStore {
       treesByRoot: new SvelteMap(),
       eventsByQuest: new SvelteMap(),
       expandedQuestIds: new SvelteSet(),
+      expandedEventIds: new SvelteSet(),
       workingMemory: null,
       creating: false,
       creatingParentId: null,
@@ -82,10 +86,6 @@ class QuestStore {
       const all = await invoke<QuestRow[]>("db_list_quests_for_agent", {
         agentId,
       });
-      entry.workingMemory = await invoke<WorkingMemoryPayload | null>(
-        "db_get_working_memory",
-        { agentId },
-      );
       // Keep only roots (parent_id null) in the timeline header list.
       const roots = all.filter((q) => q.parentId === null);
       entry.roots = roots;
@@ -99,6 +99,7 @@ class QuestStore {
       );
       entry.treesByRoot.clear();
       roots.forEach((r, i) => entry.treesByRoot.set(r.id, trees[i]));
+      await this.refreshWorkingMemory(agentId);
 
       // Resubscribe event listeners for the current set of roots.
       this.wireRootSubscriptions(entry);
@@ -131,25 +132,32 @@ class QuestStore {
     await this.refresh(agentId);
   }
 
-  async loadEvents(questId: string): Promise<void> {
-    // Owning agent state not required — events are keyed globally by quest.
-    for (const entry of this.byAgent.values()) {
-      const events = await invoke<QuestEventRow[]>("db_list_quest_events", {
-        questId,
-      });
-      entry.eventsByQuest.set(questId, events);
-      return; // only need to write once; the Map lookup is shared via reference
-    }
+  async loadEvents(agentId: string, questId: string): Promise<void> {
+    const entry = this.ensure(agentId);
+    const events = await invoke<QuestEventRow[]>("db_list_quest_events", {
+      questId,
+    });
+    entry.eventsByQuest.set(questId, events);
   }
 
   async refreshWorkingMemory(agentId: string): Promise<void> {
     const entry = this.ensure(agentId);
+    if (this.workingMemoryUnavailable) return;
     try {
       entry.workingMemory = await invoke<WorkingMemoryPayload | null>(
         "db_get_working_memory",
         { agentId },
       );
     } catch (e) {
+      if (String(e).includes("db_get_working_memory")) {
+        // A frontend HMR refresh can briefly talk to an older Rust process
+        // that does not have MON-109's read command yet. L2 is optional for
+        // rendering the quest tree, so keep the timeline usable and let the
+        // command appear after a full Tauri restart.
+        this.workingMemoryUnavailable = true;
+        entry.workingMemory = null;
+        return;
+      }
       entry.error = String(e);
     }
   }
@@ -162,10 +170,19 @@ class QuestStore {
       entry.expandedQuestIds.add(questId);
       // Lazy-load events on first expand.
       if (!entry.eventsByQuest.has(questId)) {
-        this.loadEvents(questId).catch((e) => {
+        this.loadEvents(agentId, questId).catch((e) => {
           entry.error = String(e);
         });
       }
+    }
+  }
+
+  toggleEventExpand(agentId: string, eventId: string): void {
+    const entry = this.ensure(agentId);
+    if (entry.expandedEventIds.has(eventId)) {
+      entry.expandedEventIds.delete(eventId);
+    } else {
+      entry.expandedEventIds.add(eventId);
     }
   }
 
@@ -233,7 +250,7 @@ class QuestStore {
           // by the same persistence path.
           entry.eventsByQuest.delete(questId);
           if (entry.expandedQuestIds.has(questId)) {
-            this.loadEvents(questId).catch((e) => {
+            this.loadEvents(entry.agentId, questId).catch((e) => {
               entry.error = String(e);
             });
           }
