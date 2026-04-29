@@ -125,6 +125,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             db::db_get_quest_tree_for_root,
             db::db_record_quest_event,
             db::db_list_quest_events,
+            db::db_get_working_memory,
             // MON-82
             db::db_list_classifications_for_agent,
             db::db_get_classification_for_message,

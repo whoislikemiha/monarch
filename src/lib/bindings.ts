@@ -230,6 +230,14 @@ export const commands = {
 	dbGetQuestTreeForRoot: (rootId: string) => typedError<QuestRow[], ErrorDto>(__TAURI_INVOKE("db_get_quest_tree_for_root", { rootId })),
 	dbRecordQuestEvent: (payload: RecordQuestEventPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_record_quest_event", { payload })),
 	dbListQuestEvents: (questId: string) => typedError<QuestEventRow[], ErrorDto>(__TAURI_INVOKE("db_list_quest_events", { questId })),
+	dbGetWorkingMemory: (agentId: string) => typedError<{
+	schemaVersion: number,
+	currentQuestId: string | null,
+	currentQuestPath: string[],
+	currentAction: WorkingMemoryCurrentAction | null,
+	recentActions: WorkingMemoryRecentAction[],
+	updatedAt: string,
+} | null, ErrorDto>(__TAURI_INVOKE("db_get_working_memory", { agentId })),
 	dbListClassificationsForAgent: (agentId: string, limit: number | null) => typedError<ClassificationRow[], ErrorDto>(__TAURI_INVOKE("db_list_classifications_for_agent", { agentId, limit })),
 	dbGetClassificationForMessage: (messageId: number) => typedError<{
 	id: string,
@@ -867,6 +875,31 @@ export type Usage = {
 	cacheWrite?: number,
 	totalTokens?: number,
 	cost?: Cost,
+};
+
+export type WorkingMemoryCurrentAction = {
+	eventId: string,
+	questId: string,
+	intent: string,
+	startedAt: string,
+};
+
+export type WorkingMemoryPayload = {
+	schemaVersion: number,
+	currentQuestId: string | null,
+	currentQuestPath: string[],
+	currentAction: WorkingMemoryCurrentAction | null,
+	recentActions: WorkingMemoryRecentAction[],
+	updatedAt: string,
+};
+
+export type WorkingMemoryRecentAction = {
+	eventId: string,
+	questId: string,
+	intent: string,
+	outcome: string,
+	completedAt: string,
+	autoClosed?: boolean | null,
 };
 
 /* Tauri Specta runtime */

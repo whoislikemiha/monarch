@@ -583,6 +583,11 @@ pub(crate) async fn dispatch_command(
             let events = state.db.list_quest_events_internal(&quest_id).await?;
             serde_json::to_value(events).map_err(MonarchError::from)
         }
+        "db_get_working_memory" => {
+            let agent_id = str_field(&args, "agentId")?;
+            let wm = state.db.get_working_memory_internal(&agent_id).await?;
+            serde_json::to_value(wm).map_err(MonarchError::from)
+        }
 
         // MON-82: Classifications (read-only over WS).
         "db_list_classifications_for_agent" => {

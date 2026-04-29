@@ -1174,7 +1174,7 @@ pub struct WorkingMemoryRecentAction {
     pub intent: String,
     pub outcome: String,
     pub completed_at: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub auto_closed: Option<bool>,
 }
 
@@ -4157,6 +4157,15 @@ pub async fn db_list_quest_events(
     quest_id: String,
 ) -> Result<Vec<QuestEventRow>, MonarchError> {
     db.list_quest_events_internal(&quest_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_get_working_memory(
+    db: tauri::State<'_, Arc<Database>>,
+    agent_id: String,
+) -> Result<Option<WorkingMemoryPayload>, MonarchError> {
+    db.get_working_memory_internal(&agent_id).await
 }
 
 // ---- MON-82: Classifications ----
