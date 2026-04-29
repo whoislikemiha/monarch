@@ -129,15 +129,12 @@ class QuestStore {
     await this.refresh(agentId);
   }
 
-  async loadEvents(questId: string): Promise<void> {
-    // Owning agent state not required — events are keyed globally by quest.
-    for (const entry of this.byAgent.values()) {
-      const events = await invoke<QuestEventRow[]>("db_list_quest_events", {
-        questId,
-      });
-      entry.eventsByQuest.set(questId, events);
-      return; // only need to write once; the Map lookup is shared via reference
-    }
+  async loadEvents(agentId: string, questId: string): Promise<void> {
+    const entry = this.ensure(agentId);
+    const events = await invoke<QuestEventRow[]>("db_list_quest_events", {
+      questId,
+    });
+    entry.eventsByQuest.set(questId, events);
   }
 
   async refreshWorkingMemory(agentId: string): Promise<void> {
@@ -170,7 +167,7 @@ class QuestStore {
       entry.expandedQuestIds.add(questId);
       // Lazy-load events on first expand.
       if (!entry.eventsByQuest.has(questId)) {
-        this.loadEvents(questId).catch((e) => {
+        this.loadEvents(agentId, questId).catch((e) => {
           entry.error = String(e);
         });
       }
@@ -241,7 +238,7 @@ class QuestStore {
           // by the same persistence path.
           entry.eventsByQuest.delete(questId);
           if (entry.expandedQuestIds.has(questId)) {
-            this.loadEvents(questId).catch((e) => {
+            this.loadEvents(entry.agentId, questId).catch((e) => {
               entry.error = String(e);
             });
           }
