@@ -1,9 +1,13 @@
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { invoke, listen, type UnlistenFn } from "$lib/api";
 import type {
+  AddPlanItemPayload,
   CreateQuestPayload,
+  PlanItemInput,
+  PlanItemRow,
   QuestEventRow,
   QuestRow,
+  UpdatePlanItemPayload,
   UpdateQuestPayload,
   WorkingMemoryPayload,
 } from "../bindings";
@@ -27,6 +31,8 @@ export interface AgentQuestState {
   treesByRoot: SvelteMap<string, QuestRow[]>;
   /** Events per quest_id, lazily loaded on expand. */
   eventsByQuest: SvelteMap<string, QuestEventRow[]>;
+  /** Durable execution plan items per quest_id, lazily loaded beside events. */
+  planItemsByQuest: SvelteMap<string, PlanItemRow[]>;
   /** Quest ids currently expanded inline in the timeline view. */
   expandedQuestIds: SvelteSet<string>;
   /** Quest event ids expanded inside an open quest. */
@@ -61,6 +67,7 @@ class QuestStore {
       roots: [],
       treesByRoot: new SvelteMap(),
       eventsByQuest: new SvelteMap(),
+      planItemsByQuest: new SvelteMap(),
       expandedQuestIds: new SvelteSet(),
       expandedEventIds: new SvelteSet(),
       workingMemory: null,
@@ -140,6 +147,133 @@ class QuestStore {
     entry.eventsByQuest.set(questId, events);
   }
 
+  async loadPlanItems(agentId: string, questId: string): Promise<void> {
+    const entry = this.ensure(agentId);
+    const items = await invoke<PlanItemRow[]>("db_list_plan_items", {
+      questId,
+    });
+    entry.planItemsByQuest.set(questId, items);
+  }
+
+  async refreshQuestPlan(agentId: string, questId: string): Promise<void> {
+    const entry = this.ensure(agentId);
+    await this.loadPlanItems(agentId, questId);
+    if (entry.expandedQuestIds.has(questId)) {
+      await this.loadEvents(agentId, questId);
+    } else {
+      entry.eventsByQuest.delete(questId);
+    }
+    await this.refreshWorkingMemory(agentId);
+  }
+
+  private async refreshAfterPlanMutation(agentId: string, questId: string): Promise<void> {
+    const entry = this.ensure(agentId);
+    try {
+      await this.refreshQuestPlan(agentId, questId);
+    } catch (e) {
+      entry.error = String(e);
+    }
+  }
+
+  async addPlanItem(
+    agentId: string,
+    payload: AddPlanItemPayload,
+  ): Promise<string> {
+    const id = await invoke<string>("db_add_plan_item", {
+      payload: { ...payload, createdBy: payload.createdBy ?? "captain" },
+    });
+    await this.refreshAfterPlanMutation(agentId, payload.questId);
+    return id;
+  }
+
+  async updatePlanItem(
+    agentId: string,
+    questId: string,
+    payload: UpdatePlanItemPayload,
+  ): Promise<void> {
+    await invoke("db_update_plan_item", { payload });
+    await this.refreshAfterPlanMutation(agentId, questId);
+  }
+
+  async deletePlanItem(
+    agentId: string,
+    questId: string,
+    itemId: string,
+  ): Promise<void> {
+    await invoke("db_delete_plan_item", { itemId });
+    await this.refreshAfterPlanMutation(agentId, questId);
+  }
+
+  async movePlanItem(
+    agentId: string,
+    questId: string,
+    itemId: string,
+    direction: -1 | 1,
+  ): Promise<void> {
+    const entry = this.ensure(agentId);
+    let items = entry.planItemsByQuest.get(questId);
+    if (!items) {
+      await this.loadPlanItems(agentId, questId);
+      items = entry.planItemsByQuest.get(questId) ?? [];
+    }
+    const next = [...items];
+    const index = next.findIndex((item) => item.id === itemId);
+    const swapIndex = index + direction;
+    if (index < 0 || swapIndex < 0 || swapIndex >= next.length) return;
+    [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
+    const payloadItems: PlanItemInput[] = next.map((item) => ({
+      id: item.id,
+      title: item.title,
+      rationale: item.rationale,
+      status: item.status,
+      parentId: item.parentId,
+    }));
+    await invoke("db_set_plan", {
+      payload: {
+        questId,
+        items: payloadItems,
+        createdBy: "captain",
+        rationale: "manual reorder",
+      },
+    });
+    await this.refreshAfterPlanMutation(agentId, questId);
+  }
+
+  async startPlanItem(agentId: string, questId: string, itemId: string): Promise<void> {
+    await invoke("db_start_plan_item", { itemId });
+    await this.refreshAfterPlanMutation(agentId, questId);
+  }
+
+  async completePlanItem(
+    agentId: string,
+    questId: string,
+    itemId: string,
+    outcome: string | null = null,
+  ): Promise<void> {
+    await invoke("db_complete_plan_item", { itemId, outcome });
+    await this.refreshAfterPlanMutation(agentId, questId);
+  }
+
+  async skipPlanItem(
+    agentId: string,
+    questId: string,
+    itemId: string,
+    reason: string | null = null,
+  ): Promise<void> {
+    await invoke("db_skip_plan_item", { itemId, reason });
+    await this.refreshAfterPlanMutation(agentId, questId);
+  }
+
+  async blockPlanItem(
+    agentId: string,
+    questId: string,
+    itemId: string,
+    reason: string,
+  ): Promise<void> {
+    await invoke("db_block_plan_item", { itemId, reason });
+    await this.refreshAfterPlanMutation(agentId, questId);
+  }
+
   async refreshWorkingMemory(agentId: string): Promise<void> {
     const entry = this.ensure(agentId);
     if (this.workingMemoryUnavailable) return;
@@ -171,6 +305,11 @@ class QuestStore {
       // Lazy-load events on first expand.
       if (!entry.eventsByQuest.has(questId)) {
         this.loadEvents(agentId, questId).catch((e) => {
+          entry.error = String(e);
+        });
+      }
+      if (!entry.planItemsByQuest.has(questId)) {
+        this.loadPlanItems(agentId, questId).catch((e) => {
           entry.error = String(e);
         });
       }
@@ -254,6 +393,9 @@ class QuestStore {
               entry.error = String(e);
             });
           }
+          this.loadPlanItems(entry.agentId, questId).catch((e) => {
+            entry.error = String(e);
+          });
           this.refreshWorkingMemory(entry.agentId).catch((e) => {
             entry.error = String(e);
           });

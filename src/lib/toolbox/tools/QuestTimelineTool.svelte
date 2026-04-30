@@ -1,11 +1,12 @@
 <script lang="ts">
   import type { ToolProps } from "../types";
-  import type { QuestEventRow, QuestRow } from "../../bindings";
+  import type { PlanItemRow, QuestEventRow, QuestRow } from "../../bindings";
   import { questStore } from "../questStore.svelte";
   import ShadowAvatar from "../../avatar/ShadowAvatar.svelte";
   import { agentStore } from "../../stores/agentStore.svelte";
 
   let { agentContext }: ToolProps = $props();
+  let agentId = $derived(agentContext?.agentId ?? "");
 
   /**
    * Per-agent reactive slice. `ensure` creates an empty entry on first
@@ -14,14 +15,30 @@
    * slice, not someone else's stale one.
    */
   let questState = $derived(
-    agentContext ? (questStore.byAgent.get(agentContext.agentId) ?? null) : null,
+    agentContext ? (questStore.byAgent.get(agentId) ?? null) : null,
   );
+  let activeQuestId = $derived(questState?.workingMemory?.currentQuestId ?? null);
+  let activeQuest = $derived.by(() => {
+    if (!activeQuestId || !questState) return null;
+    for (const tree of questState.treesByRoot.values()) {
+      const found = tree.find((quest) => quest.id === activeQuestId);
+      if (found) return found;
+    }
+    return questState.roots.find((quest) => quest.id === activeQuestId) ?? null;
+  });
 
   $effect(() => {
     if (agentContext) {
-      questStore.ensure(agentContext.agentId);
-      questStore.refresh(agentContext.agentId);
+      questStore.ensure(agentId);
+      questStore.refresh(agentId);
     }
+  });
+
+  $effect(() => {
+    if (!agentContext || !activeQuestId || questState?.planItemsByQuest.has(activeQuestId)) return;
+    questStore.loadPlanItems(agentId, activeQuestId).catch((e) => {
+      if (questState) questState.error = String(e);
+    });
   });
 
   // --- Tree shaping --------------------------------------------------------
@@ -111,6 +128,10 @@
   let formParentId = $state<string>("");
   let formSubmitting = $state(false);
   let markingDoneId = $state<string | null>(null);
+  let addingPlanQuestId = $state<string | null>(null);
+  let planBusyKey = $state<string | null>(null);
+  let planDraftTitles = $state(new Map<string, string>());
+  let newPlanTitles = $state(new Map<string, string>());
 
   $effect(() => {
     // When the create form opens, reset fields and preselect parent.
@@ -127,7 +148,7 @@
     if (!agentContext || !questState || !formTitle.trim()) return;
     formSubmitting = true;
     try {
-      await questStore.createQuest(agentContext.agentId, {
+      await questStore.createQuest(agentId, {
         id: null,
         parentId: formParentId || null,
         title: formTitle.trim(),
@@ -135,10 +156,10 @@
         status: "pending",
         grade: formGrade,
         execHint: formExecHint,
-        assigneeShadowId: agentContext.agentId,
+        assigneeShadowId: agentId,
         createdBy: "monarch",
       });
-      questStore.cancelCreate(agentContext.agentId);
+      questStore.cancelCreate(agentId);
     } catch (e) {
       questState.error = String(e);
     } finally {
@@ -154,7 +175,7 @@
     if (!agentContext || !questState || quest.status === "done") return;
     markingDoneId = quest.id;
     try {
-      await questStore.updateQuest(agentContext.agentId, {
+      await questStore.updateQuest(agentId, {
         id: quest.id,
         title: null,
         description: null,
@@ -345,7 +366,316 @@
     if (ms < 1000) return `${ms}ms`;
     return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
   }
+
+  function planItemsFor(questId: string): PlanItemRow[] {
+    return questState?.planItemsByQuest.get(questId) ?? [];
+  }
+
+  function planItemById(questId: string, itemId: string | null | undefined): PlanItemRow | null {
+    if (!itemId) return null;
+    return planItemsFor(questId).find((item) => item.id === itemId) ?? null;
+  }
+
+  function planTitle(questId: string, itemId: string | null | undefined): string {
+    return planItemById(questId, itemId)?.title ?? "plan item";
+  }
+
+  function draftTitle(item: PlanItemRow): string {
+    return planDraftTitles.get(item.id) ?? item.title;
+  }
+
+  function setDraftTitle(itemId: string, value: string) {
+    const next = new Map(planDraftTitles);
+    next.set(itemId, value);
+    planDraftTitles = next;
+  }
+
+  function newPlanTitle(questId: string): string {
+    return newPlanTitles.get(questId) ?? "";
+  }
+
+  function setNewPlanTitle(questId: string, value: string) {
+    const next = new Map(newPlanTitles);
+    next.set(questId, value);
+    newPlanTitles = next;
+  }
+
+  async function runPlanMutation(key: string, fn: () => Promise<void>) {
+    if (!agentContext || !questState) return;
+    planBusyKey = key;
+    try {
+      await fn();
+    } catch (e) {
+      questState.error = String(e);
+    } finally {
+      planBusyKey = null;
+    }
+  }
+
+  async function submitAddPlanItem(questId: string) {
+    if (!agentContext) return;
+    const title = newPlanTitle(questId).trim();
+    if (!title) return;
+    const items = planItemsFor(questId);
+    const afterItemId = items.at(-1)?.id ?? null;
+    await runPlanMutation(`add:${questId}`, async () => {
+      await questStore.addPlanItem(agentId, {
+        questId,
+        title,
+        afterItemId,
+        createdBy: "captain",
+      });
+      setNewPlanTitle(questId, "");
+      addingPlanQuestId = null;
+    });
+  }
+
+  async function commitPlanTitle(questId: string, item: PlanItemRow) {
+    if (!agentContext) return;
+    const title = draftTitle(item).trim();
+    if (!title || title === item.title) return;
+    await runPlanMutation(`edit:${item.id}`, () =>
+      questStore.updatePlanItem(agentId, questId, {
+        id: item.id,
+        title,
+        rationale: null,
+        orderIndex: null,
+      }),
+    );
+    const next = new Map(planDraftTitles);
+    next.delete(item.id);
+    planDraftTitles = next;
+  }
+
+  function promptText(message: string): string | null {
+    const value = window.prompt(message);
+    if (value == null) return null;
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+
+  const PLAN_EVENT_TYPES = new Set([
+    "plan_created",
+    "plan_changed",
+    "plan_item_started",
+    "plan_item_completed",
+    "plan_item_skipped",
+    "plan_item_blocked",
+  ]);
+
+  interface PlanEventPayload {
+    itemId: string | null;
+    deletedItemId: string | null;
+    itemIds: string[];
+    title: string;
+    outcome: string;
+    reason: string;
+    rationale: string;
+    createdBy: string;
+  }
+
+  function planEventPayload(raw: string | null): PlanEventPayload {
+    const obj = parsePayload(raw);
+    const itemIds = Array.isArray(obj.item_ids)
+      ? obj.item_ids.filter((id): id is string => typeof id === "string")
+      : [];
+    return {
+      itemId: typeof obj.item_id === "string" ? obj.item_id : null,
+      deletedItemId: typeof obj.deleted_item_id === "string" ? obj.deleted_item_id : null,
+      itemIds,
+      title: typeof obj.title === "string" ? obj.title : "",
+      outcome: typeof obj.outcome === "string" ? obj.outcome : "",
+      reason: typeof obj.reason === "string" ? obj.reason : "",
+      rationale: typeof obj.rationale === "string" ? obj.rationale : "",
+      createdBy: typeof obj.created_by === "string" ? obj.created_by : "",
+    };
+  }
+
+  function planEventLabel(type: string): string {
+    if (type === "plan_created") return "plan created";
+    if (type === "plan_changed") return "plan changed";
+    if (type === "plan_item_started") return "started";
+    if (type === "plan_item_completed") return "completed";
+    if (type === "plan_item_skipped") return "skipped";
+    if (type === "plan_item_blocked") return "blocked";
+    return type;
+  }
 </script>
+
+{#snippet planPanel(panelQuest: QuestRow, planItems: PlanItemRow[], agentId: string)}
+  <div class="plan-panel">
+    <div class="plan-header">
+      <div>
+        <div class="log-title">Active plan</div>
+        <div class="plan-quest-title">{panelQuest.title}</div>
+      </div>
+      {#if addingPlanQuestId !== panelQuest.id}
+        <button
+          type="button"
+          class="mini-btn"
+          onclick={() => {
+            addingPlanQuestId = panelQuest.id;
+            setNewPlanTitle(panelQuest.id, "");
+          }}
+        >
+          + Item
+        </button>
+      {/if}
+    </div>
+    {#if addingPlanQuestId === panelQuest.id}
+      <form
+        class="plan-add-form"
+        onsubmit={(e) => {
+          e.preventDefault();
+          submitAddPlanItem(panelQuest.id);
+        }}
+      >
+        <input
+          class="input plan-title-input"
+          type="text"
+          value={newPlanTitle(panelQuest.id)}
+          oninput={(e) => setNewPlanTitle(panelQuest.id, e.currentTarget.value)}
+          placeholder="Next step"
+          disabled={planBusyKey === `add:${panelQuest.id}`}
+        />
+        <button
+          type="submit"
+          class="primary-btn compact"
+          disabled={!newPlanTitle(panelQuest.id).trim() || planBusyKey === `add:${panelQuest.id}`}
+        >
+          Add
+        </button>
+        <button
+          type="button"
+          class="ghost-btn compact"
+          onclick={() => (addingPlanQuestId = null)}
+          disabled={planBusyKey === `add:${panelQuest.id}`}
+        >
+          Cancel
+        </button>
+      </form>
+    {/if}
+    {#if planItems.length === 0}
+      <div class="muted small">No plan items.</div>
+    {:else}
+      <div class="plan-list">
+        {#each planItems as item, index (item.id)}
+          <div class="plan-item status-{item.status}">
+            <div class="plan-item-main">
+              <span class="plan-index">{index + 1}</span>
+              <input
+                class="plan-title-input"
+                value={draftTitle(item)}
+                oninput={(e) => setDraftTitle(item.id, e.currentTarget.value)}
+                onchange={() => commitPlanTitle(panelQuest.id, item)}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitPlanTitle(panelQuest.id, item);
+                  }
+                }}
+                disabled={planBusyKey === `edit:${item.id}`}
+              />
+              <span class="status-chip status-{item.status}">{item.status}</span>
+            </div>
+            {#if item.rationale}
+              <div class="plan-rationale">{item.rationale}</div>
+            {/if}
+            <div class="plan-actions">
+              <button
+                type="button"
+                class="icon-btn"
+                title="Move up"
+                disabled={index === 0 || planBusyKey !== null}
+                onclick={() =>
+                  runPlanMutation(`move:${item.id}`, () =>
+                    questStore.movePlanItem(agentId, panelQuest.id, item.id, -1),
+                  )}
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                class="icon-btn"
+                title="Move down"
+                disabled={index === planItems.length - 1 || planBusyKey !== null}
+                onclick={() =>
+                  runPlanMutation(`move:${item.id}`, () =>
+                    questStore.movePlanItem(agentId, panelQuest.id, item.id, 1),
+                  )}
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                class="mini-btn"
+                disabled={item.status === "active" || planBusyKey !== null}
+                onclick={() =>
+                  runPlanMutation(`start:${item.id}`, () =>
+                    questStore.startPlanItem(agentId, panelQuest.id, item.id),
+                  )}
+              >
+                Start
+              </button>
+              <button
+                type="button"
+                class="mini-btn"
+                disabled={item.status === "completed" || planBusyKey !== null}
+                onclick={() => {
+                  const outcome = promptText("Outcome");
+                  runPlanMutation(`complete:${item.id}`, () =>
+                    questStore.completePlanItem(agentId, panelQuest.id, item.id, outcome),
+                  );
+                }}
+              >
+                Done
+              </button>
+              <button
+                type="button"
+                class="mini-btn"
+                disabled={item.status === "skipped" || planBusyKey !== null}
+                onclick={() => {
+                  const reason = promptText("Skip reason");
+                  runPlanMutation(`skip:${item.id}`, () =>
+                    questStore.skipPlanItem(agentId, panelQuest.id, item.id, reason),
+                  );
+                }}
+              >
+                Skip
+              </button>
+              <button
+                type="button"
+                class="mini-btn"
+                disabled={item.status === "blocked" || planBusyKey !== null}
+                onclick={() => {
+                  const reason = promptText("Block reason");
+                  if (!reason) return;
+                  runPlanMutation(`block:${item.id}`, () =>
+                    questStore.blockPlanItem(agentId, panelQuest.id, item.id, reason),
+                  );
+                }}
+              >
+                Block
+              </button>
+              <button
+                type="button"
+                class="icon-btn danger"
+                title="Delete"
+                disabled={planBusyKey !== null}
+                onclick={() =>
+                  runPlanMutation(`delete:${item.id}`, () =>
+                    questStore.deletePlanItem(agentId, panelQuest.id, item.id),
+                  )}
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/snippet}
 
 <div class="quest-tool">
   {#if !agentContext || !questState}
@@ -357,7 +687,7 @@
         <button
           class="new-btn"
           type="button"
-          onclick={() => questStore.startCreate(agentContext.agentId)}
+          onclick={() => questStore.startCreate(agentId)}
         >
           + New quest
         </button>
@@ -430,13 +760,18 @@
           <button
             type="button"
             class="ghost-btn"
-            onclick={() => questStore.cancelCreate(agentContext.agentId)}
+            onclick={() => questStore.cancelCreate(agentId)}
             disabled={formSubmitting}
           >
             Cancel
           </button>
         </div>
       </form>
+    {/if}
+
+    {#if activeQuest}
+      {@const activePlanItems = planItemsFor(activeQuest.id)}
+      {@render planPanel(activeQuest, activePlanItems, agentId)}
     {/if}
 
     <!-- Timeline -->
@@ -459,7 +794,7 @@
                 <button
                   type="button"
                   class="node-row"
-                  onclick={() => questStore.toggleExpand(agentContext.agentId, quest.id)}
+                  onclick={() => questStore.toggleExpand(agentId, quest.id)}
                   aria-expanded={expanded}
                 >
                   <span class="disclosure">{expanded ? "▾" : "▸"}</span>
@@ -549,7 +884,7 @@
                             <button
                               type="button"
                               class="event-row event-toggle action-row"
-                              onclick={() => questStore.toggleEventExpand(agentContext.agentId, ev.id)}
+                              onclick={() => questStore.toggleEventExpand(agentId, ev.id)}
                               aria-expanded={actionOpen}
                             >
                               <span class="event-disclosure">{actionOpen ? "▾" : "▸"}</span>
@@ -557,6 +892,14 @@
                               <span class="event-type action-type">{action.intent || "Current action"}</span>
                               {#if action.status}
                                 <span class="status-chip status-{action.status}">{action.status}</span>
+                              {/if}
+                              {#if ev.planItemId}
+                                <span
+                                  class="plan-chip"
+                                  title={planTitle(ev.questId, ev.planItemId)}
+                                >
+                                  {planTitle(ev.questId, ev.planItemId)}
+                                </span>
                               {/if}
                               {#if node.children.length}
                                 <span class="child-count">{node.children.length}</span>
@@ -576,7 +919,7 @@
                                       type="button"
                                       class="event-row event-toggle child-row tool-row"
                                       class:error={tool.isError}
-                                      onclick={() => questStore.toggleEventExpand(agentContext.agentId, child.id)}
+                                      onclick={() => questStore.toggleEventExpand(agentId, child.id)}
                                       aria-expanded={toolOpen}
                                     >
                                       <span class="event-disclosure">{toolOpen ? "▾" : "▸"}</span>
@@ -630,13 +973,34 @@
                                 {/each}
                               </div>
                             {/if}
+                          {:else if PLAN_EVENT_TYPES.has(ev.eventType)}
+                            {@const planEvent = planEventPayload(ev.payloadJson)}
+                            <div class="event-row plan-event-row">
+                              <span class="plan-event-icon" title="Plan lifecycle">◇</span>
+                              <span class="event-type plan-event-type">{planEventLabel(ev.eventType)}</span>
+                              {#if planEvent.itemId}
+                                <span class="plan-chip">{planTitle(ev.questId, planEvent.itemId)}</span>
+                              {:else if planEvent.deletedItemId}
+                                <span class="plan-chip muted">deleted item</span>
+                              {:else if planEvent.itemIds.length}
+                                <span class="child-count">{planEvent.itemIds.length}</span>
+                              {/if}
+                              {#if planEvent.outcome}
+                                <span class="muted small">{planEvent.outcome}</span>
+                              {:else if planEvent.reason}
+                                <span class="muted small">{planEvent.reason}</span>
+                              {:else if planEvent.rationale}
+                                <span class="muted small">{planEvent.rationale}</span>
+                              {/if}
+                              <span class="muted small">{formatRelative(ev.createdAt)}</span>
+                            </div>
                           {:else if ev.eventType === "compaction_tick"}
                             {@const cp = parseCompactionPayload(ev.payloadJson)}
                             {@const keeperOpen = questState.expandedEventIds.has(ev.id)}
                             <button
                               type="button"
                               class="event-row event-toggle compaction-row"
-                              onclick={() => questStore.toggleEventExpand(agentContext.agentId, ev.id)}
+                              onclick={() => questStore.toggleEventExpand(agentId, ev.id)}
                               aria-expanded={keeperOpen}
                               title={cp ? keeperHint(cp.trigger) : "Keeper memory summary"}
                             >
@@ -717,7 +1081,7 @@
                         class="ghost-btn"
                         onclick={(e) => {
                           e.stopPropagation();
-                          questStore.startCreate(agentContext.agentId, quest.id);
+                          questStore.startCreate(agentId, quest.id);
                         }}
                       >
                         + Sub-quest
@@ -1013,6 +1377,138 @@
     color: var(--text-secondary);
     white-space: pre-wrap;
   }
+  .plan-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    background: var(--bg-panel);
+  }
+  .plan-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .plan-quest-title {
+    margin-top: 2px;
+    color: var(--text-primary);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+  .plan-add-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 6px;
+  }
+  .plan-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .plan-item {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 6px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    background: var(--bg-panel-2);
+  }
+  .plan-item.status-active {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle));
+    background: var(--accent-bg-subtle);
+  }
+  .plan-item.status-completed {
+    border-color: rgba(77, 163, 107, 0.45);
+  }
+  .plan-item.status-blocked {
+    border-color: rgba(196, 90, 90, 0.45);
+  }
+  .plan-item-main {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .plan-index {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-subtle);
+    border-radius: 50%;
+    color: var(--text-muted);
+    font-size: 9px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+  .plan-title-input {
+    min-width: 0;
+    width: 100%;
+    padding: 3px 5px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: var(--bg-panel);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 11px;
+  }
+  .plan-title-input:focus {
+    border-color: var(--accent);
+    outline: none;
+  }
+  .plan-rationale {
+    margin-left: 24px;
+    color: var(--text-secondary);
+    font-size: 10px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+  .plan-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-left: 24px;
+  }
+  .mini-btn,
+  .icon-btn {
+    min-height: 22px;
+    padding: 2px 7px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    background: var(--bg-panel);
+    color: var(--text-primary);
+    font-size: 10px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .icon-btn {
+    width: 24px;
+    padding: 2px 0;
+    text-align: center;
+  }
+  .mini-btn:hover:not(:disabled),
+  .icon-btn:hover:not(:disabled) {
+    background: var(--bg-sidebar);
+  }
+  .mini-btn:disabled,
+  .icon-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .icon-btn.danger {
+    color: #c45a5a;
+  }
+  .primary-btn.compact,
+  .ghost-btn.compact {
+    padding: 3px 8px;
+  }
   .event-log {
     display: flex;
     flex-direction: column;
@@ -1107,6 +1603,29 @@
     line-height: 1.2;
     text-align: center;
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+  .plan-chip {
+    flex-shrink: 1;
+    max-width: 180px;
+    min-width: 0;
+    padding: 1px 5px;
+    border: 1px solid rgba(214, 168, 77, 0.55);
+    border-radius: 3px;
+    color: #d6a84d;
+    background: rgba(214, 168, 77, 0.1);
+    font-size: 9px;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .plan-event-row {
+    min-height: 20px;
+    padding: 2px 0;
+  }
+  .plan-event-icon,
+  .plan-event-type {
+    color: #d6a84d;
   }
   .status-active,
   .status-running {

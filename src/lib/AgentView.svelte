@@ -109,6 +109,22 @@
     boundAgentId ? (questStore.byAgent.get(boundAgentId) ?? null) : null,
   );
   let workingMemory = $derived(questState?.workingMemory ?? null);
+  let currentPlanItems = $derived(
+    workingMemory?.currentQuestId
+      ? (questState?.planItemsByQuest.get(workingMemory.currentQuestId) ?? [])
+      : [],
+  );
+  let activePlanItem = $derived(
+    workingMemory?.activePlanItemId
+      ? currentPlanItems.find((item) => item.id === workingMemory.activePlanItemId) ?? null
+      : null,
+  );
+  let nextPlanItems = $derived.by(() => {
+    const ids = workingMemory?.nextPlanItemIds ?? [];
+    if (!ids.length) return [];
+    const byId = new Map(currentPlanItems.map((item) => [item.id, item]));
+    return ids.map((id) => byId.get(id)).filter((item) => !!item);
+  });
 
   $effect(() => {
     classifierStore.ensure(agent.id);
@@ -120,6 +136,14 @@
       questStore.ensure(boundAgentId);
       questStore.refresh(boundAgentId);
     }
+  });
+
+  $effect(() => {
+    const questId = workingMemory?.currentQuestId;
+    if (!boundAgentId || !questId || questState?.planItemsByQuest.has(questId)) return;
+    questStore.loadPlanItems(boundAgentId, questId).catch((e) => {
+      if (questState) questState.error = String(e);
+    });
   });
 
   export function focusInput() {
@@ -716,9 +740,27 @@
           onimageclick={(src) => (lightboxSrc = src)}
         />
 
-        {#if workingMemory?.currentAction || workingMemory?.recentActions.length}
+        {#if workingMemory?.currentAction || workingMemory?.recentActions.length || activePlanItem || nextPlanItems.length}
           <div class="now-strip">
-            {#if workingMemory.currentAction}
+            {#if activePlanItem || nextPlanItems.length}
+              <div class="now-plan">
+                {#if activePlanItem}
+                  <div class="plan-current" title={activePlanItem.rationale ?? activePlanItem.title}>
+                    <span class="plan-label">Plan</span>
+                    <span class="plan-title">{activePlanItem.title}</span>
+                    <span class="plan-status status-{activePlanItem.status}">{activePlanItem.status}</span>
+                  </div>
+                {/if}
+                {#if nextPlanItems.length}
+                  <div class="plan-next">
+                    {#each nextPlanItems as item (item.id)}
+                      <span class="next-plan-item" title={item.rationale ?? item.title}>{item.title}</span>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+            {#if workingMemory?.currentAction}
               <div class="now-current">
                 <span class="now-label">Now</span>
                 <span class="now-text">{workingMemory.currentAction.intent}</span>
@@ -727,7 +769,7 @@
                 {/if}
               </div>
             {/if}
-            {#if workingMemory.recentActions.length}
+            {#if workingMemory?.recentActions.length}
               <div class="now-recent">
                 {#each workingMemory.recentActions.slice(-3).reverse() as action (action.eventId)}
                   <div class="recent-action" title={action.outcome}>
@@ -1258,6 +1300,90 @@
     align-items: center;
     gap: 8px;
     min-width: 0;
+  }
+
+  .now-plan {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .plan-current {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+  }
+
+  .plan-label {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border: 1px solid #d6a84d;
+    border-radius: 3px;
+    color: #d6a84d;
+    font-size: 9px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .plan-title {
+    min-width: 0;
+    color: var(--text-primary);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .plan-status {
+    flex-shrink: 0;
+    padding: 1px 5px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    color: var(--text-muted);
+    font-size: 9px;
+    line-height: 1.2;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+
+  .plan-status.status-active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-bg-subtle);
+  }
+
+  .plan-status.status-completed {
+    border-color: #4da36b;
+    color: #4da36b;
+    background: rgba(77, 163, 107, 0.1);
+  }
+
+  .plan-status.status-blocked {
+    border-color: #c45a5a;
+    color: #c45a5a;
+    background: rgba(196, 90, 90, 0.1);
+  }
+
+  .plan-next {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-left: 46px;
+  }
+
+  .next-plan-item {
+    max-width: 220px;
+    padding: 2px 6px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    background: var(--bg-panel);
+    color: var(--text-secondary);
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .now-label {
