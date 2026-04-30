@@ -32,14 +32,16 @@ Two corollaries:
 | Surface | Status |
 |---------|--------|
 | Storage stack viability | [MON-91](https://linear.app/monarch-commander/issue/MON-91) — validated. Production stack live as of MON-99. |
-| Quest tree (data) | [MON-83](https://linear.app/monarch-commander/issue/MON-83) — `quest_nodes`, `quest_events`, `agents.current_quest_id`. Read-only timeline tool, manual create. Skeletal. |
-| Execution timeline (UI) | MON-83 `QuestTimelineTool` (toolbox tool, read-only). |
+| Quest tree (data) | [MON-83](https://linear.app/monarch-commander/issue/MON-83), [MON-105](https://linear.app/monarch-commander/issue/MON-105), [MON-116](https://linear.app/monarch-commander/issue/MON-116) — `quest_nodes`, `quest_events`, `agents.current_quest_id`, rich quest what/why fields, and `quest_refs`. Manual create is landed; rich edit surface exists locally on the P5 stack. Still pre-chat-shadow and pre-automatic decomposition. |
+| Execution timeline (UI) | [MON-109](https://linear.app/monarch-commander/issue/MON-109), [MON-114](https://linear.app/monarch-commander/issue/MON-114), [MON-117](https://linear.app/monarch-commander/issue/MON-117) — nested coherent-action renderer is landed; plan-aware chips/panel, rich quest detail editor, manual events, and refs panel exist locally on stacked branches. |
 | Per-turn classifier | [MON-82](https://linear.app/monarch-commander/issue/MON-82) — Slice 1 advisory. First reader (Architect, [MON-84](https://linear.app/monarch-commander/issue/MON-84)) not built. |
 | Captain identity (L1) | [MON-98](https://linear.app/monarch-commander/issue/MON-98) — captain + shadow identity payloads in DB, settings UI, wired into `shadow-oath.ts` system prompt. P1 territory; shipped early. |
-| Memory substrate (L3 storage) | [MON-99](https://linear.app/monarch-commander/issue/MON-99) — `memories` schema, FTS5 mirror, `memory_keeper_runs`, embedding pipeline (`bge-small-en-v1.5` via ONNX), HNSW index (`instant-distance`), Memory Inspector v0 (browse-only), debug-only `memory_smoke_insert`. P2 Slice A. **No reader or writer wired yet** — that's MON-100 / MON-101. |
+| Memory substrate (L3 storage) | [MON-99](https://linear.app/monarch-commander/issue/MON-99), [MON-100](https://linear.app/monarch-commander/issue/MON-100), [MON-101](https://linear.app/monarch-commander/issue/MON-101), [MON-102](https://linear.app/monarch-commander/issue/MON-102), [MON-103](https://linear.app/monarch-commander/issue/MON-103) — storage, Keeper writes, retrieval injection, executor suggestions, and quest-close trigger are wired. Memory Inspector remains browse-only; eval/reranker/scale work remains P3/P12. |
+| Executor narration + L2 | [MON-107](https://linear.app/monarch-commander/issue/MON-107), [MON-108](https://linear.app/monarch-commander/issue/MON-108), [MON-109](https://linear.app/monarch-commander/issue/MON-109) — nested quest events, `agent_working_memory`, sidecar narration tools, nested timeline, and Agent View Now strip are wired. |
+| Durable execution plans | [MON-110](https://linear.app/monarch-commander/issue/MON-110), [MON-111](https://linear.app/monarch-commander/issue/MON-111), [MON-112](https://linear.app/monarch-commander/issue/MON-112), [MON-114](https://linear.app/monarch-commander/issue/MON-114) — `quest_plan_items`, plan lifecycle events/tools, active/next L2 slice, and action `plan_item_id` links are implemented; plan panel / plan-aware Now strip exist locally on the P4b UI stack. |
 | Auto-memory (the proxy for L1) | Anthropic-side per-project memory in `~/.claude/projects/.../memory/`. Co-exists with MON-98's in-app L1; deprecate when L1 has been in production long enough. |
 
-Everything else implied by the design docs (in-app L1, L2, L3, Keeper, two-organ split, project sharing, forking, stale-flagging, Memory Inspector) is unbuilt.
+Everything else implied by the design docs (chat-shadow/two-organ split, project sharing, forking, stale-flagging, quest reports, full Memory Inspector editing, and automatic decomposition) is unbuilt.
 
 ## Tracks
 
@@ -64,8 +66,8 @@ The phases are *temporal*. The work itself runs on four cross-cutting tracks; ea
 | **P3c** Rebuild worker | Background HNSW rebuild + atomic swap | — | — | — |
 | **P3d** Incremental insert | Per-memory write-into-graph path | — | — | — |
 | **P4** Executor narration | `agent_working_memory` L2 v0; executor narration tools + prompt block | `coherent_action`, `action_outcome`, `tool_call`, `executor_decision` events with `parent_event_id` + `author` | **Becomes a real execution narrative** — collapsible action parents | Working-memory preview in agent view |
-| **P4b** Execution plans | `quest_plan_items`; L2 active/next plan slice | Plan lifecycle events; actions link to `plan_item_id` | Plan-aware timeline: intended vs actual | Lightweight plan panel |
-| **P5** Rich quest + manual editor | Quest attachments / external refs | `status`, `scope`, `current_direction`, `rationale`, `grade`, `summary`, `subtask_added`, `scope_change`, `direction_change`, `note` | First-class quest/plan-change entries | Quest detail panel + manual editor |
+| **P4b** Execution plans | `quest_plan_items`; L2 active/next plan slice **implemented** | Plan lifecycle events; actions link to `plan_item_id` **implemented** | Plan-aware timeline: intended vs actual **implemented locally** | Lightweight plan panel **implemented locally** |
+| **P5** Rich quest + manual editor | `quest_refs`; rich quest metadata **implemented locally** | `scope`, `current_direction`, `rationale`, `grade`, `summary`, `scope_change`, `direction_change`, `note`, `blocker`, `question`, `answer` **partially implemented locally** | First-class quest-change/manual-event rows **implemented locally** | Inline quest detail panel + refs panel **implemented locally** |
 | **P6** Quest reports | `quest_reports` table; executor `complete_quest` tool | (uses `status` from P5) | — | First-person report rendered at close |
 | **P7** chat-shadow read-only | Pi multiplexing per agent; `attention_threads`; chat-shadow read tools + `speak`; pause/resume/stop control | `chat_message`, `observation`, `paused_by_chat`, `resumed_by_chat`, `stopped_by_chat` | **Promoted to primary panel** | Dual-surface layout (clean chat + timeline) |
 | **P8** chat-shadow full | Plan-manipulation tools, routing classifier, question/answer, pending-action mediation | All remaining event kinds; surface routing applied | Surface override respected | Routing-driven UX |
@@ -141,7 +143,7 @@ P2 ──► P2b ──► P4 ──► P4b ──► P5 ──► P6 ──► 
 
 **Depends on.** P1 ([MON-98](https://linear.app/monarch-commander/issue/MON-98)) shipped — so captain preferences land cleanly into Keeper context.
 
-**Defers.** **L2 working memory** (P4 — Keeper consolidation in P2 lives only as text in `memory_keeper_runs.output_summary`; the structured `WorkingMemory` shape with `current_action` / `recent_actions` lands when P4 wires executor narration; durable execution plans land in P4b). Eval harness (P3a / [MON-94](https://linear.app/monarch-commander/issue/MON-94)). Reranker (P3b / [MON-93](https://linear.app/monarch-commander/issue/MON-93)). Background rebuild + incremental insert (P3c/d / [MON-96](https://linear.app/monarch-commander/issue/MON-96), [MON-97](https://linear.app/monarch-commander/issue/MON-97)). Quest-close + idle triggers (deferred above). Project subtree writes (P9). First-person reports as Keeper input (P6 backfills). Captain edit / archive / promote / supersede in Inspector (P12). Stale-flagging via `file_refs.anchor_sha` (P11). Two-tier Keeper (local / cloud) — P2 ships single-tier; tier split is a `memory.toml` extension, not a phase.
+**Defers.** Eval harness (P3a / [MON-94](https://linear.app/monarch-commander/issue/MON-94)). Reranker (P3b / [MON-93](https://linear.app/monarch-commander/issue/MON-93)). Background rebuild + incremental insert (P3c/d / [MON-96](https://linear.app/monarch-commander/issue/MON-96), [MON-97](https://linear.app/monarch-commander/issue/MON-97)). Idle compaction trigger. Project subtree writes (P9). First-person reports as Keeper input (P6 backfills). Captain edit / archive / promote / supersede in Inspector (P12). Stale-flagging via `file_refs.anchor_sha` (P11). Two-tier Keeper (local / cloud) — P2 ships single-tier; tier split is a `memory.toml` extension, not a phase. L2 working memory and durable execution plans are no longer P2 deferrals; they landed in P4/P4b.
 
 ---
 
@@ -246,19 +248,19 @@ P2 ──► P2b ──► P4 ──► P4b ──► P5 ──► P6 ──► 
 
 **Test scenario.** Captain starts a medium coding task. The quest shows a lightweight plan ("inspect auth flow", "patch expiry handler", "run focused tests"). Executor marks the first item active, performs multiple coherent actions under it, marks it done, then moves to the next. The timeline shows both plan lifecycle events and actual actions, with actions linked to the active plan item.
 
-**Tickets:** *(unticketed — file at phase open)*
-- *(new)* `quest_plan_items` table: `id`, `quest_id`, optional `parent_id`, `title`, `status`, `order_index`, `created_by`, optional `rationale`, timestamps. V0 UI is mostly flat, but `parent_id` exists for future grouping.
-- *(new)* `quest_events.plan_item_id` migration + index. P4 did not add this because no writer existed yet.
-- *(new)* L2 plan slice: `active_plan_item_id`, `next_plan_item_ids`.
-- *(new)* Plan lifecycle event kinds: `plan_created`, `plan_item_started`, `plan_item_completed`, `plan_item_skipped`, `plan_item_blocked`, `plan_changed`.
-- *(new)* Lightweight plan panel for the active quest: read, manual edit/reorder, status changes.
-- *(new)* Executor tools for plan item lifecycle (`start_plan_item`, `complete_plan_item`, `skip_plan_item`, `update_plan`) and prompt guidance that plan items are intended route, not history.
+**Tickets:**
+- [**MON-110**](https://linear.app/monarch-commander/issue/MON-110) — Parent issue for P4b.
+- [**MON-111**](https://linear.app/monarch-commander/issue/MON-111) — Slice A: backend substrate. `quest_plan_items` table, `quest_events.plan_item_id`, L2 active/next plan slice, plan lifecycle persistence, Tauri commands, and focused Rust tests. **Shipped on master.**
+- [**MON-112**](https://linear.app/monarch-commander/issue/MON-112) — Slice B: sidecar plan tools and prompt guidance. Adds executor-facing plan lifecycle tools (`set_plan`, `start_plan_item`, `complete_plan_item`, `skip_plan_item`, `block_plan_item`) and wires them through the inner-event persistence path. **Shipped.**
+- [**MON-114**](https://linear.app/monarch-commander/issue/MON-114) — Slice C: plan panel and plan-aware timeline UI. Adds captain-visible plan add/edit/delete/reorder/status controls, plan lifecycle rows, action plan chips, Now-strip active/next plan context, WebSocket parity, and regenerated bindings. **Implemented locally on the MON-114 branch.**
 
 **Tracks.** Backend + Quest tree + Timeline + UI/UX.
 
 **Depends on.** P4 (actions exist and can link to plan items).
 
-**Defers.** Architect/orchestrator planning agent, automatic subquest decomposition, multi-agent delegation, and chat-shadow routing (P8). Rich quest fields and attachments (P5).
+**Current status.** P4b is implemented through Slice C, with MON-111 on master and MON-112/MON-114 present in local branch history. Remaining work is richer plan editing and chat-shadow/Architect plan manipulation in P8, not core P4b substrate.
+
+**Defers.** Architect/orchestrator planning agent, automatic subquest decomposition, multi-agent delegation, and chat-shadow routing (P8). Rich quest fields and attachments / refs (P5).
 
 ---
 
@@ -270,18 +272,19 @@ P2 ──► P2b ──► P4 ──► P4b ──► P5 ──► P6 ──► 
 
 **Test scenario.** Captain opens a quest detail panel. Edits scope ("expanded to also cover the auth refactor"), supplies rationale. The change persists, surfaces on the timeline as a `scope_change` event with rationale. Closes the quest by setting `status='done'`. Status transition is reflected in the agent view.
 
-**Tickets:** *(unticketed — file at phase open)*
-- *(new)* `quest_nodes` migration: `status`, `scope`, `current_direction`, `rationale`, `fork_parent_id` (defined now, used in P10), `worktree_path` (same), `grade`, `summary`. Idempotent ALTER.
-- *(new)* New event kinds: `scope_change`, `direction_change`, `subtask_added`, `note`, `blocker`, `blocker_resolved`, `question`, `answer`. (Question/answer wired in event-only form here; chat-shadow consumes them in P8.)
-- *(new)* Quest attachments / external refs (`linear`, `github_issue`, `github_pr`, `file`, `url`, `artifact`, etc.). Quests remain canonical; external trackers are references, not authorities.
-- *(new)* Quest detail panel UI (read + manual edit + attachments).
-- *(new)* Manual-editor write path (Tauri commands + Rust persistence, single-writer).
+**Tickets:**
+- [**MON-115**](https://linear.app/monarch-commander/issue/MON-115) — Parent issue for P5 rich quest model and manual editor.
+- [**MON-116**](https://linear.app/monarch-commander/issue/MON-116) — Slice A: backend/data contract. Adds `quest_nodes.scope`, `quest_nodes.current_direction`, `quest_nodes.rationale`, `quest_nodes.fork_parent_id`, `quest_refs`, manual quest update commands, manual quest event command, WebSocket parity, bindings, and docs. Existing MON-83 `status`, `grade`, `worktree_path`, and `summary` remain canonical; no base-table rewrite. **Implemented locally.**
+- [**MON-117**](https://linear.app/monarch-commander/issue/MON-117) — Slice B: captain-visible editor. Extends `questStore` with P5 commands and renders inline expanded-quest controls for status, grade, scope, current direction, rationale, summary, manual events (`note`, `blocker`, `blocker_resolved`, `question`, `answer`), and external refs (`linear`, `github_issue`, `github_pr`, `file`, `url`, `artifact`). **Implemented locally.**
+- *(next / optional)* Slice C: timeline/editor polish. Likely areas: inline ref editing, richer typed event payload rendering, detail-panel ergonomics, and any app-level affordances discovered during manual Tauri testing.
 
 **Tracks.** Backend + Quest tree + UI/UX.
 
 **Depends on.** P4b (timeline already renders actual actions and intended plan; P5 enriches the quest object around them).
 
-**Defers.** Auto-decomposition by Architect (P8 — subsumes [MON-84](https://linear.app/monarch-commander/issue/MON-84) here, since the Architect is conceptually a chat-shadow tool). Captain-set permission gates on quests (P8 territory).
+**Current status.** P5 has backend and inline UI slices implemented locally. It is usable as a manual editor/refs panel once the stacked MON-116/MON-117 branches land. It does not yet include chat-shadow mutation tools, Architect decomposition, or a dedicated full-page quest detail surface.
+
+**Defers.** Auto-decomposition by Architect (P8 — subsumes [MON-84](https://linear.app/monarch-commander/issue/MON-84) here, since the Architect is conceptually a chat-shadow tool). Captain-set permission gates on quests (P8 territory). Fork semantics for `fork_parent_id` (P10). First-person quest reports (P6).
 
 ---
 
@@ -441,8 +444,8 @@ P2 ──► P2b ──► P4 ──► P4b ──► P5 ──► P6 ──► 
 | **P3c** | Memory works at 1M scale without blocking writes. |
 | **P3d** | New memories queryable in seconds. |
 | **P4** | Timeline reads as a real execution narrative; captain sees `current_action` in the agent view. **Shadow stops feeling like a chat log.** |
-| **P4b** | Current quest has a visible intended plan; actions link to plan items. **Captain can distinguish intended route from actual execution.** |
-| **P5** | Quests have rich fields, attachments, and external refs; captain edits scope/direction with rationale. |
+| **P4b** | Current quest has a visible intended plan; actions link to plan items. **Captain can distinguish intended route from actual execution.** Implemented through MON-114 locally; MON-111 is on master. |
+| **P5** | Quests have rich fields, manual events, and external refs; captain edits scope/direction with rationale from the inline quest detail panel. Backend + inline UI are implemented locally in MON-116/MON-117. |
 | **P6** | Quests close with a first-person report. **Compelling captain UX moment.** |
 | **P7** | Chat surface stays clean during work; timeline panel runs in parallel; captain can ask "what are you doing?" while the shadow works. **Two-organ vision becomes the daily UX.** |
 | **P8** | Captain redirects, expands, mediates pending actions through chat without ritual; Architect auto-decomposes complex inputs into subquests. |
