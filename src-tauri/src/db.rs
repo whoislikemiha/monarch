@@ -442,6 +442,38 @@ impl Database {
                     "CREATE INDEX IF NOT EXISTS idx_quest_events_plan_item
                         ON quest_events(plan_item_id);",
                 );
+                // P5 (MON-116): rich quest metadata. Older MON-83 columns
+                // already include status, grade, worktree_path, and summary;
+                // these ALTERs add only the missing what/why fields.
+                let _ = conn.execute_batch("ALTER TABLE quest_nodes ADD COLUMN scope TEXT;");
+                let _ = conn.execute_batch(
+                    "ALTER TABLE quest_nodes ADD COLUMN current_direction TEXT;",
+                );
+                let _ = conn.execute_batch("ALTER TABLE quest_nodes ADD COLUMN rationale TEXT;");
+                let _ = conn.execute_batch(
+                    "ALTER TABLE quest_nodes ADD COLUMN fork_parent_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL;",
+                );
+                let _ = conn.execute_batch(
+                    "CREATE INDEX IF NOT EXISTS idx_quest_nodes_fork_parent
+                        ON quest_nodes(fork_parent_id);",
+                );
+                let _ = conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS quest_refs (
+                        id TEXT PRIMARY KEY,
+                        quest_id TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
+                        ref_type TEXT NOT NULL,
+                        label TEXT,
+                        target TEXT NOT NULL,
+                        metadata_json TEXT,
+                        created_by TEXT NOT NULL,
+                        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_quest_refs_quest
+                        ON quest_refs(quest_id, created_at);
+                    CREATE INDEX IF NOT EXISTS idx_quest_refs_type
+                        ON quest_refs(ref_type);",
+                );
                 // messages.quest_id: nullable FK. Slice 2 leaves this NULL
                 // everywhere; Slice 3 (Architect) is the first writer.
                 let _ = conn.execute_batch(
@@ -1107,11 +1139,15 @@ pub struct QuestRow {
     pub parent_id: Option<String>,
     pub title: String,
     pub description: Option<String>,
+    pub scope: Option<String>,
+    pub current_direction: Option<String>,
+    pub rationale: Option<String>,
     pub status: String,
     pub grade: Option<String>,
     pub exec_hint: Option<String>,
     pub explore_fork_count: Option<i32>,
     pub assignee_shadow_id: Option<String>,
+    pub fork_parent_id: Option<String>,
     pub worktree_path: Option<String>,
     pub branch_name: Option<String>,
     pub base_branch: Option<String>,
@@ -1170,6 +1206,10 @@ pub struct UpdateQuestPayload {
     pub id: String,
     pub title: Option<String>,
     pub description: Option<String>,
+    pub scope: Option<String>,
+    pub current_direction: Option<String>,
+    pub rationale: Option<String>,
+    pub fork_parent_id: Option<String>,
     pub status: Option<String>,
     pub grade: Option<String>,
     pub exec_hint: Option<String>,
@@ -1178,6 +1218,95 @@ pub struct UpdateQuestPayload {
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
     pub abandoned_at: Option<String>,
+}
+
+/// P5 manual editor payload. This narrower path records semantic timeline
+/// events for quest-level changes; generic `db_update_quest` remains available
+/// for older callers that only need a direct row patch.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualQuestUpdatePayload {
+    pub id: String,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub current_direction: Option<String>,
+    #[serde(default)]
+    pub rationale: Option<String>,
+    #[serde(default)]
+    pub grade: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub change_rationale: Option<String>,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestRefRow {
+    pub id: String,
+    pub quest_id: String,
+    pub ref_type: String,
+    pub label: Option<String>,
+    pub target: String,
+    pub metadata_json: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateQuestRefPayload {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub quest_id: String,
+    pub ref_type: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    pub target: String,
+    #[serde(default)]
+    pub metadata_json: Option<String>,
+    #[serde(default)]
+    pub created_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateQuestRefPayload {
+    pub id: String,
+    #[serde(default)]
+    pub ref_type: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub metadata_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualQuestEventPayload {
+    pub quest_id: String,
+    pub event_type: String,
+    pub text: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub metadata_json: Option<String>,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub surface_override: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
@@ -2813,6 +2942,10 @@ impl Database {
                 }
                 push!(payload.title, "title");
                 push!(payload.description, "description");
+                push!(payload.scope, "scope");
+                push!(payload.current_direction, "current_direction");
+                push!(payload.rationale, "rationale");
+                push!(payload.fork_parent_id, "fork_parent_id");
                 push!(payload.status, "status");
                 push!(payload.grade, "grade");
                 push!(payload.exec_hint, "exec_hint");
@@ -2979,6 +3112,284 @@ impl Database {
                 Ok(rows)
             })
             .await?)
+    }
+
+    pub async fn update_quest_manual_internal(
+        &self,
+        payload: &ManualQuestUpdatePayload,
+    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+        let payload = payload.clone();
+        self.conn
+            .call(move |conn| {
+                let tx = conn.unchecked_transaction()?;
+                let mut stmt = tx.prepare(QUEST_SELECT_SQL)?;
+                let before = stmt.query_row(params![payload.id], map_quest)?;
+                drop(stmt);
+
+                let mut sets: Vec<&str> = Vec::new();
+                let mut args: Vec<rusqlite::types::Value> = Vec::new();
+                macro_rules! push {
+                    ($field:expr, $col:literal) => {
+                        if let Some(v) = $field.as_ref() {
+                            sets.push(concat!($col, " = ?"));
+                            args.push(rusqlite::types::Value::Text(v.clone()));
+                        }
+                    };
+                }
+                push!(payload.status, "status");
+                push!(payload.scope, "scope");
+                push!(payload.current_direction, "current_direction");
+                push!(payload.rationale, "rationale");
+                push!(payload.grade, "grade");
+                push!(payload.summary, "summary");
+                if !sets.is_empty() {
+                    let sql = format!("UPDATE quest_nodes SET {} WHERE id = ?", sets.join(", "));
+                    args.push(rusqlite::types::Value::Text(payload.id.clone()));
+                    let params_slice: Vec<&dyn rusqlite::ToSql> =
+                        args.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+                    tx.execute(&sql, params_slice.as_slice())?;
+                }
+
+                let mut stmt = tx.prepare(QUEST_SELECT_SQL)?;
+                let after = stmt.query_row(params![payload.id], map_quest)?;
+                drop(stmt);
+
+                let actor = payload.actor.unwrap_or_else(|| "monarch".to_string());
+                let author = payload.author.unwrap_or_else(|| "captain".to_string());
+                let change_rationale = payload.change_rationale;
+                let now = crate::util::chrono_now();
+                let mut notes = Vec::new();
+
+                macro_rules! emit_change {
+                    ($event_type:literal, $before:expr, $after:expr) => {
+                        if $before != $after {
+                            let event_id = crate::util::uuid_v4_simple();
+                            let event_payload = serde_json::json!({
+                                "from": $before,
+                                "to": $after,
+                                "rationale": change_rationale.clone(),
+                            })
+                            .to_string();
+                            tx.execute(
+                                "INSERT INTO quest_events (
+                                    id, quest_id, event_type, actor, payload_json, created_at,
+                                    parent_event_id, author, surface_override, payload_schema_version
+                                 )
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, NULL, 1)",
+                                params![
+                                    event_id,
+                                    after.id.clone(),
+                                    $event_type,
+                                    actor.clone(),
+                                    event_payload,
+                                    now,
+                                    author.clone()
+                                ],
+                            )?;
+                            notes.push(QuestEventNotification {
+                                quest_id: after.id.clone(),
+                                event_id,
+                                event_type: $event_type.to_string(),
+                            });
+                        }
+                    };
+                }
+
+                emit_change!("scope_change", before.scope, after.scope);
+                emit_change!(
+                    "direction_change",
+                    before.current_direction,
+                    after.current_direction
+                );
+                emit_change!("quest_rationale_change", before.rationale, after.rationale);
+                emit_change!("grade_change", before.grade, after.grade);
+                emit_change!("quest_summary_change", before.summary, after.summary);
+
+                tx.commit()?;
+                Ok(notes)
+            })
+            .await
+            .map_err(MonarchError::from)
+    }
+
+    pub async fn record_manual_quest_event_internal(
+        &self,
+        payload: &ManualQuestEventPayload,
+    ) -> Result<String, MonarchError> {
+        let event_type = payload.event_type.as_str();
+        if !matches!(
+            event_type,
+            "note" | "blocker" | "blocker_resolved" | "question" | "answer"
+        ) {
+            return Err(MonarchError::invalid_input(format!(
+                "Unsupported manual quest event type: {}",
+                event_type
+            )));
+        }
+        let payload_json = serde_json::json!({
+            "text": payload.text,
+            "title": payload.title,
+            "metadata": payload
+                .metadata_json
+                .as_deref()
+                .and_then(|raw| serde_json::from_str::<Value>(raw).ok()),
+        })
+        .to_string();
+        self.record_quest_event_internal(&RecordQuestEventPayload {
+            quest_id: payload.quest_id.clone(),
+            event_type: payload.event_type.clone(),
+            actor: Some(
+                payload
+                    .actor
+                    .clone()
+                    .unwrap_or_else(|| "monarch".to_string()),
+            ),
+            payload_json: Some(payload_json),
+            author: Some(
+                payload
+                    .author
+                    .clone()
+                    .unwrap_or_else(|| "captain".to_string()),
+            ),
+            surface_override: payload.surface_override.clone(),
+            ..Default::default()
+        })
+        .await
+    }
+
+    pub async fn list_quest_refs_internal(
+        &self,
+        quest_id: &str,
+    ) -> Result<Vec<QuestRefRow>, MonarchError> {
+        let quest_id = quest_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, quest_id, ref_type, label, target, metadata_json,
+                            created_by, created_at, updated_at
+                     FROM quest_refs WHERE quest_id = ?1 ORDER BY created_at ASC",
+                )?;
+                let rows = stmt
+                    .query_map(params![quest_id], map_quest_ref)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await?)
+    }
+
+    pub async fn get_quest_ref_internal(
+        &self,
+        id: &str,
+    ) -> Result<Option<QuestRefRow>, MonarchError> {
+        let id = id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, quest_id, ref_type, label, target, metadata_json,
+                            created_by, created_at, updated_at
+                     FROM quest_refs WHERE id = ?1",
+                )?;
+                let mut rows = stmt.query(params![id])?;
+                if let Some(row) = rows.next()? {
+                    Ok(Some(map_quest_ref(row)?))
+                } else {
+                    Ok(None)
+                }
+            })
+            .await?)
+    }
+
+    pub async fn create_quest_ref_internal(
+        &self,
+        payload: &CreateQuestRefPayload,
+    ) -> Result<String, MonarchError> {
+        if payload.ref_type.trim().is_empty() {
+            return Err(MonarchError::invalid_input("refType required"));
+        }
+        if payload.target.trim().is_empty() {
+            return Err(MonarchError::invalid_input("target required"));
+        }
+        let payload = payload.clone();
+        let id = payload
+            .id
+            .clone()
+            .unwrap_or_else(crate::util::uuid_v4_simple);
+        let id_for_return = id.clone();
+        let created_by = payload.created_by.unwrap_or_else(|| "captain".to_string());
+        let now = crate::util::chrono_now();
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT INTO quest_refs (
+                        id, quest_id, ref_type, label, target, metadata_json,
+                        created_by, created_at, updated_at
+                     )
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                    params![
+                        id,
+                        payload.quest_id,
+                        payload.ref_type,
+                        payload.label,
+                        payload.target,
+                        payload.metadata_json,
+                        created_by,
+                        now
+                    ],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(id_for_return)
+    }
+
+    pub async fn update_quest_ref_internal(
+        &self,
+        payload: &UpdateQuestRefPayload,
+    ) -> Result<(), MonarchError> {
+        let payload = payload.clone();
+        self.conn
+            .call(move |conn| {
+                let mut sets: Vec<&str> = Vec::new();
+                let mut args: Vec<rusqlite::types::Value> = Vec::new();
+                macro_rules! push {
+                    ($field:expr, $col:literal) => {
+                        if let Some(v) = $field.as_ref() {
+                            sets.push(concat!($col, " = ?"));
+                            args.push(rusqlite::types::Value::Text(v.clone()));
+                        }
+                    };
+                }
+                push!(payload.ref_type, "ref_type");
+                push!(payload.label, "label");
+                push!(payload.target, "target");
+                push!(payload.metadata_json, "metadata_json");
+                if sets.is_empty() {
+                    return Ok(());
+                }
+                sets.push("updated_at = ?");
+                args.push(rusqlite::types::Value::Text(crate::util::chrono_now()));
+                let sql = format!("UPDATE quest_refs SET {} WHERE id = ?", sets.join(", "));
+                args.push(rusqlite::types::Value::Text(payload.id.clone()));
+                let params_slice: Vec<&dyn rusqlite::ToSql> =
+                    args.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+                conn.execute(&sql, params_slice.as_slice())?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_quest_ref_internal(&self, id: &str) -> Result<(), MonarchError> {
+        let id = id.to_string();
+        self.conn
+            .call(move |conn| {
+                conn.execute("DELETE FROM quest_refs WHERE id = ?1", params![id])?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn get_working_memory_internal(
@@ -3371,22 +3782,22 @@ impl Database {
                 // row not in the new list (one statement, FK-friendly).
                 let mut final_ids: Vec<String> = Vec::with_capacity(payload.items.len());
                 for input in &payload.items {
-                    let id = input
-                        .id
-                        .clone()
-                        .unwrap_or_else(crate::util::uuid_v4_simple);
+                    let id = input.id.clone().unwrap_or_else(crate::util::uuid_v4_simple);
                     final_ids.push(id);
                 }
 
                 if !final_ids.is_empty() {
-                    let placeholders =
-                        std::iter::repeat("?").take(final_ids.len()).collect::<Vec<_>>().join(",");
+                    let placeholders = std::iter::repeat("?")
+                        .take(final_ids.len())
+                        .collect::<Vec<_>>()
+                        .join(",");
                     let sql = format!(
                         "DELETE FROM quest_plan_items WHERE quest_id = ? AND id NOT IN ({})",
                         placeholders
                     );
                     let mut stmt = tx.prepare(&sql)?;
-                    let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + final_ids.len());
+                    let mut bound: Vec<&dyn rusqlite::ToSql> =
+                        Vec::with_capacity(1 + final_ids.len());
                     bound.push(&quest_id);
                     for id in &final_ids {
                         bound.push(id);
@@ -3443,14 +3854,8 @@ impl Database {
                     "created_by": created_by,
                 })
                 .to_string();
-                let event_id = insert_plan_event_tx(
-                    &tx,
-                    &quest_id,
-                    event_type,
-                    None,
-                    &payload_json,
-                    &now,
-                )?;
+                let event_id =
+                    insert_plan_event_tx(&tx, &quest_id, event_type, None, &payload_json, &now)?;
                 sync_plan_l2_tx(&tx, &quest_id, &now)?;
                 tx.commit()?;
                 Ok(vec![QuestEventNotification {
@@ -4015,15 +4420,17 @@ impl Database {
 // single-row lookup by id; `QUEST_BASE_SELECT` is the prefix for filtered
 // list queries (no WHERE clause).
 const QUEST_BASE_SELECT: &str = "SELECT \
-    id, root_id, parent_id, title, description, status, grade, exec_hint, \
-    explore_fork_count, assignee_shadow_id, worktree_path, branch_name, \
+    id, root_id, parent_id, title, description, scope, current_direction, \
+    rationale, status, grade, exec_hint, explore_fork_count, assignee_shadow_id, \
+    fork_parent_id, worktree_path, branch_name, \
     base_branch, branched_from_id, superseded_by_id, created_by, created_at, \
     started_at, completed_at, abandoned_at, estimated_tokens, actual_tokens, \
     estimated_duration_ms, actual_duration_ms, summary FROM quest_nodes";
 
 const QUEST_SELECT_SQL: &str = "SELECT \
-    id, root_id, parent_id, title, description, status, grade, exec_hint, \
-    explore_fork_count, assignee_shadow_id, worktree_path, branch_name, \
+    id, root_id, parent_id, title, description, scope, current_direction, \
+    rationale, status, grade, exec_hint, explore_fork_count, assignee_shadow_id, \
+    fork_parent_id, worktree_path, branch_name, \
     base_branch, branched_from_id, superseded_by_id, created_by, created_at, \
     started_at, completed_at, abandoned_at, estimated_tokens, actual_tokens, \
     estimated_duration_ms, actual_duration_ms, summary \
@@ -4231,26 +4638,44 @@ fn map_quest(row: &Row<'_>) -> rusqlite::Result<QuestRow> {
         parent_id: row.get(2)?,
         title: row.get(3)?,
         description: row.get(4)?,
-        status: row.get(5)?,
-        grade: row.get(6)?,
-        exec_hint: row.get(7)?,
-        explore_fork_count: row.get(8)?,
-        assignee_shadow_id: row.get(9)?,
-        worktree_path: row.get(10)?,
-        branch_name: row.get(11)?,
-        base_branch: row.get(12)?,
-        branched_from_id: row.get(13)?,
-        superseded_by_id: row.get(14)?,
-        created_by: row.get(15)?,
-        created_at: row.get(16)?,
-        started_at: row.get(17)?,
-        completed_at: row.get(18)?,
-        abandoned_at: row.get(19)?,
-        estimated_tokens: row.get(20)?,
-        actual_tokens: row.get(21)?,
-        estimated_duration_ms: row.get(22)?,
-        actual_duration_ms: row.get(23)?,
-        summary: row.get(24)?,
+        scope: row.get(5)?,
+        current_direction: row.get(6)?,
+        rationale: row.get(7)?,
+        status: row.get(8)?,
+        grade: row.get(9)?,
+        exec_hint: row.get(10)?,
+        explore_fork_count: row.get(11)?,
+        assignee_shadow_id: row.get(12)?,
+        fork_parent_id: row.get(13)?,
+        worktree_path: row.get(14)?,
+        branch_name: row.get(15)?,
+        base_branch: row.get(16)?,
+        branched_from_id: row.get(17)?,
+        superseded_by_id: row.get(18)?,
+        created_by: row.get(19)?,
+        created_at: row.get(20)?,
+        started_at: row.get(21)?,
+        completed_at: row.get(22)?,
+        abandoned_at: row.get(23)?,
+        estimated_tokens: row.get(24)?,
+        actual_tokens: row.get(25)?,
+        estimated_duration_ms: row.get(26)?,
+        actual_duration_ms: row.get(27)?,
+        summary: row.get(28)?,
+    })
+}
+
+fn map_quest_ref(row: &Row<'_>) -> rusqlite::Result<QuestRefRow> {
+    Ok(QuestRefRow {
+        id: row.get(0)?,
+        quest_id: row.get(1)?,
+        ref_type: row.get(2)?,
+        label: row.get(3)?,
+        target: row.get(4)?,
+        metadata_json: row.get(5)?,
+        created_by: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
     })
 }
 
@@ -4462,7 +4887,14 @@ fn insert_plan_event_tx(
             plan_item_id
          )
          VALUES (?1, ?2, ?3, NULL, ?4, ?5, NULL, 'executor', NULL, 1, ?6)",
-        params![event_id, quest_id, event_type, payload_json, now, plan_item_id],
+        params![
+            event_id,
+            quest_id,
+            event_type,
+            payload_json,
+            now,
+            plan_item_id
+        ],
     )?;
     Ok(event_id)
 }
@@ -5065,6 +5497,106 @@ pub async fn db_list_quest_events(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn db_update_quest_manual(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    payload: ManualQuestUpdatePayload,
+) -> Result<(), MonarchError> {
+    let id = payload.id.clone();
+    let before = db.get_quest_internal(&id).await?;
+    let notes = db.update_quest_manual_internal(&payload).await?;
+    let after = db.get_quest_internal(&id).await?;
+    emit_quest_updated_notifications(&app, &agent_mgr.ws_broadcast, &id, after.as_ref());
+    emit_plan_notifications(&app, &agent_mgr.ws_broadcast, notes);
+    handle_quest_update_side_effects(&app, db.inner(), agent_mgr.inner(), before, after).await?;
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_record_manual_quest_event(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    payload: ManualQuestEventPayload,
+) -> Result<String, MonarchError> {
+    let quest_id = payload.quest_id.clone();
+    let event_type = payload.event_type.clone();
+    let id = db.record_manual_quest_event_internal(&payload).await?;
+    crate::agent::emit_event(
+        &app,
+        &agent_mgr.ws_broadcast,
+        &format!("quest-event-{}", quest_id),
+        &serde_json::json!({ "id": id, "eventType": event_type }).to_string(),
+    );
+    Ok(id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_list_quest_refs(
+    db: tauri::State<'_, Arc<Database>>,
+    quest_id: String,
+) -> Result<Vec<QuestRefRow>, MonarchError> {
+    db.list_quest_refs_internal(&quest_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_create_quest_ref(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    payload: CreateQuestRefPayload,
+) -> Result<String, MonarchError> {
+    let quest_id = payload.quest_id.clone();
+    let id = db.create_quest_ref_internal(&payload).await?;
+    emit_quest_ref_notification(&app, &agent_mgr.ws_broadcast, &quest_id, "created", &id);
+    Ok(id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_update_quest_ref(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    payload: UpdateQuestRefPayload,
+) -> Result<(), MonarchError> {
+    let id = payload.id.clone();
+    let before = db.get_quest_ref_internal(&id).await?;
+    db.update_quest_ref_internal(&payload).await?;
+    if let Some(row) = before {
+        emit_quest_ref_notification(&app, &agent_mgr.ws_broadcast, &row.quest_id, "updated", &id);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_delete_quest_ref(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    ref_id: String,
+) -> Result<(), MonarchError> {
+    let before = db.get_quest_ref_internal(&ref_id).await?;
+    db.delete_quest_ref_internal(&ref_id).await?;
+    if let Some(row) = before {
+        emit_quest_ref_notification(
+            &app,
+            &agent_mgr.ws_broadcast,
+            &row.quest_id,
+            "deleted",
+            &ref_id,
+        );
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn db_get_working_memory(
     db: tauri::State<'_, Arc<Database>>,
     agent_id: String,
@@ -5209,7 +5741,7 @@ pub async fn db_block_plan_item(
     Ok(())
 }
 
-fn emit_plan_notifications(
+pub(crate) fn emit_plan_notifications(
     app: &tauri::AppHandle,
     ws_tx: &tokio::sync::broadcast::Sender<crate::agent::WsBroadcast>,
     notes: Vec<QuestEventNotification>,
@@ -5219,10 +5751,49 @@ fn emit_plan_notifications(
             app,
             ws_tx,
             &format!("quest-event-{}", note.quest_id),
-            &serde_json::json!({ "id": note.event_id, "eventType": note.event_type })
-                .to_string(),
+            &serde_json::json!({ "id": note.event_id, "eventType": note.event_type }).to_string(),
         );
     }
+}
+
+pub(crate) fn emit_quest_updated_notifications(
+    app: &tauri::AppHandle,
+    ws_tx: &tokio::sync::broadcast::Sender<crate::agent::WsBroadcast>,
+    id: &str,
+    after: Option<&QuestRow>,
+) {
+    crate::agent::emit_event(
+        app,
+        ws_tx,
+        &format!("quest-updated-{}", id),
+        &serde_json::json!({ "id": id }).to_string(),
+    );
+    if let Some(after_quest) = after {
+        if after_quest.root_id != after_quest.id {
+            crate::agent::emit_event(
+                app,
+                ws_tx,
+                &format!("quest-updated-{}", after_quest.root_id),
+                &serde_json::json!({ "id": after_quest.id, "rootId": after_quest.root_id })
+                    .to_string(),
+            );
+        }
+    }
+}
+
+pub(crate) fn emit_quest_ref_notification(
+    app: &tauri::AppHandle,
+    ws_tx: &tokio::sync::broadcast::Sender<crate::agent::WsBroadcast>,
+    quest_id: &str,
+    action: &str,
+    ref_id: &str,
+) {
+    crate::agent::emit_event(
+        app,
+        ws_tx,
+        &format!("quest-refs-{}", quest_id),
+        &serde_json::json!({ "id": ref_id, "questId": quest_id, "action": action }).to_string(),
+    );
 }
 
 // ---- MON-82: Classifications ----
@@ -5703,7 +6274,11 @@ mod tests {
         let action = events
             .iter()
             .filter(|ev| ev.event_type == "coherent_action")
-            .find(|ev| ev.payload_json.as_deref().map_or(false, |p| p.contains("patch handler")))
+            .find(|ev| {
+                ev.payload_json
+                    .as_deref()
+                    .map_or(false, |p| p.contains("patch handler"))
+            })
             .expect("action row");
         // We wrote the column directly; verify it lands by reading back.
         let plan_item_id_in_row: Option<String> = db
@@ -5731,14 +6306,9 @@ mod tests {
         // Plan exists but nothing is active.
         seed_plan(&db, &quest_id, &["A", "B"]).await;
 
-        db.record_action_transition_internal(
-            &agent_id,
-            &quest_id,
-            "freeform exploration",
-            None,
-        )
-        .await
-        .expect("transition");
+        db.record_action_transition_internal(&agent_id, &quest_id, "freeform exploration", None)
+            .await
+            .expect("transition");
 
         let events = db
             .list_quest_events_internal(&quest_id)

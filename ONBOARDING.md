@@ -240,21 +240,38 @@ CREATE TABLE agent_working_memory (
   updated_at   TEXT NOT NULL
 );
 
+CREATE TABLE quest_refs (
+  id            TEXT PRIMARY KEY,
+  quest_id      TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
+  ref_type      TEXT NOT NULL,                    -- linear | github_issue | github_pr | file | url | artifact | ...
+  label         TEXT,
+  target        TEXT NOT NULL,
+  metadata_json TEXT,
+  created_by    TEXT NOT NULL,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- FK extensions on existing tables. messages.quest_id is still mostly
 -- event/roadmap territory; agents.current_quest_id is populated by
 -- auto-created active quests and cleared when that exact quest closes.
 ALTER TABLE messages ADD COLUMN quest_id         TEXT REFERENCES quest_nodes(id);
 ALTER TABLE agents   ADD COLUMN current_quest_id TEXT REFERENCES quest_nodes(id);
+ALTER TABLE quest_nodes ADD COLUMN scope             TEXT;
+ALTER TABLE quest_nodes ADD COLUMN current_direction TEXT;
+ALTER TABLE quest_nodes ADD COLUMN rationale         TEXT;
+ALTER TABLE quest_nodes ADD COLUMN fork_parent_id    TEXT REFERENCES quest_nodes(id);
 
 CREATE INDEX idx_quest_nodes_root           ON quest_nodes(root_id);
 CREATE INDEX idx_quest_nodes_parent         ON quest_nodes(parent_id);
 CREATE INDEX idx_quest_nodes_assignee_status ON quest_nodes(assignee_shadow_id, status);
 CREATE INDEX idx_quest_events_quest         ON quest_events(quest_id, created_at);
 CREATE INDEX idx_quest_events_parent        ON quest_events(parent_event_id);
+CREATE INDEX idx_quest_refs_quest           ON quest_refs(quest_id, created_at);
 CREATE INDEX idx_messages_quest             ON messages(quest_id);
 ```
 
-`quest_events` is the execution narrative spine. Top-level `coherent_action` events describe what the executor is doing; child `tool_call`, `action_outcome`, and `executor_decision` events attach evidence and decisions to the action. `actor` remains the concrete writer id/name; `author` answers which semantic role wrote the event. `agent_working_memory` stores L2 v0 for fast rehydration (`current_action`, `recent_actions`, current quest path). P4b adds durable `quest_plan_items` plus `quest_events.plan_item_id` so intended plan items can link to actual coherent actions.
+`quest_events` is the execution narrative spine. Top-level `coherent_action` events describe what the executor is doing; child `tool_call`, `action_outcome`, and `executor_decision` events attach evidence and decisions to the action. `actor` remains the concrete writer id/name; `author` answers which semantic role wrote the event. `agent_working_memory` stores L2 v0 for fast rehydration (`current_action`, `recent_actions`, current quest path) plus the active/next plan-item slice. Durable `quest_plan_items` store the intended route, and `quest_events.plan_item_id` links actual coherent actions back to the active plan item without making timeline actions into plan rows. Rich quest fields (`scope`, `current_direction`, `rationale`) are the captain-facing what/why layer; `quest_refs` links external artifacts while keeping the quest canonical.
 
 ### Session ancestry — the key concept
 
@@ -655,8 +672,9 @@ A quick map of the delta between [VISION.md](./VISION.md) and reality. Not exhau
 | Multi-agent delegation & hierarchy | ❌ | Agents are flat; no parent/child or role-based dispatch. |
 | Tool-call interception & approval flows | ❌ | Events flow through Rust but there's no gate to pause a tool call. Tracked under the *Agent loop* project in Linear. |
 | Memory keeper / layered memory | ⚠️ Partial | P2 substrate, Keeper writes, and user-turn retrieval are wired. Editing, project sharing, reranking/evals, stale-file validation, and polished Inspector workflows remain roadmap work. |
-| Executor narration / L2 working memory | ⚠️ Partial | Backend substrate, sidecar narration tools, nested timeline rendering, and Agent View `Now`/recent-action strip are wired. Remaining work is polish plus durable plans in P4b. |
-| Durable execution plans | ❌ | P4b roadmap work: `quest_plan_items`, active/next plan slice in L2, action-to-plan links, and lightweight plan UI. Quests are the canonical work object; plans are intended route; timeline is actual execution. |
+| Executor narration / L2 working memory | ⚠️ Partial | Backend substrate, sidecar narration tools, nested timeline rendering, and Agent View `Now`/recent-action strip are wired. P4b extends the strip with active/next plan context. |
+| Durable execution plans | ⚠️ Partial | `quest_plan_items`, active/next plan slice in L2, action-to-plan links, sidecar plan tools, manual plan panel, plan lifecycle rows, and action chips are wired. Future work: richer plan editing, chat-shadow/architect plan manipulation, and decomposition. |
+| Rich quest model / editor | ⚠️ Partial | P5 backend metadata and `quest_refs` are wired. Quest detail/editor UI is next. |
 | Context inspector / manipulation UI | ❌ | No way to see what Pi actually has in context. Tracked under *Memory & context tools*. |
 | Time travel / branching UI | ⚠️ Partial | Session ancestry supports branching in the data model, but no UI for rewind/fork. |
 | Headless loop / mobile / remote | ❌ | Tauri desktop only. No web server, no tunnel. |

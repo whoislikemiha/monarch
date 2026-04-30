@@ -205,11 +205,15 @@ export const commands = {
 	parentId: string | null,
 	title: string,
 	description: string | null,
+	scope: string | null,
+	currentDirection: string | null,
+	rationale: string | null,
 	status: string,
 	grade: string | null,
 	execHint: string | null,
 	exploreForkCount: number | null,
 	assigneeShadowId: string | null,
+	forkParentId: string | null,
 	worktreePath: string | null,
 	branchName: string | null,
 	baseBranch: string | null,
@@ -230,6 +234,12 @@ export const commands = {
 	dbGetQuestTreeForRoot: (rootId: string) => typedError<QuestRow[], ErrorDto>(__TAURI_INVOKE("db_get_quest_tree_for_root", { rootId })),
 	dbRecordQuestEvent: (payload: RecordQuestEventPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_record_quest_event", { payload })),
 	dbListQuestEvents: (questId: string) => typedError<QuestEventRow[], ErrorDto>(__TAURI_INVOKE("db_list_quest_events", { questId })),
+	dbUpdateQuestManual: (payload: ManualQuestUpdatePayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_quest_manual", { payload })),
+	dbRecordManualQuestEvent: (payload: ManualQuestEventPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_record_manual_quest_event", { payload })),
+	dbListQuestRefs: (questId: string) => typedError<QuestRefRow[], ErrorDto>(__TAURI_INVOKE("db_list_quest_refs", { questId })),
+	dbCreateQuestRef: (payload: CreateQuestRefPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_create_quest_ref", { payload })),
+	dbUpdateQuestRef: (payload: UpdateQuestRefPayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_quest_ref", { payload })),
+	dbDeleteQuestRef: (refId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_delete_quest_ref", { refId })),
 	dbGetWorkingMemory: (agentId: string) => typedError<{
 	schemaVersion: number,
 	currentQuestId: string | null,
@@ -450,6 +460,16 @@ export type CreateQuestPayload = {
 	createdBy: string | null,
 };
 
+export type CreateQuestRefPayload = {
+	id?: string | null,
+	questId: string,
+	refType: string,
+	label?: string | null,
+	target: string,
+	metadataJson?: string | null,
+	createdBy?: string | null,
+};
+
 export type DisplayItem = { kind: "user"; content: string; timestamp: number | null; 
 /**
  *  MON-75: image attachments that were sent with this user
@@ -543,6 +563,35 @@ export type LiveAgentState = {
 	 *  200k-cache-read window is real context the LLM has loaded).
 	 */
 	tokensSinceLastCompaction?: number,
+};
+
+export type ManualQuestEventPayload = {
+	questId: string,
+	eventType: string,
+	text: string,
+	title?: string | null,
+	metadataJson?: string | null,
+	actor?: string | null,
+	author?: string | null,
+	surfaceOverride?: string | null,
+};
+
+/**
+ *  P5 manual editor payload. This narrower path records semantic timeline
+ *  events for quest-level changes; generic `db_update_quest` remains available
+ *  for older callers that only need a direct row patch.
+ */
+export type ManualQuestUpdatePayload = {
+	id: string,
+	status?: string | null,
+	scope?: string | null,
+	currentDirection?: string | null,
+	rationale?: string | null,
+	grade?: string | null,
+	summary?: string | null,
+	changeRationale?: string | null,
+	actor?: string | null,
+	author?: string | null,
 };
 
 export type MemoryConfig = {
@@ -718,17 +767,33 @@ export type QuestEventRow = {
 	payloadSchemaVersion: number,
 };
 
+export type QuestRefRow = {
+	id: string,
+	questId: string,
+	refType: string,
+	label: string | null,
+	target: string,
+	metadataJson: string | null,
+	createdBy: string,
+	createdAt: string,
+	updatedAt: string,
+};
+
 export type QuestRow = {
 	id: string,
 	rootId: string,
 	parentId: string | null,
 	title: string,
 	description: string | null,
+	scope: string | null,
+	currentDirection: string | null,
+	rationale: string | null,
 	status: string,
 	grade: string | null,
 	execHint: string | null,
 	exploreForkCount: number | null,
 	assigneeShadowId: string | null,
+	forkParentId: string | null,
 	worktreePath: string | null,
 	branchName: string | null,
 	baseBranch: string | null,
@@ -935,6 +1000,10 @@ export type UpdateQuestPayload = {
 	id: string,
 	title: string | null,
 	description: string | null,
+	scope: string | null,
+	currentDirection: string | null,
+	rationale: string | null,
+	forkParentId: string | null,
 	status: string | null,
 	grade: string | null,
 	execHint: string | null,
@@ -943,6 +1012,14 @@ export type UpdateQuestPayload = {
 	startedAt: string | null,
 	completedAt: string | null,
 	abandonedAt: string | null,
+};
+
+export type UpdateQuestRefPayload = {
+	id: string,
+	refType?: string | null,
+	label?: string | null,
+	target?: string | null,
+	metadataJson?: string | null,
 };
 
 export type UpsertCaptainIdentityRequest = {
