@@ -689,6 +689,79 @@ pub(crate) async fn dispatch_command(
             let wm = state.db.get_working_memory_internal(&agent_id).await?;
             serde_json::to_value(wm).map_err(MonarchError::from)
         }
+        "db_list_plan_items" => {
+            let quest_id = str_field(&args, "questId")?;
+            let items = state.db.list_plan_items_internal(&quest_id).await?;
+            serde_json::to_value(items).map_err(MonarchError::from)
+        }
+        "db_get_plan_item" => {
+            let item_id = str_field(&args, "itemId")?;
+            let item = state.db.get_plan_item_internal(&item_id).await?;
+            serde_json::to_value(item).map_err(MonarchError::from)
+        }
+        "db_set_plan" => {
+            let payload: crate::db::SetPlanPayload =
+                serde_json::from_value(args.get("payload").cloned().unwrap_or(args.clone()))
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid payload: {}", e)))?;
+            let notes = state.db.set_plan_internal(&payload).await?;
+            emit_plan_notifications(state, notes)?;
+            Ok(Value::Null)
+        }
+        "db_add_plan_item" => {
+            let payload: crate::db::AddPlanItemPayload =
+                serde_json::from_value(args.get("payload").cloned().unwrap_or(args.clone()))
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid payload: {}", e)))?;
+            let (id, notes) = state.db.add_plan_item_internal(&payload).await?;
+            emit_plan_notifications(state, notes)?;
+            Ok(Value::String(id))
+        }
+        "db_update_plan_item" => {
+            let payload: crate::db::UpdatePlanItemPayload =
+                serde_json::from_value(args.get("payload").cloned().unwrap_or(args.clone()))
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid payload: {}", e)))?;
+            let notes = state.db.update_plan_item_internal(&payload).await?;
+            emit_plan_notifications(state, notes)?;
+            Ok(Value::Null)
+        }
+        "db_delete_plan_item" => {
+            let item_id = str_field(&args, "itemId")?;
+            let notes = state.db.delete_plan_item_internal(&item_id).await?;
+            emit_plan_notifications(state, notes)?;
+            Ok(Value::Null)
+        }
+        "db_start_plan_item" => {
+            let item_id = str_field(&args, "itemId")?;
+            let notes = state.db.start_plan_item_internal(&item_id).await?;
+            emit_plan_notifications(state, notes)?;
+            Ok(Value::Null)
+        }
+        "db_complete_plan_item" => {
+            let item_id = str_field(&args, "itemId")?;
+            let outcome = opt_str(&args, "outcome");
+            let notes = state
+                .db
+                .complete_plan_item_internal(&item_id, outcome.as_deref())
+                .await?;
+            emit_plan_notifications(state, notes)?;
+            Ok(Value::Null)
+        }
+        "db_skip_plan_item" => {
+            let item_id = str_field(&args, "itemId")?;
+            let reason = opt_str(&args, "reason");
+            let notes = state
+                .db
+                .skip_plan_item_internal(&item_id, reason.as_deref())
+                .await?;
+            emit_plan_notifications(state, notes)?;
+            Ok(Value::Null)
+        }
+        "db_block_plan_item" => {
+            let item_id = str_field(&args, "itemId")?;
+            let reason = str_field(&args, "reason")?;
+            let notes = state.db.block_plan_item_internal(&item_id, &reason).await?;
+            emit_plan_notifications(state, notes)?;
+            Ok(Value::Null)
+        }
 
         // MON-82: Classifications (read-only over WS).
         "db_list_classifications_for_agent" => {
@@ -831,6 +904,22 @@ pub(crate) async fn dispatch_command(
 }
 
 // ---- Helpers ----
+
+fn emit_plan_notifications(
+    state: &WsState,
+    notes: Vec<crate::db::QuestEventNotification>,
+) -> Result<(), MonarchError> {
+    let app = state.agent_mgr.get_app_handle()?;
+    for note in notes {
+        crate::agent::emit_event(
+            &app,
+            &state.agent_mgr.ws_broadcast,
+            &format!("quest-event-{}", note.quest_id),
+            &serde_json::json!({ "id": note.event_id, "eventType": note.event_type }).to_string(),
+        );
+    }
+    Ok(())
+}
 
 fn str_field(args: &Value, key: &str) -> Result<String, MonarchError> {
     args.get(key)

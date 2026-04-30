@@ -25,7 +25,7 @@ describe("narration tools", () => {
 				event: {
 					type: "action_transition",
 					intent: "Inspect the failing auth flow",
-					previous_outcome: "Found the test entry point.",
+					previousOutcome: "Found the test entry point.",
 				},
 			},
 		]);

@@ -42,7 +42,10 @@ export function createNarrationTools(agentId: string, emit: EmitFn) {
 					event: {
 						type: "action_transition",
 						intent,
-						previous_outcome: previousOutcome,
+						// Rust deserializes inner-event fields as camelCase
+						// (rename_all_fields). MON-108 emitted snake_case so
+						// previous_outcome was silently dropped — fixed here.
+						previousOutcome,
 					},
 				});
 				return {

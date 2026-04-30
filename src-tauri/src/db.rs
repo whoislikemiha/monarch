@@ -1178,6 +1178,7 @@ pub struct QuestEventRow {
     pub author: Option<String>,
     pub surface_override: Option<String>,
     pub payload_schema_version: i32,
+    pub plan_item_id: Option<String>,
 }
 
 /// Payload for `db_create_quest`. `id` is optional — server generates a
@@ -3103,7 +3104,8 @@ impl Database {
             .call(move |conn| {
                 let mut stmt = conn.prepare(
                     "SELECT id, quest_id, event_type, actor, payload_json, created_at,
-                            parent_event_id, author, surface_override, payload_schema_version
+                            parent_event_id, author, surface_override, payload_schema_version,
+                            plan_item_id
                      FROM quest_events WHERE quest_id = ?1 ORDER BY created_at ASC",
                 )?;
                 let rows = stmt
@@ -5013,6 +5015,7 @@ fn map_quest_event(row: &Row<'_>) -> rusqlite::Result<QuestEventRow> {
         author: row.get(7)?,
         surface_override: row.get(8)?,
         payload_schema_version: row.get(9)?,
+        plan_item_id: row.get(10)?,
     })
 }
 

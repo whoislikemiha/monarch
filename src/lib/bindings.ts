@@ -765,6 +765,7 @@ export type QuestEventRow = {
 	author: string | null,
 	surfaceOverride: string | null,
 	payloadSchemaVersion: number,
+	planItemId: string | null,
 };
 
 export type QuestRefRow = {
