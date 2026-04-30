@@ -2,12 +2,17 @@ import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { invoke, listen, type UnlistenFn } from "$lib/api";
 import type {
   AddPlanItemPayload,
+  CreateQuestRefPayload,
   CreateQuestPayload,
+  ManualQuestEventPayload,
+  ManualQuestUpdatePayload,
   PlanItemInput,
   PlanItemRow,
   QuestEventRow,
+  QuestRefRow,
   QuestRow,
   UpdatePlanItemPayload,
+  UpdateQuestRefPayload,
   UpdateQuestPayload,
   WorkingMemoryPayload,
 } from "../bindings";
@@ -33,6 +38,8 @@ export interface AgentQuestState {
   eventsByQuest: SvelteMap<string, QuestEventRow[]>;
   /** Durable execution plan items per quest_id, lazily loaded beside events. */
   planItemsByQuest: SvelteMap<string, PlanItemRow[]>;
+  /** External references per quest_id, lazily loaded with quest details. */
+  refsByQuest: SvelteMap<string, QuestRefRow[]>;
   /** Quest ids currently expanded inline in the timeline view. */
   expandedQuestIds: SvelteSet<string>;
   /** Quest event ids expanded inside an open quest. */
@@ -68,6 +75,7 @@ class QuestStore {
       treesByRoot: new SvelteMap(),
       eventsByQuest: new SvelteMap(),
       planItemsByQuest: new SvelteMap(),
+      refsByQuest: new SvelteMap(),
       expandedQuestIds: new SvelteSet(),
       expandedEventIds: new SvelteSet(),
       workingMemory: null,
@@ -139,6 +147,26 @@ class QuestStore {
     await this.refresh(agentId);
   }
 
+  async updateQuestManual(
+    agentId: string,
+    payload: ManualQuestUpdatePayload,
+  ): Promise<void> {
+    await invoke("db_update_quest_manual", { payload });
+    await this.refresh(agentId);
+    if (this.ensure(agentId).expandedQuestIds.has(payload.id)) {
+      await this.loadEvents(agentId, payload.id);
+    }
+  }
+
+  async recordManualQuestEvent(
+    agentId: string,
+    payload: ManualQuestEventPayload,
+  ): Promise<string> {
+    const id = await invoke<string>("db_record_manual_quest_event", { payload });
+    await this.loadEvents(agentId, payload.questId);
+    return id;
+  }
+
   async loadEvents(agentId: string, questId: string): Promise<void> {
     const entry = this.ensure(agentId);
     const events = await invoke<QuestEventRow[]>("db_list_quest_events", {
@@ -153,6 +181,39 @@ class QuestStore {
       questId,
     });
     entry.planItemsByQuest.set(questId, items);
+  }
+
+  async loadRefs(agentId: string, questId: string): Promise<void> {
+    const entry = this.ensure(agentId);
+    const refs = await invoke<QuestRefRow[]>("db_list_quest_refs", { questId });
+    entry.refsByQuest.set(questId, refs);
+  }
+
+  async createQuestRef(
+    agentId: string,
+    payload: CreateQuestRefPayload,
+  ): Promise<string> {
+    const id = await invoke<string>("db_create_quest_ref", { payload });
+    await this.loadRefs(agentId, payload.questId);
+    return id;
+  }
+
+  async updateQuestRef(
+    agentId: string,
+    questId: string,
+    payload: UpdateQuestRefPayload,
+  ): Promise<void> {
+    await invoke("db_update_quest_ref", { payload });
+    await this.loadRefs(agentId, questId);
+  }
+
+  async deleteQuestRef(
+    agentId: string,
+    questId: string,
+    refId: string,
+  ): Promise<void> {
+    await invoke("db_delete_quest_ref", { refId });
+    await this.loadRefs(agentId, questId);
   }
 
   async refreshQuestPlan(agentId: string, questId: string): Promise<void> {
@@ -302,7 +363,7 @@ class QuestStore {
       entry.expandedQuestIds.delete(questId);
     } else {
       entry.expandedQuestIds.add(questId);
-      // Lazy-load events on first expand.
+      // Lazy-load detail slices on first expand.
       if (!entry.eventsByQuest.has(questId)) {
         this.loadEvents(agentId, questId).catch((e) => {
           entry.error = String(e);
@@ -310,6 +371,11 @@ class QuestStore {
       }
       if (!entry.planItemsByQuest.has(questId)) {
         this.loadPlanItems(agentId, questId).catch((e) => {
+          entry.error = String(e);
+        });
+      }
+      if (!entry.refsByQuest.has(questId)) {
+        this.loadRefs(agentId, questId).catch((e) => {
           entry.error = String(e);
         });
       }
@@ -399,6 +465,17 @@ class QuestStore {
           this.refreshWorkingMemory(entry.agentId).catch((e) => {
             entry.error = String(e);
           });
+        }),
+      );
+      subs.unlisten.push(
+        listen<string>(`quest-refs-${questId}`, () => {
+          if (entry.expandedQuestIds.has(questId)) {
+            this.loadRefs(entry.agentId, questId).catch((e) => {
+              entry.error = String(e);
+            });
+          } else {
+            entry.refsByQuest.delete(questId);
+          }
         }),
       );
     }
