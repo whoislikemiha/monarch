@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ToolProps } from "../types";
-  import type { QuestEventRow, QuestRow } from "../../bindings";
+  import type { QuestEventRow, QuestRefRow, QuestRow } from "../../bindings";
   import { questStore } from "../questStore.svelte";
   import ShadowAvatar from "../../avatar/ShadowAvatar.svelte";
   import { agentStore } from "../../stores/agentStore.svelte";
@@ -111,6 +111,158 @@
   let formParentId = $state<string>("");
   let formSubmitting = $state(false);
   let markingDoneId = $state<string | null>(null);
+  let savingQuestId = $state<string | null>(null);
+  let savingEventId = $state<string | null>(null);
+  let savingRefId = $state<string | null>(null);
+
+  type QuestEditDraft = {
+    status: string;
+    grade: "E" | "D" | "C" | "B" | "A" | "S";
+    scope: string;
+    currentDirection: string;
+    rationale: string;
+    summary: string;
+    changeRationale: string;
+  };
+  type QuestEventDraft = {
+    eventType: "note" | "blocker" | "blocker_resolved" | "question" | "answer";
+    title: string;
+    text: string;
+  };
+  type QuestRefDraft = {
+    refType: string;
+    label: string;
+    target: string;
+  };
+
+  let questDrafts = $state<Record<string, QuestEditDraft>>({});
+  let eventDrafts = $state<Record<string, QuestEventDraft>>({});
+  let refDrafts = $state<Record<string, QuestRefDraft>>({});
+
+  function ensureQuestDraft(quest: QuestRow): QuestEditDraft {
+    const existing = questDrafts[quest.id];
+    if (existing) return existing;
+    questDrafts[quest.id] = {
+      status: quest.status,
+      grade: (quest.grade ?? "C") as QuestEditDraft["grade"],
+      scope: quest.scope ?? "",
+      currentDirection: quest.currentDirection ?? "",
+      rationale: quest.rationale ?? "",
+      summary: quest.summary ?? "",
+      changeRationale: "",
+    };
+    return questDrafts[quest.id];
+  }
+
+  function resetQuestDraft(quest: QuestRow) {
+    questDrafts[quest.id] = {
+      status: quest.status,
+      grade: (quest.grade ?? "C") as QuestEditDraft["grade"],
+      scope: quest.scope ?? "",
+      currentDirection: quest.currentDirection ?? "",
+      rationale: quest.rationale ?? "",
+      summary: quest.summary ?? "",
+      changeRationale: "",
+    };
+  }
+
+  function ensureEventDraft(questId: string): QuestEventDraft {
+    const existing = eventDrafts[questId];
+    if (existing) return existing;
+    eventDrafts[questId] = { eventType: "note", title: "", text: "" };
+    return eventDrafts[questId];
+  }
+
+  function ensureRefDraft(questId: string): QuestRefDraft {
+    const existing = refDrafts[questId];
+    if (existing) return existing;
+    refDrafts[questId] = { refType: "url", label: "", target: "" };
+    return refDrafts[questId];
+  }
+
+  async function saveQuestDraft(quest: QuestRow) {
+    if (!agentContext || !questState) return;
+    const draft = ensureQuestDraft(quest);
+    savingQuestId = quest.id;
+    try {
+      await questStore.updateQuestManual(agentContext.agentId, {
+        id: quest.id,
+        status: draft.status,
+        scope: draft.scope.trim() || null,
+        currentDirection: draft.currentDirection.trim() || null,
+        rationale: draft.rationale.trim() || null,
+        grade: draft.grade,
+        summary: draft.summary.trim() || null,
+        changeRationale: draft.changeRationale.trim() || null,
+        actor: "monarch",
+        author: "captain",
+      });
+      draft.changeRationale = "";
+    } catch (e) {
+      questState.error = String(e);
+    } finally {
+      savingQuestId = null;
+    }
+  }
+
+  async function submitManualEvent(questId: string) {
+    if (!agentContext || !questState) return;
+    const draft = ensureEventDraft(questId);
+    if (!draft.text.trim()) return;
+    savingEventId = questId;
+    try {
+      await questStore.recordManualQuestEvent(agentContext.agentId, {
+        questId,
+        eventType: draft.eventType,
+        title: draft.title.trim() || null,
+        text: draft.text.trim(),
+        metadataJson: null,
+        actor: "monarch",
+        author: "captain",
+        surfaceOverride: null,
+      });
+      eventDrafts[questId] = { eventType: draft.eventType, title: "", text: "" };
+    } catch (e) {
+      questState.error = String(e);
+    } finally {
+      savingEventId = null;
+    }
+  }
+
+  async function submitQuestRef(questId: string) {
+    if (!agentContext || !questState) return;
+    const draft = ensureRefDraft(questId);
+    if (!draft.target.trim()) return;
+    savingRefId = questId;
+    try {
+      await questStore.createQuestRef(agentContext.agentId, {
+        id: null,
+        questId,
+        refType: draft.refType.trim() || "url",
+        label: draft.label.trim() || null,
+        target: draft.target.trim(),
+        metadataJson: null,
+        createdBy: "captain",
+      });
+      refDrafts[questId] = { refType: draft.refType, label: "", target: "" };
+    } catch (e) {
+      questState.error = String(e);
+    } finally {
+      savingRefId = null;
+    }
+  }
+
+  async function deleteQuestRef(questId: string, ref: QuestRefRow) {
+    if (!agentContext || !questState) return;
+    savingRefId = ref.id;
+    try {
+      await questStore.deleteQuestRef(agentContext.agentId, questId, ref.id);
+    } catch (e) {
+      questState.error = String(e);
+    } finally {
+      savingRefId = null;
+    }
+  }
 
   $effect(() => {
     // When the create form opens, reset fields and preselect parent.
@@ -344,6 +496,30 @@
     };
   }
 
+  function manualEventLabel(kind: string): string {
+    if (kind === "scope_change") return "scope changed";
+    if (kind === "direction_change") return "direction changed";
+    if (kind === "quest_rationale_change") return "rationale changed";
+    if (kind === "quest_summary_change") return "summary changed";
+    if (kind === "grade_change") return "grade changed";
+    if (kind === "blocker_resolved") return "blocker resolved";
+    return kind.replaceAll("_", " ");
+  }
+
+  function eventText(raw: string | null): string {
+    const obj = parsePayload(raw);
+    const text = obj.text;
+    if (typeof text === "string") return text;
+    const to = obj.to;
+    if (typeof to === "string") return to;
+    return raw ?? "";
+  }
+
+  function eventRationale(raw: string | null): string {
+    const obj = parsePayload(raw);
+    return typeof obj.rationale === "string" ? obj.rationale : "";
+  }
+
   function durationLabel(ms: number | null): string {
     if (ms == null) return "";
     if (ms < 1000) return `${ms}ms`;
@@ -455,6 +631,7 @@
             {#each flat as { quest, depth } (quest.id)}
               {@const expanded = questState.expandedQuestIds.has(quest.id)}
               {@const events = questState.eventsByQuest.get(quest.id) ?? []}
+              {@const refs = questState.refsByQuest.get(quest.id) ?? []}
               <div
                 class="node"
                 class:expanded
@@ -487,6 +664,9 @@
                   <span class="ts muted">{formatRelative(quest.createdAt)}</span>
                 </button>
                 {#if expanded}
+                  {@const draft = ensureQuestDraft(quest)}
+                  {@const eventDraft = ensureEventDraft(quest.id)}
+                  {@const refDraft = ensureRefDraft(quest.id)}
                   <div class="detail">
                     <div class="quest-info">
                       <div class="quest-title-full">{quest.title}</div>
@@ -540,6 +720,133 @@
                         <p class="description">{quest.description}</p>
                       {/if}
                     </div>
+
+                    <form class="quest-editor" onsubmit={(e) => { e.preventDefault(); saveQuestDraft(quest); }}>
+                      <div class="section-title">Brief</div>
+                      <div class="field-row">
+                        <label class="field">
+                          <span class="label">Status</span>
+                          <select class="input" bind:value={draft.status}>
+                            <option value="pending">pending</option>
+                            <option value="in_progress">in_progress</option>
+                            <option value="claimed_done">claimed_done</option>
+                            <option value="verified">verified</option>
+                            <option value="disputed">disputed</option>
+                            <option value="ambiguous">ambiguous</option>
+                            <option value="done">done</option>
+                            <option value="abandoned">abandoned</option>
+                            <option value="superseded">superseded</option>
+                          </select>
+                        </label>
+                        <label class="field">
+                          <span class="label">Grade</span>
+                          <select class="input" bind:value={draft.grade}>
+                            <option value="E">E</option>
+                            <option value="D">D</option>
+                            <option value="C">C</option>
+                            <option value="B">B</option>
+                            <option value="A">A</option>
+                            <option value="S">S</option>
+                          </select>
+                        </label>
+                      </div>
+                      <label class="field">
+                        <span class="label">Scope</span>
+                        <textarea class="input textarea" rows="2" bind:value={draft.scope}></textarea>
+                      </label>
+                      <label class="field">
+                        <span class="label">Current direction</span>
+                        <textarea class="input textarea" rows="2" bind:value={draft.currentDirection}></textarea>
+                      </label>
+                      <label class="field">
+                        <span class="label">Rationale</span>
+                        <textarea class="input textarea" rows="2" bind:value={draft.rationale}></textarea>
+                      </label>
+                      <label class="field">
+                        <span class="label">Summary</span>
+                        <textarea class="input textarea" rows="2" bind:value={draft.summary}></textarea>
+                      </label>
+                      <label class="field">
+                        <span class="label">Change rationale</span>
+                        <input class="input" type="text" bind:value={draft.changeRationale} />
+                      </label>
+                      <div class="form-actions">
+                        <button type="submit" class="primary-btn" disabled={savingQuestId === quest.id}>
+                          {savingQuestId === quest.id ? "Saving..." : "Save brief"}
+                        </button>
+                        <button type="button" class="ghost-btn" onclick={() => resetQuestDraft(quest)}>
+                          Reset
+                        </button>
+                      </div>
+                    </form>
+
+                    <div class="refs-panel">
+                      <div class="section-title">References</div>
+                      {#if refs.length === 0}
+                        <div class="muted small">No references.</div>
+                      {:else}
+                        <div class="refs-list">
+                          {#each refs as ref (ref.id)}
+                            <div class="ref-row">
+                              <span class="ref-type">{ref.refType}</span>
+                              <span class="ref-target" title={ref.target}>{ref.label || ref.target}</span>
+                              <button
+                                type="button"
+                                class="icon-btn"
+                                onclick={() => deleteQuestRef(quest.id, ref)}
+                                disabled={savingRefId === ref.id}
+                                title="Delete reference"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          {/each}
+                        </div>
+                      {/if}
+                      <form class="inline-form" onsubmit={(e) => { e.preventDefault(); submitQuestRef(quest.id); }}>
+                        <select class="input compact-input" bind:value={refDraft.refType}>
+                          <option value="url">url</option>
+                          <option value="linear">linear</option>
+                          <option value="github_issue">github_issue</option>
+                          <option value="github_pr">github_pr</option>
+                          <option value="file">file</option>
+                          <option value="artifact">artifact</option>
+                        </select>
+                        <input class="input compact-input" type="text" bind:value={refDraft.label} placeholder="Label" />
+                        <input class="input ref-input" type="text" bind:value={refDraft.target} placeholder="Target" />
+                        <button
+                          type="submit"
+                          class="ghost-btn"
+                          disabled={savingRefId === quest.id || !refDraft.target.trim()}
+                        >
+                          Add
+                        </button>
+                      </form>
+                    </div>
+
+                    <form class="manual-event-form" onsubmit={(e) => { e.preventDefault(); submitManualEvent(quest.id); }}>
+                      <div class="section-title">Add event</div>
+                      <div class="inline-form">
+                        <select class="input compact-input" bind:value={eventDraft.eventType}>
+                          <option value="note">note</option>
+                          <option value="blocker">blocker</option>
+                          <option value="blocker_resolved">blocker_resolved</option>
+                          <option value="question">question</option>
+                          <option value="answer">answer</option>
+                        </select>
+                        <input class="input compact-input" type="text" bind:value={eventDraft.title} placeholder="Title" />
+                      </div>
+                      <textarea class="input textarea" rows="2" bind:value={eventDraft.text}></textarea>
+                      <div class="form-actions">
+                        <button
+                          type="submit"
+                          class="ghost-btn"
+                          disabled={savingEventId === quest.id || !eventDraft.text.trim()}
+                        >
+                          {savingEventId === quest.id ? "Adding..." : "Add event"}
+                        </button>
+                      </div>
+                    </form>
                     <div class="event-log">
                       <div class="log-title">Event log</div>
                       {#if events.length === 0}
@@ -688,6 +995,21 @@
                               </div>
                             {:else if ev.payloadJson}
                               <pre class="event-payload">{ev.payloadJson}</pre>
+                            {/if}
+                          {:else if ["scope_change", "direction_change", "quest_rationale_change", "quest_summary_change", "grade_change", "note", "blocker", "blocker_resolved", "question", "answer"].includes(ev.eventType)}
+                            {@const text = eventText(ev.payloadJson)}
+                            {@const rationale = eventRationale(ev.payloadJson)}
+                            <div class="event-row quest-change-row">
+                              <span class="quest-change-icon">●</span>
+                              <span class="event-type quest-change-type">{manualEventLabel(ev.eventType)}</span>
+                              <span class="muted small">{ev.actor ?? "—"}</span>
+                              <span class="muted small">{formatRelative(ev.createdAt)}</span>
+                            </div>
+                            {#if text}
+                              <div class="quest-change-summary">{text}</div>
+                            {/if}
+                            {#if rationale}
+                              <div class="quest-change-rationale">{rationale}</div>
                             {/if}
                           {:else}
                             <div class="event-row">
@@ -1024,11 +1346,80 @@
     padding-top: 10px;
     border-top: 1px solid var(--border-subtle);
   }
+  .quest-editor,
+  .refs-panel,
+  .manual-event-form {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .section-title,
   .log-title {
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-muted);
+  }
+  .inline-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+  .compact-input {
+    width: 120px;
+  }
+  .ref-input {
+    flex: 1;
+    min-width: 160px;
+  }
+  .refs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ref-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 22px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    background: var(--bg-sidebar);
+    font-size: 10px;
+  }
+  .ref-type {
+    flex-shrink: 0;
+    padding: 1px 5px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    color: var(--text-muted);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+  .ref-target {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .icon-btn {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    cursor: pointer;
+  }
+  .icon-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: var(--bg-panel-2);
   }
   .event-row {
     display: flex;
@@ -1260,6 +1651,34 @@
   .memory-suggestion-details div {
     margin-top: 4px;
     white-space: pre-wrap;
+  }
+
+  .quest-change-row {
+    padding: 3px 0;
+  }
+  .quest-change-icon {
+    color: var(--accent);
+    font-size: 8px;
+  }
+  .quest-change-type {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+  .quest-change-summary,
+  .quest-change-rationale {
+    margin-left: 18px;
+    padding: 3px 6px;
+    border-radius: 3px;
+    background: var(--bg-sidebar);
+    color: var(--text-secondary);
+    font-size: 10px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .quest-change-rationale {
+    color: var(--text-muted);
+    font-style: italic;
   }
 
   .empty {
