@@ -117,12 +117,16 @@ export function createUIBridge(
 		},
 		setWorkingMessage() {},
 		setWorkingIndicator() {},
+		setWorkingVisible() {},
 		addAutocompleteProvider() {},
 		setHiddenThinkingLabel() {},
 		setWidget() {},
 		setFooter() {},
 		setHeader() {},
 		setEditorComponent() {},
+		getEditorComponent() {
+			return undefined;
+		},
 		pasteToEditor() {},
 		getEditorText() {
 			return "";

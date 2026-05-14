@@ -8,8 +8,8 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.67.68",
-    "@mariozechner/pi-coding-agent": "^0.67.68"
+    "@mariozechner/pi-ai": "^0.73.1",
+    "@mariozechner/pi-coding-agent": "^0.73.1"
   },
   "devDependencies": {
     "typescript": "^5"
