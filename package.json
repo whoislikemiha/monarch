@@ -15,8 +15,8 @@
     "pi:upgrade": "npm install @mariozechner/pi-ai@latest @mariozechner/pi-coding-agent@latest && npm install --prefix sidecar @mariozechner/pi-ai@latest @mariozechner/pi-coding-agent@latest && npm run build:sidecar"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.67.68",
-    "@mariozechner/pi-coding-agent": "^0.70.2",
+    "@mariozechner/pi-ai": "^0.73.1",
+    "@mariozechner/pi-coding-agent": "^0.73.1",
     "@rive-app/canvas": "^2.37.1",
     "@rive-app/webgl2": "^2.37.1",
     "@tauri-apps/api": "^2",
