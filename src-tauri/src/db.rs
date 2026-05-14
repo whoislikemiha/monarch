@@ -608,6 +608,30 @@ impl Database {
                     CREATE INDEX IF NOT EXISTS idx_keeper_runs_agent
                         ON memory_keeper_runs(agent_id, started_at);",
                 );
+
+                // MON-119: P6 Slice A — first-person quest reports. One row per
+                // quest (enforced by UNIQUE(quest_id)); revisions upsert.
+                // `agent_id` is denormalized from `quest_nodes.assignee_shadow_id`
+                // at write time so per-agent and (later) per-project listings
+                // are one table instead of a JOIN. `payload` is opaque JSON in
+                // Slice A; the structured shape (summary/outcome/decisions/
+                // learned/artifacts/open_threads/reflection/grade) lands with
+                // the sidecar tool in Slice B. `distilled_by_keeper_run_id`
+                // is populated by Slice D when the Keeper consumes the report.
+                let _ = conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS quest_reports (
+                        id TEXT PRIMARY KEY,
+                        quest_id TEXT NOT NULL UNIQUE REFERENCES quest_nodes(id) ON DELETE CASCADE,
+                        agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+                        payload TEXT NOT NULL,
+                        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                        distilled_by_keeper_run_id INTEGER REFERENCES memory_keeper_runs(id) ON DELETE SET NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_quest_reports_agent
+                        ON quest_reports(agent_id, created_at);",
+                );
+
                 // FTS5 virtual table — separate batch because some SQLite
                 // builds don't have FTS5; we log the failure and continue.
                 let _ = conn.execute_batch(
@@ -1290,6 +1314,34 @@ pub struct UpdateQuestRefPayload {
     pub target: Option<String>,
     #[serde(default)]
     pub metadata_json: Option<String>,
+}
+
+/// MON-119: one first-person quest report per quest. `agent_id` is
+/// denormalized from `quest_nodes.assignee_shadow_id` at write time and
+/// becomes NULL only when the source agent is deleted (`ON DELETE SET NULL`).
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestReportRow {
+    pub id: String,
+    pub quest_id: String,
+    pub agent_id: Option<String>,
+    pub payload: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub distilled_by_keeper_run_id: Option<i64>,
+}
+
+/// MON-119: payload for upserting a quest report. `agent_id` is omitted —
+/// the write helper resolves it from `quest_nodes.assignee_shadow_id`.
+/// `payload` is opaque JSON in Slice A; Slice B's sidecar tool defines the
+/// structured shape.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteQuestReportPayload {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub quest_id: String,
+    pub payload: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -3394,6 +3446,125 @@ impl Database {
         Ok(())
     }
 
+    /// MON-119: upsert a first-person quest report. `UNIQUE(quest_id)` means
+    /// each call either inserts a fresh row or replaces the existing payload
+    /// (revisions). `agent_id` is resolved server-side from the quest's
+    /// `assignee_shadow_id` so callers never have to pass it; this keeps the
+    /// denormalized column honest. Returns the row id (existing id on
+    /// conflict).
+    pub async fn upsert_quest_report_internal(
+        &self,
+        payload: &WriteQuestReportPayload,
+    ) -> Result<String, MonarchError> {
+        if payload.quest_id.trim().is_empty() {
+            return Err(MonarchError::invalid_input("questId required"));
+        }
+        if payload.payload.trim().is_empty() {
+            return Err(MonarchError::invalid_input("payload required"));
+        }
+        let payload = payload.clone();
+        let provided_id = payload
+            .id
+            .clone()
+            .unwrap_or_else(crate::util::uuid_v4_simple);
+        let now = crate::util::chrono_now();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let agent_id: Option<String> = conn
+                    .query_row(
+                        "SELECT assignee_shadow_id FROM quest_nodes WHERE id = ?1",
+                        params![payload.quest_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| match e {
+                        rusqlite::Error::QueryReturnedNoRows => {
+                            rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT),
+                                Some(format!("quest_nodes row not found for {}", payload.quest_id)),
+                            )
+                        }
+                        other => other,
+                    })?;
+                // Try INSERT first; on UNIQUE(quest_id) conflict, update the
+                // existing row's payload/agent_id/updated_at and return its id.
+                let inserted = conn.execute(
+                    "INSERT INTO quest_reports (
+                        id, quest_id, agent_id, payload, created_at, updated_at
+                     )
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+                     ON CONFLICT(quest_id) DO UPDATE SET
+                        payload = excluded.payload,
+                        agent_id = excluded.agent_id,
+                        updated_at = excluded.updated_at",
+                    params![
+                        provided_id,
+                        payload.quest_id,
+                        agent_id,
+                        payload.payload,
+                        now,
+                    ],
+                )?;
+                debug_assert!(inserted == 1);
+                let id: String = conn.query_row(
+                    "SELECT id FROM quest_reports WHERE quest_id = ?1",
+                    params![payload.quest_id],
+                    |row| row.get(0),
+                )?;
+                Ok(id)
+            })
+            .await?)
+    }
+
+    /// MON-119: fetch the single report for a quest (or None).
+    pub async fn get_quest_report_by_quest_internal(
+        &self,
+        quest_id: &str,
+    ) -> Result<Option<QuestReportRow>, MonarchError> {
+        let quest_id = quest_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, quest_id, agent_id, payload, created_at, updated_at,
+                            distilled_by_keeper_run_id
+                     FROM quest_reports WHERE quest_id = ?1",
+                )?;
+                let mut rows = stmt.query(params![quest_id])?;
+                if let Some(row) = rows.next()? {
+                    Ok(Some(map_quest_report(row)?))
+                } else {
+                    Ok(None)
+                }
+            })
+            .await?)
+    }
+
+    /// MON-119: list every report written by a specific agent, newest first.
+    /// Justifies the denormalized `agent_id` column — a JOIN through
+    /// `quest_nodes` would be slower and stop working after agent archive.
+    pub async fn list_quest_reports_for_agent_internal(
+        &self,
+        agent_id: &str,
+    ) -> Result<Vec<QuestReportRow>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, quest_id, agent_id, payload, created_at, updated_at,
+                            distilled_by_keeper_run_id
+                     FROM quest_reports WHERE agent_id = ?1
+                     ORDER BY created_at DESC",
+                )?;
+                let rows = stmt
+                    .query_map(params![agent_id], map_quest_report)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .await?)
+    }
+
     pub async fn get_working_memory_internal(
         &self,
         agent_id: &str,
@@ -4678,6 +4849,18 @@ fn map_quest_ref(row: &Row<'_>) -> rusqlite::Result<QuestRefRow> {
         created_by: row.get(6)?,
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
+    })
+}
+
+fn map_quest_report(row: &Row<'_>) -> rusqlite::Result<QuestReportRow> {
+    Ok(QuestReportRow {
+        id: row.get(0)?,
+        quest_id: row.get(1)?,
+        agent_id: row.get(2)?,
+        payload: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+        distilled_by_keeper_run_id: row.get(6)?,
     })
 }
 
