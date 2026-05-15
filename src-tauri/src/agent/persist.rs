@@ -21,7 +21,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::db::{
     Database, InsertMemoryPayload, MessageRow, QuestEventNotification, RecordQuestEventPayload,
-    SaveClassificationPayload, SetPlanPayload,
+    SaveClassificationPayload, SetPlanPayload, WriteQuestReportPayload,
 };
 use crate::error::MonarchError;
 use crate::memory_index::MemoryIndex;
@@ -138,6 +138,15 @@ pub(super) enum PersistCommand {
     RecordQuestEvent {
         payload: RecordQuestEventPayload,
     },
+    /// MON-119: P6 Slice A — upsert a first-person quest report. The
+    /// sidecar `complete_quest(report)` tool in Slice B is the intended
+    /// producer; this variant lives here so the pipeline is ready when
+    /// that wiring lands. Captain-initiated saves bypass the pipeline and
+    /// go straight through the `db_save_quest_report` Tauri command,
+    /// matching the `db_create_quest_ref` precedent.
+    WriteQuestReport {
+        payload: WriteQuestReportPayload,
+    },
     ActionTransition {
         agent_id: String,
         quest_id: String,
@@ -231,11 +240,15 @@ impl PersistCommand {
             | Self::PlanItemSkip { agent_id, .. }
             | Self::PlanItemBlock { agent_id, .. } => agent_id,
             Self::SaveClassification { payload } => &payload.agent_id,
-            // CompleteKeeperRun + RecordQuestEvent don't carry an agent id
-            // directly — failures still log but cannot flip a per-agent
-            // desync flag. Empty string causes the consumer's desync helper
-            // to short-circuit (`if agent_id.is_empty()`).
-            Self::CompleteKeeperRun { .. } | Self::RecordQuestEvent { .. } => "",
+            // CompleteKeeperRun + RecordQuestEvent + WriteQuestReport don't
+            // carry an agent id directly — failures still log but cannot
+            // flip a per-agent desync flag. Empty string causes the
+            // consumer's desync helper to short-circuit
+            // (`if agent_id.is_empty()`). WriteQuestReport resolves the
+            // agent from quest_nodes.assignee_shadow_id inside the apply.
+            Self::CompleteKeeperRun { .. }
+            | Self::RecordQuestEvent { .. }
+            | Self::WriteQuestReport { .. } => "",
         }
     }
 
@@ -426,6 +439,23 @@ impl PersistCommand {
                         ws_tx,
                         &format!("quest-event-{}", quest_id),
                         &serde_json::json!({ "id": id, "eventType": event_type }).to_string(),
+                    );
+                }
+                Ok(())
+            }
+            Self::WriteQuestReport { payload } => {
+                let quest_id = payload.quest_id.clone();
+                let id = db.upsert_quest_report_internal(&payload).await?;
+                // Same broadcast shape as RecordQuestEvent so the captain UI
+                // (Slice C) wakes when a Keeper or executor write lands,
+                // matching how `db_save_quest_report` Tauri command emits.
+                let app_opt = app.lock().clone();
+                if let Some(app) = app_opt {
+                    emit_event(
+                        &app,
+                        ws_tx,
+                        &format!("quest-report-{}", quest_id),
+                        &serde_json::json!({ "id": id, "action": "saved" }).to_string(),
                     );
                 }
                 Ok(())
