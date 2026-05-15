@@ -5982,6 +5982,63 @@ pub(crate) fn emit_quest_ref_notification(
     );
 }
 
+// ---- MON-119: P6 Slice A — first-person quest reports ----
+//
+// Captain-initiated saves go through `db_save_quest_report` and write
+// directly via `upsert_quest_report_internal` (matching the
+// `db_create_quest_ref` precedent). Sidecar-originated writes (Slice B)
+// flow through `PersistCommand::WriteQuestReport` instead so they preserve
+// ordering against surrounding quest events. Both paths emit on
+// `quest-report-{quest_id}` so the captain UI (Slice C) can subscribe
+// once and see writes regardless of origin.
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_save_quest_report(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
+    payload: WriteQuestReportPayload,
+) -> Result<String, MonarchError> {
+    let quest_id = payload.quest_id.clone();
+    let id = db.upsert_quest_report_internal(&payload).await?;
+    emit_quest_report_notification(&app, &agent_mgr.ws_broadcast, &quest_id, "saved", &id);
+    Ok(id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_get_quest_report(
+    db: tauri::State<'_, Arc<Database>>,
+    quest_id: String,
+) -> Result<Option<QuestReportRow>, MonarchError> {
+    db.get_quest_report_by_quest_internal(&quest_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_list_quest_reports_for_agent(
+    db: tauri::State<'_, Arc<Database>>,
+    agent_id: String,
+) -> Result<Vec<QuestReportRow>, MonarchError> {
+    db.list_quest_reports_for_agent_internal(&agent_id).await
+}
+
+pub(crate) fn emit_quest_report_notification(
+    app: &tauri::AppHandle,
+    ws_tx: &tokio::sync::broadcast::Sender<crate::agent::WsBroadcast>,
+    quest_id: &str,
+    action: &str,
+    report_id: &str,
+) {
+    crate::agent::emit_event(
+        app,
+        ws_tx,
+        &format!("quest-report-{}", quest_id),
+        &serde_json::json!({ "id": report_id, "questId": quest_id, "action": action }).to_string(),
+    );
+}
+
 // ---- MON-82: Classifications ----
 //
 // Writes are sidecar-originated and flow through the MON-37 persistence

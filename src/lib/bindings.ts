@@ -240,6 +240,17 @@ export const commands = {
 	dbCreateQuestRef: (payload: CreateQuestRefPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_create_quest_ref", { payload })),
 	dbUpdateQuestRef: (payload: UpdateQuestRefPayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_quest_ref", { payload })),
 	dbDeleteQuestRef: (refId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_delete_quest_ref", { refId })),
+	dbSaveQuestReport: (payload: WriteQuestReportPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_save_quest_report", { payload })),
+	dbGetQuestReport: (questId: string) => typedError<{
+	id: string,
+	questId: string,
+	agentId: string | null,
+	payload: string,
+	createdAt: string,
+	updatedAt: string,
+	distilledByKeeperRunId: number | null,
+} | null, ErrorDto>(__TAURI_INVOKE("db_get_quest_report", { questId })),
+	dbListQuestReportsForAgent: (agentId: string) => typedError<QuestReportRow[], ErrorDto>(__TAURI_INVOKE("db_list_quest_reports_for_agent", { agentId })),
 	dbGetWorkingMemory: (agentId: string) => typedError<{
 	schemaVersion: number,
 	currentQuestId: string | null,
@@ -780,6 +791,21 @@ export type QuestRefRow = {
 	updatedAt: string,
 };
 
+/**
+ *  MON-119: one first-person quest report per quest. `agent_id` is
+ *  denormalized from `quest_nodes.assignee_shadow_id` at write time and
+ *  becomes NULL only when the source agent is deleted (`ON DELETE SET NULL`).
+ */
+export type QuestReportRow = {
+	id: string,
+	questId: string,
+	agentId: string | null,
+	payload: string,
+	createdAt: string,
+	updatedAt: string,
+	distilledByKeeperRunId: number | null,
+};
+
 export type QuestRow = {
 	id: string,
 	rootId: string,
@@ -1069,6 +1095,18 @@ export type WorkingMemoryRecentAction = {
 	outcome: string,
 	completedAt: string,
 	autoClosed?: boolean | null,
+};
+
+/**
+ *  MON-119: payload for upserting a quest report. `agent_id` is omitted —
+ *  the write helper resolves it from `quest_nodes.assignee_shadow_id`.
+ *  `payload` is opaque JSON in Slice A; Slice B's sidecar tool defines the
+ *  structured shape.
+ */
+export type WriteQuestReportPayload = {
+	id?: string | null,
+	questId: string,
+	payload: string,
 };
 
 /* Tauri Specta runtime */
