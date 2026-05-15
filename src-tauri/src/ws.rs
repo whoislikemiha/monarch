@@ -684,6 +684,35 @@ pub(crate) async fn dispatch_command(
             }
             Ok(Value::Null)
         }
+        "db_save_quest_report" => {
+            let payload: crate::db::WriteQuestReportPayload =
+                serde_json::from_value(args.get("payload").cloned().unwrap_or(args.clone()))
+                    .map_err(|e| MonarchError::invalid_input(format!("Invalid payload: {}", e)))?;
+            let quest_id = payload.quest_id.clone();
+            let id = state.db.upsert_quest_report_internal(&payload).await?;
+            let app = state.agent_mgr.get_app_handle()?;
+            crate::db::emit_quest_report_notification(
+                &app,
+                &state.agent_mgr.ws_broadcast,
+                &quest_id,
+                "saved",
+                &id,
+            );
+            Ok(Value::String(id))
+        }
+        "db_get_quest_report" => {
+            let quest_id = str_field(&args, "questId")?;
+            let report = state.db.get_quest_report_by_quest_internal(&quest_id).await?;
+            serde_json::to_value(report).map_err(MonarchError::from)
+        }
+        "db_list_quest_reports_for_agent" => {
+            let agent_id = str_field(&args, "agentId")?;
+            let reports = state
+                .db
+                .list_quest_reports_for_agent_internal(&agent_id)
+                .await?;
+            serde_json::to_value(reports).map_err(MonarchError::from)
+        }
         "db_get_working_memory" => {
             let agent_id = str_field(&args, "agentId")?;
             let wm = state.db.get_working_memory_internal(&agent_id).await?;

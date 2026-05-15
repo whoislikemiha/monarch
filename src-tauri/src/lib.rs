@@ -131,6 +131,10 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             db::db_create_quest_ref,
             db::db_update_quest_ref,
             db::db_delete_quest_ref,
+            // P6 quest reports (MON-119)
+            db::db_save_quest_report,
+            db::db_get_quest_report,
+            db::db_list_quest_reports_for_agent,
             db::db_get_working_memory,
             // P4b plan items (MON-111)
             db::db_list_plan_items,
@@ -323,6 +327,9 @@ pub fn run() {
             db::db_create_quest_ref,
             db::db_update_quest_ref,
             db::db_delete_quest_ref,
+            db::db_save_quest_report,
+            db::db_get_quest_report,
+            db::db_list_quest_reports_for_agent,
             db::db_get_working_memory,
             db::db_list_plan_items,
             db::db_get_plan_item,
