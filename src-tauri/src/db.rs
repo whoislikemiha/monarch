@@ -6636,4 +6636,171 @@ mod tests {
         assert!(wm.active_plan_item_id.is_none());
         assert!(wm.next_plan_item_ids.is_empty());
     }
+
+    // ---- MON-119: P6 Slice A — quest_reports ----
+
+    #[tokio::test]
+    async fn quest_reports_migration_is_idempotent() {
+        let db = Database::new_in_memory().await.expect("db");
+        // new_in_memory already ran init_schema once. Running it again must
+        // not panic — every CREATE TABLE / CREATE INDEX uses IF NOT EXISTS.
+        db.init_schema().await.expect("re-run init_schema");
+    }
+
+    #[tokio::test]
+    async fn upsert_quest_report_inserts_and_fetches_round_trip() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (_agent_id, quest_id) = seed_agent_and_quest(&db).await;
+
+        let id = db
+            .upsert_quest_report_internal(&WriteQuestReportPayload {
+                id: None,
+                quest_id: quest_id.clone(),
+                payload: r#"{"summary":"shipped the auth fix"}"#.to_string(),
+            })
+            .await
+            .expect("insert");
+
+        let row = db
+            .get_quest_report_by_quest_internal(&quest_id)
+            .await
+            .expect("get")
+            .expect("row");
+        assert_eq!(row.id, id);
+        assert_eq!(row.quest_id, quest_id);
+        assert_eq!(row.payload, r#"{"summary":"shipped the auth fix"}"#);
+        assert_eq!(row.distilled_by_keeper_run_id, None);
+    }
+
+    #[tokio::test]
+    async fn upsert_quest_report_replaces_payload_on_conflict() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (_agent_id, quest_id) = seed_agent_and_quest(&db).await;
+
+        let first = db
+            .upsert_quest_report_internal(&WriteQuestReportPayload {
+                id: None,
+                quest_id: quest_id.clone(),
+                payload: r#"{"summary":"draft"}"#.to_string(),
+            })
+            .await
+            .expect("first");
+
+        let second = db
+            .upsert_quest_report_internal(&WriteQuestReportPayload {
+                id: None,
+                quest_id: quest_id.clone(),
+                payload: r#"{"summary":"final"}"#.to_string(),
+            })
+            .await
+            .expect("second");
+
+        // UNIQUE(quest_id) keeps the original row; the second call updates it.
+        assert_eq!(
+            first, second,
+            "upsert keeps the original id on conflict"
+        );
+
+        let row = db
+            .get_quest_report_by_quest_internal(&quest_id)
+            .await
+            .expect("get")
+            .expect("row");
+        assert_eq!(row.payload, r#"{"summary":"final"}"#);
+        assert!(
+            row.updated_at >= row.created_at,
+            "updated_at moves forward on revision (created_at={}, updated_at={})",
+            row.created_at,
+            row.updated_at
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_quest_report_denormalizes_agent_id_from_quest() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+
+        db.upsert_quest_report_internal(&WriteQuestReportPayload {
+            id: None,
+            quest_id: quest_id.clone(),
+            payload: r#"{"summary":"x"}"#.to_string(),
+        })
+        .await
+        .expect("insert");
+
+        let row = db
+            .get_quest_report_by_quest_internal(&quest_id)
+            .await
+            .expect("get")
+            .expect("row");
+        assert_eq!(row.agent_id.as_deref(), Some(agent_id.as_str()));
+
+        let listed = db
+            .list_quest_reports_for_agent_internal(&agent_id)
+            .await
+            .expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].quest_id, quest_id);
+    }
+
+    #[tokio::test]
+    async fn upsert_quest_report_rejects_unknown_quest_id() {
+        let db = Database::new_in_memory().await.expect("db");
+        let result = db
+            .upsert_quest_report_internal(&WriteQuestReportPayload {
+                id: None,
+                quest_id: "no-such-quest".to_string(),
+                payload: r#"{}"#.to_string(),
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "writing a report for a non-existent quest must fail"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_archive_nulls_quest_report_attribution() {
+        // ON DELETE SET NULL on agents — deleting the agent leaves the
+        // report row in place but clears agent_id so retrieval through the
+        // quest still works while attribution stops pointing at a ghost.
+        let db = Database::new_in_memory().await.expect("db");
+        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+
+        db.upsert_quest_report_internal(&WriteQuestReportPayload {
+            id: None,
+            quest_id: quest_id.clone(),
+            payload: r#"{"summary":"x"}"#.to_string(),
+        })
+        .await
+        .expect("insert");
+
+        // Hard-delete the agent. (Production uses archive, not delete; this
+        // test exercises the FK behavior directly so the constraint is
+        // verified without depending on archive semantics.)
+        let agent_id_clone = agent_id.clone();
+        db.conn
+            .call(move |c| -> tokio_rusqlite::Result<()> {
+                c.execute("DELETE FROM agents WHERE id = ?1", params![agent_id_clone])?;
+                Ok(())
+            })
+            .await
+            .expect("delete agent");
+
+        let row = db
+            .get_quest_report_by_quest_internal(&quest_id)
+            .await
+            .expect("get")
+            .expect("row still present");
+        assert_eq!(row.agent_id, None, "agent_id should be NULL after delete");
+
+        let listed = db
+            .list_quest_reports_for_agent_internal(&agent_id)
+            .await
+            .expect("list");
+        assert!(
+            listed.is_empty(),
+            "agent listing should not return reports whose agent_id is NULL"
+        );
+    }
 }
