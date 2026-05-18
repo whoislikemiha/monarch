@@ -2045,4 +2045,81 @@ mod tests {
         assert_eq!(s.event_count, 11);
         assert!(s.state_version > 0);
     }
+
+    // ---- P6 Slice B (MON-120): quest_report event -------------------------
+
+    #[test]
+    fn quest_report_event_deserializes_with_nested_fields() {
+        let raw = json!({
+            "type": "quest_report",
+            "report": {
+                "summary": "shipped the auth fix",
+                "outcome": "done",
+                "decisions": [
+                    {"decision": "used a parallel call", "rationale": "latency"}
+                ],
+                "learned": ["sidecar event ordering is not guaranteed"],
+                "artifacts": [{"file": "src/auth.rs", "role": "modified"}],
+                "open_threads": ["no consumer yet"],
+                "reflection": "tight slice",
+                "grade": "A"
+            }
+        });
+        let event: InnerEvent = serde_json::from_value(raw).expect("deserialize");
+        match event {
+            InnerEvent::QuestReport { report } => {
+                assert_eq!(report.summary, "shipped the auth fix");
+                assert_eq!(report.outcome, "done");
+                assert_eq!(report.decisions.len(), 1);
+                assert_eq!(report.decisions[0].decision, "used a parallel call");
+                assert_eq!(report.decisions[0].rationale.as_deref(), Some("latency"));
+                assert_eq!(report.learned.len(), 1);
+                assert_eq!(report.learned[0], "sidecar event ordering is not guaranteed");
+                assert_eq!(report.artifacts.len(), 1);
+                assert_eq!(report.artifacts[0].file, "src/auth.rs");
+                assert_eq!(report.artifacts[0].role, "modified");
+                assert_eq!(report.open_threads.len(), 1);
+                assert_eq!(report.grade, "A");
+            }
+            other => panic!("expected QuestReport, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn quest_report_event_tolerates_missing_fields() {
+        // A sparse report must still deserialize — every field defaults — so
+        // a malformed report can never fail the line and desync the agent.
+        let raw = json!({ "type": "quest_report", "report": { "outcome": "blocked" } });
+        let event: InnerEvent = serde_json::from_value(raw).expect("deserialize");
+        match event {
+            InnerEvent::QuestReport { report } => {
+                assert_eq!(report.outcome, "blocked");
+                assert!(report.summary.is_empty());
+                assert!(report.decisions.is_empty());
+                assert!(report.learned.is_empty());
+            }
+            other => panic!("expected QuestReport, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn quest_report_apply_event_is_noop() {
+        let mut s = fresh_state();
+        let before_version = s.state_version;
+        let event = InnerEvent::QuestReport {
+            report: QuestReport {
+                summary: "done".to_string(),
+                outcome: "done".to_string(),
+                decisions: vec![],
+                learned: vec![],
+                artifacts: vec![],
+                open_threads: vec![],
+                reflection: String::new(),
+                grade: "A".to_string(),
+            },
+        };
+        assert_eq!(apply_event(&mut s, &event), ApplyOutcome::NoOp);
+        // NoOp must not bump the version — the chat surface is untouched.
+        assert_eq!(s.state_version, before_version);
+    }
 }

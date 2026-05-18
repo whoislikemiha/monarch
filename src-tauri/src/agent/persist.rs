@@ -1171,3 +1171,198 @@ pub(super) async fn run_persist_consumer(
     }
     eprintln!("[monarch] persist consumer exited");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::CreateQuestPayload;
+    use crate::sidecar_protocol::QuestReport;
+
+    fn sample_report(outcome: &str) -> QuestReport {
+        QuestReport {
+            summary: "shipped slice B".to_string(),
+            outcome: outcome.to_string(),
+            decisions: vec![],
+            learned: vec!["report-on-close is a single call".to_string()],
+            artifacts: vec![],
+            open_threads: vec![],
+            reflection: "tight slice".to_string(),
+            grade: "A".to_string(),
+        }
+    }
+
+    /// Create a quest with no assignee — the report's `agent_id` resolves to
+    /// NULL, so no agent row is needed for the FK.
+    async fn seed_quest(db: &Database) -> String {
+        db.create_quest_internal(&CreateQuestPayload {
+            id: None,
+            parent_id: None,
+            title: "Test quest".to_string(),
+            description: None,
+            status: Some("in_progress".to_string()),
+            grade: Some("C".to_string()),
+            exec_hint: Some("in_context".to_string()),
+            assignee_shadow_id: None,
+            created_by: Some("monarch".to_string()),
+        })
+        .await
+        .expect("create quest")
+    }
+
+    /// Consumer context with no `AppHandle`. The `CompleteQuest` apply still
+    /// upserts the report and transitions quest status (both DB-only); only
+    /// `handle_quest_update_side_effects` is gated on the handle and skipped.
+    fn headless_ctx() -> (
+        Arc<MemoryIndex>,
+        Arc<PlMutex<Option<AppHandle>>>,
+        broadcast::Sender<WsBroadcast>,
+    ) {
+        let memory_index = Arc::new(MemoryIndex::new(std::env::temp_dir()));
+        let app: Arc<PlMutex<Option<AppHandle>>> = Arc::new(PlMutex::new(None));
+        let (ws_tx, _rx) = broadcast::channel(8);
+        (memory_index, app, ws_tx)
+    }
+
+    #[test]
+    fn quest_report_event_builds_complete_quest_command() {
+        let event = InnerEvent::QuestReport {
+            report: sample_report("done"),
+        };
+        let cmds = build_persist_commands(
+            "agent-1",
+            Some("sess-1".to_string()),
+            &event,
+            None,
+            EventDurations::default(),
+            Some("quest-1".to_string()),
+        );
+        // LogEvent is always first; CompleteQuest follows.
+        assert_eq!(cmds.len(), 2);
+        assert!(matches!(cmds[0], PersistCommand::LogEvent { .. }));
+        match &cmds[1] {
+            PersistCommand::CompleteQuest {
+                agent_id,
+                quest_id,
+                report,
+            } => {
+                assert_eq!(agent_id, "agent-1");
+                assert_eq!(quest_id, "quest-1");
+                assert_eq!(report.outcome, "done");
+            }
+            other => panic!("expected CompleteQuest, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn quest_report_event_without_current_quest_drops_command() {
+        let event = InnerEvent::QuestReport {
+            report: sample_report("done"),
+        };
+        let cmds = build_persist_commands(
+            "agent-1",
+            Some("sess-1".to_string()),
+            &event,
+            None,
+            EventDurations::default(),
+            None,
+        );
+        // Only the always-on LogEvent — no CompleteQuest without a quest.
+        assert_eq!(cmds.len(), 1);
+        assert!(matches!(cmds[0], PersistCommand::LogEvent { .. }));
+    }
+
+    #[tokio::test]
+    async fn complete_quest_apply_writes_report_and_closes_done() {
+        let db = Database::new_in_memory().await.expect("db");
+        let quest_id = seed_quest(&db).await;
+        let (memory_index, app, ws_tx) = headless_ctx();
+        let mut ctx = PersistContext::default();
+
+        PersistCommand::CompleteQuest {
+            agent_id: "agent-1".to_string(),
+            quest_id: quest_id.clone(),
+            report: sample_report("done"),
+        }
+        .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
+        .await
+        .expect("apply");
+
+        // The report row landed, carrying the structured payload verbatim.
+        let report = db
+            .get_quest_report_by_quest_internal(&quest_id)
+            .await
+            .expect("get report")
+            .expect("report row");
+        assert!(report.payload.contains("shipped slice B"));
+
+        // ...and the quest closed as done with a completion timestamp.
+        let quest = db
+            .get_quest_internal(&quest_id)
+            .await
+            .expect("get quest")
+            .expect("quest");
+        assert_eq!(quest.status, "done");
+        assert!(quest.completed_at.is_some());
+        assert!(quest.abandoned_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn complete_quest_apply_abandoned_sets_abandoned_status() {
+        let db = Database::new_in_memory().await.expect("db");
+        let quest_id = seed_quest(&db).await;
+        let (memory_index, app, ws_tx) = headless_ctx();
+        let mut ctx = PersistContext::default();
+
+        PersistCommand::CompleteQuest {
+            agent_id: "agent-1".to_string(),
+            quest_id: quest_id.clone(),
+            report: sample_report("abandoned"),
+        }
+        .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
+        .await
+        .expect("apply");
+
+        let quest = db
+            .get_quest_internal(&quest_id)
+            .await
+            .expect("get quest")
+            .expect("quest");
+        assert_eq!(quest.status, "abandoned");
+        assert!(quest.abandoned_at.is_some());
+        assert!(quest.completed_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn complete_quest_apply_blocked_writes_report_leaves_quest_open() {
+        let db = Database::new_in_memory().await.expect("db");
+        let quest_id = seed_quest(&db).await;
+        let (memory_index, app, ws_tx) = headless_ctx();
+        let mut ctx = PersistContext::default();
+
+        PersistCommand::CompleteQuest {
+            agent_id: "agent-1".to_string(),
+            quest_id: quest_id.clone(),
+            report: sample_report("blocked"),
+        }
+        .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
+        .await
+        .expect("apply");
+
+        // Non-terminal outcome: the report is still recorded...
+        let report = db
+            .get_quest_report_by_quest_internal(&quest_id)
+            .await
+            .expect("get report");
+        assert!(report.is_some());
+
+        // ...but the quest stays open at its original status.
+        let quest = db
+            .get_quest_internal(&quest_id)
+            .await
+            .expect("get quest")
+            .expect("quest");
+        assert_eq!(quest.status, "in_progress");
+        assert!(quest.completed_at.is_none());
+        assert!(quest.abandoned_at.is_none());
+    }
+}
