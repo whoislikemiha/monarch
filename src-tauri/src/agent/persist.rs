@@ -16,17 +16,17 @@ use dashmap::DashMap;
 use parking_lot::Mutex as PlMutex;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::db::{
     Database, InsertMemoryPayload, MessageRow, QuestEventNotification, RecordQuestEventPayload,
-    SaveClassificationPayload, SetPlanPayload, WriteQuestReportPayload,
+    SaveClassificationPayload, SetPlanPayload, UpdateQuestPayload, WriteQuestReportPayload,
 };
 use crate::error::MonarchError;
 use crate::memory_index::MemoryIndex;
 use crate::persistence::write_attachment_bytes;
-use crate::sidecar_protocol::InnerEvent;
+use crate::sidecar_protocol::{InnerEvent, QuestReport};
 use crate::util::chrono_now;
 
 use super::event_handler::{emit_event, mark_agent_desynced};
@@ -147,6 +147,19 @@ pub(super) enum PersistCommand {
     WriteQuestReport {
         payload: WriteQuestReportPayload,
     },
+    /// MON-120: P6 Slice B — the executor's `complete_quest` produced a
+    /// first-person report. The apply upserts the report into
+    /// `quest_reports`, then for a terminal `outcome` (`done` / `abandoned`)
+    /// transitions the quest's status and runs the same quest-close side
+    /// effects as the captain's `db_update_quest` path (status_change
+    /// event, clear current-quest pointer, dispatch quest-close Keeper).
+    /// Report write happens before the status transition so the quest-close
+    /// Keeper tick (Slice D) sees the report.
+    CompleteQuest {
+        agent_id: String,
+        quest_id: String,
+        report: QuestReport,
+    },
     ActionTransition {
         agent_id: String,
         quest_id: String,
@@ -238,7 +251,8 @@ impl PersistCommand {
             | Self::PlanItemStart { agent_id, .. }
             | Self::PlanItemComplete { agent_id, .. }
             | Self::PlanItemSkip { agent_id, .. }
-            | Self::PlanItemBlock { agent_id, .. } => agent_id,
+            | Self::PlanItemBlock { agent_id, .. }
+            | Self::CompleteQuest { agent_id, .. } => agent_id,
             Self::SaveClassification { payload } => &payload.agent_id,
             // CompleteKeeperRun + RecordQuestEvent + WriteQuestReport don't
             // carry an agent id directly — failures still log but cannot
@@ -457,6 +471,81 @@ impl PersistCommand {
                         &format!("quest-report-{}", quest_id),
                         &serde_json::json!({ "id": id, "action": "saved" }).to_string(),
                     );
+                }
+                Ok(())
+            }
+            Self::CompleteQuest {
+                agent_id: _,
+                quest_id,
+                report,
+            } => {
+                // 1. Persist the report first — the quest-close Keeper tick
+                //    (Slice D) must see it. The structured report is stored
+                //    verbatim as the JSON `payload`.
+                let payload_json = serde_json::to_string(&report)?;
+                let report_id = db
+                    .upsert_quest_report_internal(&WriteQuestReportPayload {
+                        id: None,
+                        quest_id: quest_id.clone(),
+                        payload: payload_json,
+                    })
+                    .await?;
+                let app_opt = app.lock().clone();
+                if let Some(app) = app_opt.as_ref() {
+                    emit_event(
+                        app,
+                        ws_tx,
+                        &format!("quest-report-{}", quest_id),
+                        &serde_json::json!({ "id": report_id, "action": "saved" }).to_string(),
+                    );
+                }
+                // 2. Terminal outcomes close the quest. `blocked` / `partial`
+                //    (and any unrecognized outcome) record the report but
+                //    leave the quest open.
+                let new_status = match report.outcome.as_str() {
+                    "done" => Some("done"),
+                    "abandoned" => Some("abandoned"),
+                    _ => None,
+                };
+                if let Some(status) = new_status {
+                    let before = db.get_quest_internal(&quest_id).await?;
+                    let now = chrono_now();
+                    db.update_quest_internal(&UpdateQuestPayload {
+                        id: quest_id.clone(),
+                        title: None,
+                        description: None,
+                        scope: None,
+                        current_direction: None,
+                        rationale: None,
+                        fork_parent_id: None,
+                        status: Some(status.to_string()),
+                        grade: None,
+                        exec_hint: None,
+                        assignee_shadow_id: None,
+                        summary: None,
+                        started_at: None,
+                        completed_at: (status == "done").then(|| now.clone()),
+                        abandoned_at: (status == "abandoned").then(|| now.clone()),
+                    })
+                    .await?;
+                    let after = db.get_quest_internal(&quest_id).await?;
+                    // 3. Run the same quest-close side effects as the
+                    //    captain's `db_update_quest` path: status_change
+                    //    event, clear the agent current-quest pointer,
+                    //    dispatch the quest-close Keeper run. Reached via
+                    //    `AppHandle::state()` because the persist consumer
+                    //    is not handed `AgentManager` directly.
+                    if let Some(app) = app_opt {
+                        let db_arc = app.state::<Arc<Database>>().inner().clone();
+                        let mgr_arc = app
+                            .state::<Arc<crate::agent::AgentManager>>()
+                            .inner()
+                            .clone();
+                        crate::db::handle_quest_update_side_effects(
+                            &app, &db_arc, &mgr_arc, before, after,
+                        )
+                        .await?;
+                    }
                 }
                 Ok(())
             }
@@ -917,6 +1006,20 @@ pub(super) fn build_persist_commands(
             } else {
                 eprintln!(
                     "[monarch] dropping memory_suggestion for {} with no current quest",
+                    agent_id
+                );
+            }
+        }
+        InnerEvent::QuestReport { report } => {
+            if let Some(quest_id) = current_quest_id {
+                cmds.push(PersistCommand::CompleteQuest {
+                    agent_id: agent_id.to_string(),
+                    quest_id,
+                    report: report.clone(),
+                });
+            } else {
+                eprintln!(
+                    "[monarch] dropping quest_report for {} with no current quest",
                     agent_id
                 );
             }
