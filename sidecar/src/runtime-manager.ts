@@ -18,6 +18,7 @@ import { buildSystemPrompt } from "./shadow-oath.js";
 import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
 import { createNarrationTools } from "./narration-tools.js";
 import { createPlanTools } from "./plan-tools.js";
+import { createReportTools } from "./report-tools.js";
 import type {
 	ClassifierInvocation,
 	CreateSessionCommand,
@@ -382,6 +383,7 @@ export class RuntimeManager {
 				createSuggestMemoryTool(cmd.agentId, this.emit),
 				...createNarrationTools(cmd.agentId, this.emit),
 				...createPlanTools(cmd.agentId, this.emit),
+				...createReportTools(cmd.agentId, this.emit),
 			],
 		});
 
