@@ -228,6 +228,54 @@ pub struct Message {
     pub timestamp: Option<i64>,
 }
 
+/// P6 Slice B (MON-120): one explicit decision inside a first-person quest
+/// report. Mirrors the `decisions[]` entry shape the `complete_quest` tool
+/// emits. All fields default so a malformed report can't desync the agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestReportDecision {
+    #[serde(default)]
+    pub decision: String,
+    #[serde(default)]
+    pub rationale: Option<String>,
+}
+
+/// P6 Slice B (MON-120): one artifact reference inside a quest report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestReportArtifact {
+    #[serde(default)]
+    pub file: String,
+    #[serde(default)]
+    pub role: String,
+}
+
+/// P6 Slice B (MON-120): the structured first-person quest report the
+/// executor emits via `complete_quest`. Serialized verbatim into the
+/// `quest_reports.payload` JSON column. Snake-case field names match the
+/// sidecar tool payload and `distillation.md` § "First-person quest report".
+/// Every field defaults — a malformed report still deserializes (worst case
+/// an empty report with no terminal `outcome`) rather than desyncing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestReport {
+    #[serde(default)]
+    pub summary: String,
+    /// `done` | `blocked` | `abandoned` | `partial`. Open-string on the wire;
+    /// only `done` / `abandoned` drive a quest-status transition.
+    #[serde(default)]
+    pub outcome: String,
+    #[serde(default)]
+    pub decisions: Vec<QuestReportDecision>,
+    #[serde(default)]
+    pub learned: Vec<String>,
+    #[serde(default)]
+    pub artifacts: Vec<QuestReportArtifact>,
+    #[serde(default)]
+    pub open_threads: Vec<String>,
+    #[serde(default)]
+    pub reflection: String,
+    #[serde(default)]
+    pub grade: String,
+}
+
 /// The inner event carried by `SidecarEvent::Event { event }`. One variant
 /// per `case "xxx":` arm in the pre-MON-32 `apply_event` switch, plus an
 /// `Unknown { raw }` fallback for forward-compat with sidecar versions that
@@ -309,6 +357,12 @@ pub enum InnerEvent {
     PlanItemBlock {
         item_id: Option<String>,
         reason: String,
+    },
+    /// P6 Slice B (MON-120): executor-authored first-person quest report.
+    /// Persisted to `quest_reports`; a `done` / `abandoned` outcome also
+    /// closes the quest.
+    QuestReport {
+        report: QuestReport,
     },
     CompactionStart {
         reason: Option<String>,
@@ -410,6 +464,9 @@ enum KnownInnerEvent {
         item_id: Option<String>,
         reason: String,
     },
+    QuestReport {
+        report: QuestReport,
+    },
     CompactionStart {
         #[serde(default)]
         reason: Option<String>,
@@ -495,6 +552,7 @@ impl From<KnownInnerEvent> for InnerEvent {
             KnownInnerEvent::PlanItemBlock { item_id, reason } => {
                 Self::PlanItemBlock { item_id, reason }
             }
+            KnownInnerEvent::QuestReport { report } => Self::QuestReport { report },
             KnownInnerEvent::CompactionStart { reason } => Self::CompactionStart { reason },
             KnownInnerEvent::CompactionEnd { aborted } => Self::CompactionEnd { aborted },
             KnownInnerEvent::AutoRetryStart { attempt } => Self::AutoRetryStart { attempt },
@@ -529,6 +587,7 @@ const KNOWN_INNER_TAGS: &[&str] = &[
     "plan_item_complete",
     "plan_item_skip",
     "plan_item_block",
+    "quest_report",
     "compaction_start",
     "compaction_end",
     "auto_retry_start",
@@ -1132,6 +1191,9 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
         InnerEvent::PlanItemComplete { .. } => ApplyOutcome::NoOp,
         InnerEvent::PlanItemSkip { .. } => ApplyOutcome::NoOp,
         InnerEvent::PlanItemBlock { .. } => ApplyOutcome::NoOp,
+        // P6 Slice B: the quest report drives persistence + a quest-status
+        // transition but does not mutate the chat-side LiveAgentState.
+        InnerEvent::QuestReport { .. } => ApplyOutcome::NoOp,
         // MON-39 item 9: unknown events return NoOp so `state_version`
         // does not bump per event. The reader-side path in
         // `handle_sidecar_event` is the canonical entry that flips
