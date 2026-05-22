@@ -16,17 +16,17 @@ use dashmap::DashMap;
 use parking_lot::Mutex as PlMutex;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::db::{
     Database, InsertMemoryPayload, MessageRow, QuestEventNotification, RecordQuestEventPayload,
-    SaveClassificationPayload, SetPlanPayload, WriteQuestReportPayload,
+    SaveClassificationPayload, SetPlanPayload, UpdateQuestPayload, WriteQuestReportPayload,
 };
 use crate::error::MonarchError;
 use crate::memory_index::MemoryIndex;
 use crate::persistence::write_attachment_bytes;
-use crate::sidecar_protocol::InnerEvent;
+use crate::sidecar_protocol::{InnerEvent, QuestReport};
 use crate::util::chrono_now;
 
 use super::event_handler::{emit_event, mark_agent_desynced};
@@ -147,6 +147,19 @@ pub(super) enum PersistCommand {
     WriteQuestReport {
         payload: WriteQuestReportPayload,
     },
+    /// MON-120: P6 Slice B — the executor's `complete_quest` produced a
+    /// first-person report. The apply upserts the report into
+    /// `quest_reports`, then for a terminal `outcome` (`done` / `abandoned`)
+    /// transitions the quest's status and runs the same quest-close side
+    /// effects as the captain's `db_update_quest` path (status_change
+    /// event, clear current-quest pointer, dispatch quest-close Keeper).
+    /// Report write happens before the status transition so the quest-close
+    /// Keeper tick (Slice D) sees the report.
+    CompleteQuest {
+        agent_id: String,
+        quest_id: String,
+        report: QuestReport,
+    },
     ActionTransition {
         agent_id: String,
         quest_id: String,
@@ -238,7 +251,8 @@ impl PersistCommand {
             | Self::PlanItemStart { agent_id, .. }
             | Self::PlanItemComplete { agent_id, .. }
             | Self::PlanItemSkip { agent_id, .. }
-            | Self::PlanItemBlock { agent_id, .. } => agent_id,
+            | Self::PlanItemBlock { agent_id, .. }
+            | Self::CompleteQuest { agent_id, .. } => agent_id,
             Self::SaveClassification { payload } => &payload.agent_id,
             // CompleteKeeperRun + RecordQuestEvent + WriteQuestReport don't
             // carry an agent id directly — failures still log but cannot
@@ -457,6 +471,81 @@ impl PersistCommand {
                         &format!("quest-report-{}", quest_id),
                         &serde_json::json!({ "id": id, "action": "saved" }).to_string(),
                     );
+                }
+                Ok(())
+            }
+            Self::CompleteQuest {
+                agent_id: _,
+                quest_id,
+                report,
+            } => {
+                // 1. Persist the report first — the quest-close Keeper tick
+                //    (Slice D) must see it. The structured report is stored
+                //    verbatim as the JSON `payload`.
+                let payload_json = serde_json::to_string(&report)?;
+                let report_id = db
+                    .upsert_quest_report_internal(&WriteQuestReportPayload {
+                        id: None,
+                        quest_id: quest_id.clone(),
+                        payload: payload_json,
+                    })
+                    .await?;
+                let app_opt = app.lock().clone();
+                if let Some(app) = app_opt.as_ref() {
+                    emit_event(
+                        app,
+                        ws_tx,
+                        &format!("quest-report-{}", quest_id),
+                        &serde_json::json!({ "id": report_id, "action": "saved" }).to_string(),
+                    );
+                }
+                // 2. Terminal outcomes close the quest. `blocked` / `partial`
+                //    (and any unrecognized outcome) record the report but
+                //    leave the quest open.
+                let new_status = match report.outcome.as_str() {
+                    "done" => Some("done"),
+                    "abandoned" => Some("abandoned"),
+                    _ => None,
+                };
+                if let Some(status) = new_status {
+                    let before = db.get_quest_internal(&quest_id).await?;
+                    let now = chrono_now();
+                    db.update_quest_internal(&UpdateQuestPayload {
+                        id: quest_id.clone(),
+                        title: None,
+                        description: None,
+                        scope: None,
+                        current_direction: None,
+                        rationale: None,
+                        fork_parent_id: None,
+                        status: Some(status.to_string()),
+                        grade: None,
+                        exec_hint: None,
+                        assignee_shadow_id: None,
+                        summary: None,
+                        started_at: None,
+                        completed_at: (status == "done").then(|| now.clone()),
+                        abandoned_at: (status == "abandoned").then(|| now.clone()),
+                    })
+                    .await?;
+                    let after = db.get_quest_internal(&quest_id).await?;
+                    // 3. Run the same quest-close side effects as the
+                    //    captain's `db_update_quest` path: status_change
+                    //    event, clear the agent current-quest pointer,
+                    //    dispatch the quest-close Keeper run. Reached via
+                    //    `AppHandle::state()` because the persist consumer
+                    //    is not handed `AgentManager` directly.
+                    if let Some(app) = app_opt {
+                        let db_arc = app.state::<Arc<Database>>().inner().clone();
+                        let mgr_arc = app
+                            .state::<Arc<crate::agent::AgentManager>>()
+                            .inner()
+                            .clone();
+                        crate::db::handle_quest_update_side_effects(
+                            &app, &db_arc, &mgr_arc, before, after,
+                        )
+                        .await?;
+                    }
                 }
                 Ok(())
             }
@@ -921,6 +1010,20 @@ pub(super) fn build_persist_commands(
                 );
             }
         }
+        InnerEvent::QuestReport { report } => {
+            if let Some(quest_id) = current_quest_id {
+                cmds.push(PersistCommand::CompleteQuest {
+                    agent_id: agent_id.to_string(),
+                    quest_id,
+                    report: report.clone(),
+                });
+            } else {
+                eprintln!(
+                    "[monarch] dropping quest_report for {} with no current quest",
+                    agent_id
+                );
+            }
+        }
         _ => {}
     }
 
@@ -997,6 +1100,7 @@ fn inner_event_tag(event: &InnerEvent) -> &'static str {
         InnerEvent::PlanItemComplete { .. } => "plan_item_complete",
         InnerEvent::PlanItemSkip { .. } => "plan_item_skip",
         InnerEvent::PlanItemBlock { .. } => "plan_item_block",
+        InnerEvent::QuestReport { .. } => "quest_report",
         InnerEvent::CompactionStart { .. } => "compaction_start",
         InnerEvent::CompactionEnd { .. } => "compaction_end",
         InnerEvent::AutoRetryStart { .. } => "auto_retry_start",
@@ -1066,4 +1170,199 @@ pub(super) async fn run_persist_consumer(
         }
     }
     eprintln!("[monarch] persist consumer exited");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::CreateQuestPayload;
+    use crate::sidecar_protocol::QuestReport;
+
+    fn sample_report(outcome: &str) -> QuestReport {
+        QuestReport {
+            summary: "shipped slice B".to_string(),
+            outcome: outcome.to_string(),
+            decisions: vec![],
+            learned: vec!["report-on-close is a single call".to_string()],
+            artifacts: vec![],
+            open_threads: vec![],
+            reflection: "tight slice".to_string(),
+            grade: "A".to_string(),
+        }
+    }
+
+    /// Create a quest with no assignee — the report's `agent_id` resolves to
+    /// NULL, so no agent row is needed for the FK.
+    async fn seed_quest(db: &Database) -> String {
+        db.create_quest_internal(&CreateQuestPayload {
+            id: None,
+            parent_id: None,
+            title: "Test quest".to_string(),
+            description: None,
+            status: Some("in_progress".to_string()),
+            grade: Some("C".to_string()),
+            exec_hint: Some("in_context".to_string()),
+            assignee_shadow_id: None,
+            created_by: Some("monarch".to_string()),
+        })
+        .await
+        .expect("create quest")
+    }
+
+    /// Consumer context with no `AppHandle`. The `CompleteQuest` apply still
+    /// upserts the report and transitions quest status (both DB-only); only
+    /// `handle_quest_update_side_effects` is gated on the handle and skipped.
+    fn headless_ctx() -> (
+        Arc<MemoryIndex>,
+        Arc<PlMutex<Option<AppHandle>>>,
+        broadcast::Sender<WsBroadcast>,
+    ) {
+        let memory_index = Arc::new(MemoryIndex::new(std::env::temp_dir()));
+        let app: Arc<PlMutex<Option<AppHandle>>> = Arc::new(PlMutex::new(None));
+        let (ws_tx, _rx) = broadcast::channel(8);
+        (memory_index, app, ws_tx)
+    }
+
+    #[test]
+    fn quest_report_event_builds_complete_quest_command() {
+        let event = InnerEvent::QuestReport {
+            report: sample_report("done"),
+        };
+        let cmds = build_persist_commands(
+            "agent-1",
+            Some("sess-1".to_string()),
+            &event,
+            None,
+            EventDurations::default(),
+            Some("quest-1".to_string()),
+        );
+        // LogEvent is always first; CompleteQuest follows.
+        assert_eq!(cmds.len(), 2);
+        assert!(matches!(cmds[0], PersistCommand::LogEvent { .. }));
+        match &cmds[1] {
+            PersistCommand::CompleteQuest {
+                agent_id,
+                quest_id,
+                report,
+            } => {
+                assert_eq!(agent_id, "agent-1");
+                assert_eq!(quest_id, "quest-1");
+                assert_eq!(report.outcome, "done");
+            }
+            other => panic!("expected CompleteQuest, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn quest_report_event_without_current_quest_drops_command() {
+        let event = InnerEvent::QuestReport {
+            report: sample_report("done"),
+        };
+        let cmds = build_persist_commands(
+            "agent-1",
+            Some("sess-1".to_string()),
+            &event,
+            None,
+            EventDurations::default(),
+            None,
+        );
+        // Only the always-on LogEvent — no CompleteQuest without a quest.
+        assert_eq!(cmds.len(), 1);
+        assert!(matches!(cmds[0], PersistCommand::LogEvent { .. }));
+    }
+
+    #[tokio::test]
+    async fn complete_quest_apply_writes_report_and_closes_done() {
+        let db = Database::new_in_memory().await.expect("db");
+        let quest_id = seed_quest(&db).await;
+        let (memory_index, app, ws_tx) = headless_ctx();
+        let mut ctx = PersistContext::default();
+
+        PersistCommand::CompleteQuest {
+            agent_id: "agent-1".to_string(),
+            quest_id: quest_id.clone(),
+            report: sample_report("done"),
+        }
+        .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
+        .await
+        .expect("apply");
+
+        // The report row landed, carrying the structured payload verbatim.
+        let report = db
+            .get_quest_report_by_quest_internal(&quest_id)
+            .await
+            .expect("get report")
+            .expect("report row");
+        assert!(report.payload.contains("shipped slice B"));
+
+        // ...and the quest closed as done with a completion timestamp.
+        let quest = db
+            .get_quest_internal(&quest_id)
+            .await
+            .expect("get quest")
+            .expect("quest");
+        assert_eq!(quest.status, "done");
+        assert!(quest.completed_at.is_some());
+        assert!(quest.abandoned_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn complete_quest_apply_abandoned_sets_abandoned_status() {
+        let db = Database::new_in_memory().await.expect("db");
+        let quest_id = seed_quest(&db).await;
+        let (memory_index, app, ws_tx) = headless_ctx();
+        let mut ctx = PersistContext::default();
+
+        PersistCommand::CompleteQuest {
+            agent_id: "agent-1".to_string(),
+            quest_id: quest_id.clone(),
+            report: sample_report("abandoned"),
+        }
+        .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
+        .await
+        .expect("apply");
+
+        let quest = db
+            .get_quest_internal(&quest_id)
+            .await
+            .expect("get quest")
+            .expect("quest");
+        assert_eq!(quest.status, "abandoned");
+        assert!(quest.abandoned_at.is_some());
+        assert!(quest.completed_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn complete_quest_apply_blocked_writes_report_leaves_quest_open() {
+        let db = Database::new_in_memory().await.expect("db");
+        let quest_id = seed_quest(&db).await;
+        let (memory_index, app, ws_tx) = headless_ctx();
+        let mut ctx = PersistContext::default();
+
+        PersistCommand::CompleteQuest {
+            agent_id: "agent-1".to_string(),
+            quest_id: quest_id.clone(),
+            report: sample_report("blocked"),
+        }
+        .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
+        .await
+        .expect("apply");
+
+        // Non-terminal outcome: the report is still recorded...
+        let report = db
+            .get_quest_report_by_quest_internal(&quest_id)
+            .await
+            .expect("get report");
+        assert!(report.is_some());
+
+        // ...but the quest stays open at its original status.
+        let quest = db
+            .get_quest_internal(&quest_id)
+            .await
+            .expect("get quest")
+            .expect("quest");
+        assert_eq!(quest.status, "in_progress");
+        assert!(quest.completed_at.is_none());
+        assert!(quest.abandoned_at.is_none());
+    }
 }

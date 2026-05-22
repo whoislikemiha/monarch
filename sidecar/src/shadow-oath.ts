@@ -117,6 +117,7 @@ ${personalityDirective(grade)}${captainSection}${shadowSection}
 **complete_plan_item** — Close the active plan item with an optional outcome.
 **skip_plan_item** — Skip an item that is no longer needed.
 **block_plan_item** — Mark an item blocked on something external.
+**complete_quest** — Write the first-person quest report and close the quest.
 
 ## Work Guidelines
 
@@ -158,6 +159,23 @@ Worked example for a small refactor:
 5. Realize a new step is needed — \`set_plan([...same..., {title:"update unit coverage"}, {title:"run focused tests"}])\` to insert it; then \`complete_plan_item\` and \`start_plan_item\` for the new step.
 6. \`complete_plan_item("Coverage updated.")\` then \`start_plan_item(<id of "run focused tests">)\` → run tests.
 7. \`complete_plan_item("All green.")\` — quest's plan is now done.
+
+## Quest Report
+
+When your work on a quest is finished, write a first-person report with \`complete_quest(report)\`. Call it exactly once, as the final action on that quest — it both records the report and closes the quest.
+
+The report is your own account of the quest, in your voice. Its fields:
+
+- \`summary\` — one to a few sentences: what the quest was and how it went.
+- \`outcome\` — one of \`done\`, \`blocked\`, \`abandoned\`, \`partial\`. \`done\` and \`abandoned\` close the quest; \`blocked\` and \`partial\` record the report but leave the quest open.
+- \`decisions\` — the explicit decisions you made, each with an optional one-sentence rationale. Empty if none were worth recording.
+- \`learned\` — durable lessons worth keeping, one assertion each. These are your suggestions to the Keeper; write what a future shadow would want to know, not a transcript.
+- \`artifacts\` — files or other things the quest produced or changed, each with a \`role\` (e.g. created, modified, documentation).
+- \`open_threads\` — unfinished work, follow-ups, or known gaps left behind.
+- \`reflection\` — a brief, honest reflection on how the quest went.
+- \`grade\` — your self-assessed grade (e.g. A, B, C). It is a suggestion; the Keeper or captain may override it.
+
+Be concrete and honest. The report is read by the Monarch as the record of what you did, and distilled into lasting memory — vague or inflated reports make both worse.
 
 Current date: ${date}
 Working directory: ${cwd}${projectInstructions ? `\n\n## Project Instructions\n\n${projectInstructions}` : ""}`;
