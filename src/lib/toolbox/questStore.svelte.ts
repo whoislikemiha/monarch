@@ -10,12 +10,69 @@ import type {
   PlanItemRow,
   QuestEventRow,
   QuestRefRow,
+  QuestReportRow,
   QuestRow,
   UpdatePlanItemPayload,
   UpdateQuestRefPayload,
   UpdateQuestPayload,
   WorkingMemoryPayload,
 } from "../bindings";
+
+/**
+ * P6 Slice C (MON-121): the parsed first-person quest report. Mirrors the
+ * snake-case shape the executor's `complete_quest` tool emits and Rust stores
+ * verbatim in `quest_reports.payload` (see `sidecar/src/report-tools.ts` and
+ * `src-tauri/src/sidecar_protocol.rs` `QuestReport`). Read-only here — the
+ * report is the shadow's artifact, not captain-editable.
+ */
+export interface QuestReportView {
+  summary: string;
+  outcome: string;
+  decisions: { decision: string; rationale?: string | null }[];
+  learned: string[];
+  artifacts: { file: string; role: string }[];
+  open_threads: string[];
+  reflection: string;
+  grade: string;
+  /** Grade/outcome metadata from the row, useful for "when closed" context. */
+  distilledByKeeperRunId: number | null;
+  updatedAt: string;
+  /** Set when the payload JSON failed to parse — raw text for fallback render. */
+  raw?: string;
+}
+
+export function parseQuestReport(row: QuestReportRow): QuestReportView {
+  const base: QuestReportView = {
+    summary: "",
+    outcome: "",
+    decisions: [],
+    learned: [],
+    artifacts: [],
+    open_threads: [],
+    reflection: "",
+    grade: "",
+    distilledByKeeperRunId: row.distilledByKeeperRunId,
+    updatedAt: row.updatedAt,
+  };
+  try {
+    const p = JSON.parse(row.payload) as Partial<QuestReportView>;
+    return {
+      ...base,
+      summary: typeof p.summary === "string" ? p.summary : "",
+      outcome: typeof p.outcome === "string" ? p.outcome : "",
+      decisions: Array.isArray(p.decisions) ? p.decisions : [],
+      learned: Array.isArray(p.learned) ? p.learned : [],
+      artifacts: Array.isArray(p.artifacts) ? p.artifacts : [],
+      open_threads: Array.isArray(p.open_threads) ? p.open_threads : [],
+      reflection: typeof p.reflection === "string" ? p.reflection : "",
+      grade: typeof p.grade === "string" ? p.grade : "",
+    };
+  } catch {
+    // Malformed payload must not crash the timeline — keep the raw text so the
+    // captain at least sees something, and degrade the structured view.
+    return { ...base, raw: row.payload };
+  }
+}
 
 /**
  * MON-83: per-agent quest state. Keyed by agentId because toolbox tools
@@ -40,6 +97,12 @@ export interface AgentQuestState {
   planItemsByQuest: SvelteMap<string, PlanItemRow[]>;
   /** External references per quest_id, lazily loaded with quest details. */
   refsByQuest: SvelteMap<string, QuestRefRow[]>;
+  /**
+   * P6 Slice C: first-person quest report per quest_id, lazily loaded on
+   * expand. A present `null` value means "loaded, no report exists"; an
+   * absent key means "not yet fetched".
+   */
+  reportsByQuest: SvelteMap<string, QuestReportView | null>;
   /** Quest ids currently expanded inline in the timeline view. */
   expandedQuestIds: SvelteSet<string>;
   /** Quest event ids expanded inside an open quest. */
@@ -76,6 +139,7 @@ class QuestStore {
       eventsByQuest: new SvelteMap(),
       planItemsByQuest: new SvelteMap(),
       refsByQuest: new SvelteMap(),
+      reportsByQuest: new SvelteMap(),
       expandedQuestIds: new SvelteSet(),
       expandedEventIds: new SvelteSet(),
       workingMemory: null,
@@ -187,6 +251,19 @@ class QuestStore {
     const entry = this.ensure(agentId);
     const refs = await invoke<QuestRefRow[]>("db_list_quest_refs", { questId });
     entry.refsByQuest.set(questId, refs);
+  }
+
+  /**
+   * P6 Slice C: load this quest's first-person report (if any). Stores `null`
+   * when no report exists so the UI can distinguish "loaded, empty" from
+   * "not yet fetched". Backend command shipped in Slice A (MON-119).
+   */
+  async loadReport(agentId: string, questId: string): Promise<void> {
+    const entry = this.ensure(agentId);
+    const row = await invoke<QuestReportRow | null>("db_get_quest_report", {
+      questId,
+    });
+    entry.reportsByQuest.set(questId, row ? parseQuestReport(row) : null);
   }
 
   async createQuestRef(
@@ -379,6 +456,11 @@ class QuestStore {
           entry.error = String(e);
         });
       }
+      if (!entry.reportsByQuest.has(questId)) {
+        this.loadReport(agentId, questId).catch((e) => {
+          entry.error = String(e);
+        });
+      }
     }
   }
 
@@ -475,6 +557,20 @@ class QuestStore {
             });
           } else {
             entry.refsByQuest.delete(questId);
+          }
+        }),
+      );
+      // P6 Slice C: a `complete_quest` write emits `quest-report-{questId}`.
+      // Refresh the report when the quest is open; otherwise drop the cache so
+      // the next expand re-fetches.
+      subs.unlisten.push(
+        listen<string>(`quest-report-${questId}`, () => {
+          if (entry.expandedQuestIds.has(questId)) {
+            this.loadReport(entry.agentId, questId).catch((e) => {
+              entry.error = String(e);
+            });
+          } else {
+            entry.reportsByQuest.delete(questId);
           }
         }),
       );
