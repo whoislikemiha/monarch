@@ -699,6 +699,26 @@ async fn handle_keeper_result(
         return;
     }
 
+    // P6 Slice D (MON-122): attribute the closing quest's first-person report
+    // to this Keeper run. Quest-close runs only; other triggers leave the
+    // report attribution alone. No-op when no report row exists for the quest
+    // — logged inside the apply path so dispatch here can stay declarative.
+    if trigger == "quest_close" {
+        if let Some(qid) = run_row.as_ref().and_then(|r| r.quest_id.clone()) {
+            if persist_tx
+                .send(PersistCommand::AttributeQuestReport {
+                    agent_id: agent_id.to_string(),
+                    quest_id: qid,
+                    run_id,
+                })
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+    }
+
     // Compaction tick on the quest timeline — only when an agent has a
     // current quest. Plan: when no quest is set, the run is visible only
     // via `memory_keeper_runs` and the new memories themselves.
