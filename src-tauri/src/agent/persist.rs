@@ -131,6 +131,17 @@ pub(super) enum PersistCommand {
         tokens_in: Option<i64>,
         tokens_out: Option<i64>,
     },
+    /// MON-122: P6 Slice D — attribute a quest's first-person report to the
+    /// Keeper run that distilled it. Sent from `handle_keeper_result` after a
+    /// successful `quest_close` run that had a report row. No-op when no
+    /// report exists for the quest. Rides the pipeline so the write is
+    /// serialized with the in-flight `InsertMemory` / `CompleteKeeperRun`
+    /// commands from the same run.
+    AttributeQuestReport {
+        agent_id: String,
+        quest_id: String,
+        run_id: i64,
+    },
     /// MON-100 / MON-83: append one row to `quest_events` and broadcast on
     /// `quest-event-{questId}` so the QuestTimelineTool wakes. Wraps the
     /// existing `db.record_quest_event_internal` + `agent::emit_event` pair
@@ -252,7 +263,8 @@ impl PersistCommand {
             | Self::PlanItemComplete { agent_id, .. }
             | Self::PlanItemSkip { agent_id, .. }
             | Self::PlanItemBlock { agent_id, .. }
-            | Self::CompleteQuest { agent_id, .. } => agent_id,
+            | Self::CompleteQuest { agent_id, .. }
+            | Self::AttributeQuestReport { agent_id, .. } => agent_id,
             Self::SaveClassification { payload } => &payload.agent_id,
             // CompleteKeeperRun + RecordQuestEvent + WriteQuestReport don't
             // carry an agent id directly — failures still log but cannot
@@ -438,6 +450,25 @@ impl PersistCommand {
                     tokens_out,
                 )
                 .await
+            }
+            Self::AttributeQuestReport {
+                agent_id: _,
+                quest_id,
+                run_id,
+            } => {
+                // No-op when no report row exists for the quest. Logged so a
+                // quiet wiring regression is visible, but never an error —
+                // a quest can close without ever having a report.
+                let attributed = db
+                    .attribute_quest_report_to_keeper_run_internal(&quest_id, run_id)
+                    .await?;
+                if !attributed {
+                    eprintln!(
+                        "[monarch] keeper run {} closed quest {} with no report to attribute",
+                        run_id, quest_id
+                    );
+                }
+                Ok(())
             }
             Self::RecordQuestEvent { payload } => {
                 let quest_id = payload.quest_id.clone();
@@ -1364,5 +1395,123 @@ mod tests {
         assert_eq!(quest.status, "in_progress");
         assert!(quest.completed_at.is_none());
         assert!(quest.abandoned_at.is_none());
+    }
+
+    // ---- P6 Slice D (MON-122): AttributeQuestReport apply path -----------
+
+    /// Seed a quest, upsert a first-person report on it, and insert a Keeper
+    /// run row. Returns `(quest_id, report_id, run_id)` for the test to drive
+    /// the attribute command.
+    async fn seed_quest_report_and_run(db: &Database) -> (String, String, i64) {
+        let quest_id = seed_quest(db).await;
+        let report_id = db
+            .upsert_quest_report_internal(&crate::db::WriteQuestReportPayload {
+                id: None,
+                quest_id: quest_id.clone(),
+                payload: "{\"summary\":\"slice D test\",\"outcome\":\"done\"}".to_string(),
+            })
+            .await
+            .expect("upsert report");
+        let run_id = db
+            .insert_keeper_run_internal("agent-1", "quest_close", Some(&quest_id), "test/model")
+            .await
+            .expect("insert keeper run");
+        (quest_id, report_id, run_id)
+    }
+
+    #[tokio::test]
+    async fn attribute_quest_report_sets_distilled_by_keeper_run_id() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (memory_index, app, ws_tx) = headless_ctx();
+        let mut ctx = PersistContext::default();
+        let (quest_id, _report_id, run_id) = seed_quest_report_and_run(&db).await;
+
+        PersistCommand::AttributeQuestReport {
+            agent_id: "agent-1".to_string(),
+            quest_id: quest_id.clone(),
+            run_id,
+        }
+        .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
+        .await
+        .expect("apply");
+
+        let report = db
+            .get_quest_report_by_quest_internal(&quest_id)
+            .await
+            .expect("get report")
+            .expect("report row");
+        assert_eq!(report.distilled_by_keeper_run_id, Some(run_id));
+    }
+
+    #[tokio::test]
+    async fn attribute_quest_report_rewrites_attribution_on_rerun() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (memory_index, app, ws_tx) = headless_ctx();
+        let mut ctx = PersistContext::default();
+        let (quest_id, _report_id, first_run) = seed_quest_report_and_run(&db).await;
+        let second_run = db
+            .insert_keeper_run_internal("agent-1", "quest_close", Some(&quest_id), "test/model")
+            .await
+            .expect("second run");
+
+        // First attribution.
+        PersistCommand::AttributeQuestReport {
+            agent_id: "agent-1".to_string(),
+            quest_id: quest_id.clone(),
+            run_id: first_run,
+        }
+        .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
+        .await
+        .expect("apply first");
+
+        // Re-running the Keeper for the same quest must overwrite cleanly,
+        // not violate uniqueness.
+        PersistCommand::AttributeQuestReport {
+            agent_id: "agent-1".to_string(),
+            quest_id: quest_id.clone(),
+            run_id: second_run,
+        }
+        .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
+        .await
+        .expect("apply second");
+
+        let report = db
+            .get_quest_report_by_quest_internal(&quest_id)
+            .await
+            .expect("get report")
+            .expect("report row");
+        assert_eq!(report.distilled_by_keeper_run_id, Some(second_run));
+    }
+
+    #[tokio::test]
+    async fn attribute_quest_report_is_noop_when_no_report_exists() {
+        let db = Database::new_in_memory().await.expect("db");
+        let (memory_index, app, ws_tx) = headless_ctx();
+        let mut ctx = PersistContext::default();
+
+        // Quest exists, report does not. Quest-close runs can still fire on
+        // quests that never produced a report (e.g. captain-edited close),
+        // and the apply must not error on that path.
+        let quest_id = seed_quest(&db).await;
+        let run_id = db
+            .insert_keeper_run_internal("agent-1", "quest_close", Some(&quest_id), "test/model")
+            .await
+            .expect("insert keeper run");
+
+        PersistCommand::AttributeQuestReport {
+            agent_id: "agent-1".to_string(),
+            quest_id: quest_id.clone(),
+            run_id,
+        }
+        .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
+        .await
+        .expect("apply (no-op)");
+
+        // Sanity: still no report row was created by the no-op.
+        let report = db
+            .get_quest_report_by_quest_internal(&quest_id)
+            .await
+            .expect("get report");
+        assert!(report.is_none());
     }
 }
