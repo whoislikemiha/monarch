@@ -3565,6 +3565,30 @@ impl Database {
             .await?)
     }
 
+    /// MON-122: P6 Slice D — attribute a quest's report to the Keeper run
+    /// that distilled it. Returns `true` if a report row was updated, `false`
+    /// when no report exists for the quest. Idempotent on the
+    /// `(quest_id, run_id)` pair — re-running the Keeper for the same quest
+    /// simply rewrites the attribution.
+    pub async fn attribute_quest_report_to_keeper_run_internal(
+        &self,
+        quest_id: &str,
+        run_id: i64,
+    ) -> Result<bool, MonarchError> {
+        let quest_id = quest_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let n = conn.execute(
+                    "UPDATE quest_reports SET distilled_by_keeper_run_id = ?1
+                     WHERE quest_id = ?2",
+                    params![run_id, quest_id],
+                )?;
+                Ok(n > 0)
+            })
+            .await?)
+    }
+
     pub async fn get_working_memory_internal(
         &self,
         agent_id: &str,

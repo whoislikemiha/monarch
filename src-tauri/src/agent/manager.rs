@@ -383,7 +383,26 @@ impl AgentManager {
             out
         };
 
-        let slice = render_keeper_slice(prior_summary.as_deref(), &related, &kept);
+        // P6 Slice D (MON-122): fold the first-person quest report into the
+        // slice on quest-close runs so the Keeper sees the executor's own
+        // framing alongside the raw stream. Continuous runs never include a
+        // report even when a current quest happens to be set.
+        let quest_close_report: Option<String> = match &trigger {
+            KeeperRunTrigger::QuestClose { quest_id, .. } => db
+                .get_quest_report_by_quest_internal(quest_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|row| row.payload),
+            KeeperRunTrigger::Continuous => None,
+        };
+
+        let slice = render_keeper_slice(
+            prior_summary.as_deref(),
+            &related,
+            &kept,
+            quest_close_report.as_deref(),
+        );
 
         let run_id = db
             .insert_keeper_run_internal(
@@ -1090,6 +1109,7 @@ fn render_keeper_slice(
     prior_summary: Option<&str>,
     related: &[MemoryRow],
     messages: &[MessageRow],
+    quest_report: Option<&str>,
 ) -> String {
     let mut s = String::new();
     if let Some(p) = prior_summary {
@@ -1106,6 +1126,19 @@ fn render_keeper_slice(
             s.push_str(&format!("- {}: {}\n", m.title, m.summary));
         }
         s.push('\n');
+    }
+    // P6 Slice D (MON-122): the executor's first-person report on the closing
+    // quest, included only for quest-close runs. Placed before the raw stream
+    // so the Keeper reads the executor's own framing first; the JSON shape is
+    // kept verbatim (the report tool already trims field sizes) and the LLM
+    // is told via the section header that this is first-person.
+    if let Some(report) = quest_report {
+        let trimmed = report.trim();
+        if !trimmed.is_empty() {
+            s.push_str("## QUEST REPORT (first-person from the executor)\n\n");
+            s.push_str(trimmed);
+            s.push_str("\n\n");
+        }
     }
     s.push_str("## RECENT ACTIVITY\n\n");
     for m in messages {
@@ -1323,6 +1356,37 @@ mod tests {
                 agent_id: agent_id.to_string(),
             },
         }
+    }
+
+    // ---- P6 Slice D (MON-122): render_keeper_slice quest-report wiring ----
+
+    #[test]
+    fn render_keeper_slice_includes_quest_report_section_when_present() {
+        let slice = render_keeper_slice(
+            None,
+            &[],
+            &[],
+            Some("{\"summary\":\"shipped slice D\",\"outcome\":\"done\"}"),
+        );
+        assert!(slice.contains("## QUEST REPORT (first-person from the executor)"));
+        assert!(slice.contains("shipped slice D"));
+        // The raw stream marker stays present so the Keeper can still find it.
+        assert!(slice.contains("## RECENT ACTIVITY"));
+    }
+
+    #[test]
+    fn render_keeper_slice_omits_quest_report_section_when_absent() {
+        let slice = render_keeper_slice(None, &[], &[], None);
+        assert!(!slice.contains("## QUEST REPORT"));
+        assert!(slice.contains("## RECENT ACTIVITY"));
+    }
+
+    #[test]
+    fn render_keeper_slice_omits_quest_report_section_when_whitespace() {
+        // Defensive: an upstream caller that handed us an empty payload
+        // string should not produce a header above nothing.
+        let slice = render_keeper_slice(None, &[], &[], Some("   \n   "));
+        assert!(!slice.contains("## QUEST REPORT"));
     }
 
     #[test]
