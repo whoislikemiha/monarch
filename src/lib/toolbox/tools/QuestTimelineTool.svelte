@@ -967,6 +967,7 @@
               {@const expanded = questState.expandedQuestIds.has(quest.id)}
               {@const events = questState.eventsByQuest.get(quest.id) ?? []}
               {@const refs = questState.refsByQuest.get(quest.id) ?? []}
+              {@const report = questState.reportsByQuest.get(quest.id) ?? null}
               <div
                 class="node"
                 class:expanded
@@ -1158,6 +1159,82 @@
                         </button>
                       </form>
                     </div>
+
+                    {#if report}
+                      <div class="report-panel">
+                        <div class="section-title">
+                          Quest Report
+                          {#if report.outcome}
+                            <span class="report-outcome outcome-{report.outcome}">{report.outcome}</span>
+                          {/if}
+                          {#if report.grade}
+                            <span class="report-grade">{report.grade}</span>
+                          {/if}
+                        </div>
+                        {#if report.raw}
+                          <div class="muted small">Report payload could not be parsed.</div>
+                          <pre class="report-raw">{report.raw}</pre>
+                        {:else}
+                          {#if report.summary}
+                            <p class="report-summary">{report.summary}</p>
+                          {/if}
+                          {#if report.decisions.length > 0}
+                            <div class="report-block">
+                              <div class="report-label">Decisions</div>
+                              <ul class="report-list">
+                                {#each report.decisions as d, i (i)}
+                                  <li>
+                                    <span class="report-decision">{d.decision}</span>
+                                    {#if d.rationale}
+                                      <span class="report-rationale"> — {d.rationale}</span>
+                                    {/if}
+                                  </li>
+                                {/each}
+                              </ul>
+                            </div>
+                          {/if}
+                          {#if report.learned.length > 0}
+                            <div class="report-block">
+                              <div class="report-label">Learned</div>
+                              <ul class="report-list">
+                                {#each report.learned as item, i (i)}
+                                  <li>{item}</li>
+                                {/each}
+                              </ul>
+                            </div>
+                          {/if}
+                          {#if report.artifacts.length > 0}
+                            <div class="report-block">
+                              <div class="report-label">Artifacts</div>
+                              <ul class="report-list">
+                                {#each report.artifacts as a, i (i)}
+                                  <li>
+                                    <span class="report-artifact-role">{a.role}</span>
+                                    <span class="report-artifact-file">{a.file}</span>
+                                  </li>
+                                {/each}
+                              </ul>
+                            </div>
+                          {/if}
+                          {#if report.open_threads.length > 0}
+                            <div class="report-block">
+                              <div class="report-label">Open threads</div>
+                              <ul class="report-list">
+                                {#each report.open_threads as item, i (i)}
+                                  <li>{item}</li>
+                                {/each}
+                              </ul>
+                            </div>
+                          {/if}
+                          {#if report.reflection}
+                            <div class="report-block">
+                              <div class="report-label">Reflection</div>
+                              <p class="report-reflection">{report.reflection}</p>
+                            </div>
+                          {/if}
+                        {/if}
+                      </div>
+                    {/if}
 
                     <form class="manual-event-form" onsubmit={(e) => { e.preventDefault(); submitManualEvent(quest.id); }}>
                       <div class="section-title">Add event</div>
@@ -1844,12 +1921,94 @@
   }
   .quest-editor,
   .refs-panel,
-  .manual-event-form {
+  .manual-event-form,
+  .report-panel {
     display: flex;
     flex-direction: column;
     gap: 6px;
     padding-top: 10px;
     border-top: 1px solid var(--border-subtle);
+  }
+  .report-outcome,
+  .report-grade {
+    margin-left: 6px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 9px;
+    letter-spacing: normal;
+    text-transform: none;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+  .report-outcome {
+    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+  }
+  .outcome-done {
+    border-color: color-mix(in srgb, var(--accent-positive, #3fb950) 50%, transparent);
+    color: var(--accent-positive, #3fb950);
+  }
+  .outcome-abandoned,
+  .outcome-blocked {
+    border-color: color-mix(in srgb, var(--accent-negative, #f85149) 50%, transparent);
+    color: var(--accent-negative, #f85149);
+  }
+  .report-grade {
+    background: var(--bg-sidebar);
+    color: var(--text-primary);
+  }
+  .report-summary {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-primary);
+  }
+  .report-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .report-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+  .report-list {
+    margin: 0;
+    padding-left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 10px;
+    color: var(--text-primary);
+  }
+  .report-rationale {
+    color: var(--text-muted);
+  }
+  .report-artifact-role {
+    margin-right: 6px;
+    padding: 0 4px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    color: var(--text-muted);
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+  .report-artifact-file {
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+  .report-reflection {
+    margin: 0;
+    font-size: 10px;
+    font-style: italic;
+    color: var(--text-secondary, var(--text-muted));
+  }
+  .report-raw {
+    margin: 0;
+    padding: 6px;
+    border-radius: 4px;
+    background: var(--bg-sidebar);
+    font-size: 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
   .section-title,
   .log-title {
