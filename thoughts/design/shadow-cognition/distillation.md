@@ -4,11 +4,21 @@
 >
 > **Sibling docs:** `substrate.md` (the four-layer self), `attention.md` (chat + executor + quest tree), `flows.md` (per-turn loops, environment, coordination).
 
+> **What changed (2026‑06, MON‑123).** This doc originally treated *context compaction* and *memory formation* as one operation (see Premise). Implementation experience split them. The MON‑100 continuous Keeper rewrite saved **≈0 live-context tokens** in practice — it prose-summarized the oldest, already-consumed messages while the expensive recent file-reads stayed raw — and fired roughly **every turn**, because its trigger summed full per-turn usage (incl. `cache_read`, i.e. the whole context re-read each turn) against a 25k/30k budget. More fundamentally: **you cannot replace a tool's output with a prose sentence** — the agent needs the substrate (the file it read) to keep working, so summarizing the working set is destructive, and summarizing only the stale tail saves nothing.
+>
+> So the two jobs are now **separated**:
+> - **Live-context compaction → Pi's native compaction.** Level-triggered near the context window, keeps recent work raw at clean turn boundaries, emits a structured checkpoint, and records `<read-files>` / `<modified-files>` so the agent re-reads on demand (lossless-on-demand) instead of losing the substrate to a summary. Pi already implements this (`packages/agent/src/harness/compaction/`) and it is already enabled in Monarch — but our Keeper preempts it at 25–30k. We stop the Keeper from rewriting live context and let Pi own it.
+> - **Memory distillation → the Keeper, decoupled.** Fires at Pi's compaction boundary (the `session_before_compact` hook, distilling the exact slice Pi is about to evict) and at quest close — **not** per-turn. The Keeper writes L1/L2 memory; it no longer touches the executor's live context.
+>
+> The conceptual seed below ("same operation") still holds at the *boundary*: distillation rides the moment context is compacted. What it does *not* mean is that one lossy prose summary serves both jobs. Sections marked **[revised 2026‑06]** reflect this; see `roadmap.md` § P2c and MON‑123.
+
 ## Premise
 
 A shadow accumulates raw activity faster than the model's context window can hold it: tool calls, observations, decisions, dialogue, blockers, redirects. Without something doing continuous condensation, every long task ends with the captain hitting "compact this" and the shadow forgetting most of what it just learned.
 
 The premise of this doc is that **compaction and memory formation are the same operation at different timescales**. There is no separate "summarize the conversation" step and "extract long-term memories" step. There is one process — distillation — that runs continuously and produces structured persistent artifacts.
+
+> **[revised 2026‑06]** This premise was too strong. *Context compaction* (shrinking the live window, which must preserve the working substrate so the agent can keep going) and *memory formation* (extracting durable third-person claims) are now run by different components — Pi compacts live context; the Keeper distills memory at Pi's compaction boundary. They share a *moment*, not a single lossy summary. See the "What changed" note above.
 
 The component that runs distillation is **the Keeper**. It is the cognitive metabolism of the shadow: continuous, structured, and the only writer to the long-term memory tree.
 
@@ -60,14 +70,13 @@ Output per call: structured JSON with proposed events, memories, artifacts, work
 
 The Keeper runs in response to several triggers, each with different cadence and depth:
 
-### Continuous (token-pressure)
+### Continuous (rides the live-context compaction boundary) **[revised 2026‑06]**
 
-The workhorse. Fires roughly every ~30k tokens of accumulated raw stream per shadow. Hierarchy:
+The workhorse — but it no longer owns its own token trigger, and it no longer rewrites live context. **Pi's native compaction owns the live window**: it fires on a *level* check (`contextTokens > contextWindow − reserveTokens`, ~112k for a 128k window), keeps the most recent ~20k tokens raw at clean turn boundaries, summarizes older history into a structured checkpoint, and tags it with `<read-files>` / `<modified-files>` so the agent re-reads dropped substrate on demand.
 
-- **Soft trigger** at ~25k tokens — wait for the next natural breakpoint (end of coherent action, end of model response, idle moment) within ~5k more tokens. Compact then. Avoids cutting mid-action.
-- **Hard trigger** at 30k — force a clean cut regardless. Backstop for cases where breakpoints don't arrive.
+The Keeper's continuous distillation **rides that boundary**: Pi fires `session_before_compact` with the exact slice it is about to evict (`preparation.messagesToSummarize`); the Keeper distills *that* slice into L2 memories. This is the right unit — a coherent chunk of work that aged out of the live window, not a one-turn sliver. The Keeper does not cancel or replace Pi's compaction; it only harvests memory from the evicted history.
 
-The 30k threshold is configurable. Conservative starting value; calibrated by usage.
+> **Retired (MON‑123).** The original soft/hard token-sum trigger (`~25k` soft, `30k` hard, summing per-turn usage including `cache_read`) and the `applyKeeperRewrite` live-context rewrite. The token-sum mis-measured context (it summed the whole window re-read every turn) and the rewrite saved ≈0 tokens while fighting Pi's session tree. The `memory.toml` thresholds are removed or repurposed.
 
 ### Semantic (event-driven)
 
