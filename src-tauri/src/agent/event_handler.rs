@@ -346,29 +346,6 @@ pub(super) async fn handle_sidecar_event(
             .await;
         }
 
-        SidecarEvent::KeeperRewriteApplied {
-            agent_id,
-            run_id,
-            pre_length,
-            post_length,
-        } => {
-            eprintln!(
-                "[monarch] keeper_rewrite_applied {} agent={} pre={} post={}",
-                run_id, agent_id, pre_length, post_length
-            );
-            push_status_for_agent(
-                app,
-                ws_tx,
-                live_states,
-                &agent_id,
-                format!(
-                    "✦ Context compacted (Keeper run #{} — {} → {} messages in LLM view)",
-                    run_id, pre_length, post_length
-                ),
-            )
-            .await;
-        }
-
         SidecarEvent::MemorySearchRequest {
             agent_id,
             request_id,
@@ -752,9 +729,9 @@ async fn handle_keeper_result(
         })
         .await;
 
-    // MON-100: visible signal in the chat thread. The actual `state.messages`
-    // rewrite happens at the next `turn_end`; this status row just confirms
-    // the Keeper itself succeeded and N memories landed.
+    // MON-123: visible signal in the chat thread. The Keeper no longer
+    // rewrites live context (Pi's native compaction owns the window now); this
+    // status row confirms the Keeper succeeded and N memories landed in L3.
     let memories_label = if claims.len() == 1 {
         "1 memory".to_string()
     } else {
@@ -765,10 +742,7 @@ async fn handle_keeper_result(
         ws_tx,
         live_states,
         agent_id,
-        format!(
-            "◈ Keeper distilled {} (run #{}) — context compacts at next turn end",
-            memories_label, run_id
-        ),
+        format!("◈ Keeper distilled {} (run #{})", memories_label, run_id),
     )
     .await;
 }

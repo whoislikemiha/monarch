@@ -145,6 +145,27 @@ P2 ──► P2b ──► P4 ──► P4b ──► P5 ──► P6 ──► 
 
 **Defers.** Eval harness (P3a / [MON-94](https://linear.app/monarch-commander/issue/MON-94)). Reranker (P3b / [MON-93](https://linear.app/monarch-commander/issue/MON-93)). Background rebuild + incremental insert (P3c/d / [MON-96](https://linear.app/monarch-commander/issue/MON-96), [MON-97](https://linear.app/monarch-commander/issue/MON-97)). Idle compaction trigger. Project subtree writes (P9). First-person reports as Keeper input (P6 backfills). Captain edit / archive / promote / supersede in Inspector (P12). Stale-flagging via `file_refs.anchor_sha` (P11). Two-tier Keeper (local / cloud) — P2 ships single-tier; tier split is a `memory.toml` extension, not a phase. L2 working memory and durable execution plans are no longer P2 deferrals; they landed in P4/P4b.
 
+> **Revised by P2c (2026‑06).** P2 shipped MON-100's "compaction = memory in one pass" model: a token-pressure trigger plus a Pi `state.messages` rewrite. In practice the rewrite saved ≈0 live-context tokens and the trigger fired ~every turn (it summed full per-turn usage incl. `cache_read`). P2c splits the two jobs — Pi owns live-context compaction; the Keeper does memory only, riding Pi's compaction boundary. The MON-100 token-sum trigger and `applyKeeperRewrite` are retired there.
+
+---
+
+### P2c — Split live-context compaction from memory distillation
+
+**Read first.** [`distillation.md`](./distillation.md) § "What changed (2026‑06)" + § "Compaction triggers" (both revised). Pi's compaction harness in the local checkout (`/Users/miha/pro/pi`): `packages/agent/src/harness/compaction/{compaction.ts,utils.ts}` and `packages/coding-agent/src/core/agent-session.ts` (`_runAutoCompaction`, the `session_before_compact` hook, `compaction_start` / `compaction_end`).
+
+**Goal.** The Keeper stops rewriting the executor's live context. Pi's native compaction owns the live window (level trigger near `contextWindow − reserveTokens`, keeps recent ~20k raw, structured checkpoint, `<read-files>` / `<modified-files>` for re-read-on-demand). The Keeper becomes memory-only and distills the slice Pi evicts, at Pi's compaction boundary and at quest close — not per-turn. Net: no per-turn churn, real (non-zero) live-context savings, and tool-output substrate is preserved (re-readable) rather than prose-summarized.
+
+**Test scenario.** Captain runs a long read-heavy task. The Keeper no longer fires every turn; the live context grows and is compacted by Pi only as it approaches the window, with recent reads kept verbatim and older ones replaced by a checkpoint that lists the files touched. When Pi compacts (or a quest closes), atomic claims appear in the Memory Inspector distilled from the evicted slice — coherent, not one-turn slivers. The compaction row in the timeline reports a real token before→after delta.
+
+**Tickets:**
+- [**MON-123**](https://linear.app/monarch-commander/issue/MON-123) — parent. Slice A: stop `applyKeeperRewrite` / `pendingKeeperRewrite` / the `turn_end` drain in `runtime-manager.ts`; surface Pi `compaction_start` / `compaction_end` through the sidecar protocol; update Rust event handling + UI notices; memory extraction unchanged. Slice B: register a `session_before_compact` handler that runs the Keeper on `preparation.messagesToSummarize` for memory only; remove the per-turn token accumulator (`tokens_since_last_compaction`) + 25k/30k thresholds; keep quest-close. Slice C: real token before→after on compaction rows; reconcile the `compaction_tick` timeline with Pi-driven compaction; retire/repurpose dead `memory.toml` thresholds.
+
+**Tracks.** Backend (sidecar: remove rewrite, add compaction hook; Rust: event plumbing + notice changes) + UI/UX (real token deltas, reconcile timeline) + light config cleanup.
+
+**Depends on.** P2 (MON-100/101/103/105) shipped. No dependency on P3+.
+
+**Defers.** Sub-message substrate filtering (keep only the useful lines of a large read, vs. Pi's whole-message keep-recent + re-read). Custom Monarch compaction content via the `session_before_compact` return value (we observe, we don't override — Pi generates the summary). Two-tier deep-distillation model at the compaction boundary (still single-tier).
+
 ---
 
 ### P3a — Eval harness
