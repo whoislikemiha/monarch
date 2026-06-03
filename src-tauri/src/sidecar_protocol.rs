@@ -664,17 +664,6 @@ pub enum SidecarEvent {
         latency_ms: Option<i64>,
         error: Option<String>,
     },
-    /// MON-100: emitted by the sidecar once `applyKeeperRewrite` swapped
-    /// `state.messages`. Rust pushes a visible Status item ("Context
-    /// compacted: …") so the captain can see the rewrite land in the chat.
-    /// `pre_length` / `post_length` are message counts before/after — useful
-    /// for stderr telemetry.
-    KeeperRewriteApplied {
-        agent_id: String,
-        run_id: i64,
-        pre_length: i64,
-        post_length: i64,
-    },
     /// MON-101: sidecar asks Rust to retrieve memories before forwarding a
     /// user turn to Pi.
     MemorySearchRequest {
@@ -767,14 +756,6 @@ enum KnownSidecarEvent {
         #[serde(default)]
         error: Option<String>,
     },
-    KeeperRewriteApplied {
-        agent_id: String,
-        run_id: i64,
-        #[serde(default)]
-        pre_length: i64,
-        #[serde(default)]
-        post_length: i64,
-    },
     MemorySearchRequest {
         agent_id: String,
         request_id: String,
@@ -844,17 +825,6 @@ impl From<KnownSidecarEvent> for SidecarEvent {
                 latency_ms,
                 error,
             },
-            KnownSidecarEvent::KeeperRewriteApplied {
-                agent_id,
-                run_id,
-                pre_length,
-                post_length,
-            } => Self::KeeperRewriteApplied {
-                agent_id,
-                run_id,
-                pre_length,
-                post_length,
-            },
             KnownSidecarEvent::MemorySearchRequest {
                 agent_id,
                 request_id,
@@ -878,7 +848,6 @@ const KNOWN_SIDECAR_TAGS: &[&str] = &[
     "error",
     "classification",
     "keeper_result",
-    "keeper_rewrite_applied",
     "memory_search_request",
 ];
 
@@ -1027,15 +996,17 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
             if message.role == "assistant" {
                 let sm = streaming_from(message);
                 if let Some(usage) = sm.usage.clone() {
-                    // MON-100: feed the Keeper compaction trigger. Sum the four
-                    // usage components (input/output/cacheRead/cacheWrite)
-                    // explicitly rather than relying on `total_tokens` — the
-                    // Anthropic 200k-cache-read window is real context the LLM
-                    // has loaded, and we want it counted.
+                    // MON-123: accumulate genuinely-NEW tokens for the memory
+                    // trigger — uncached input + freshly-cached input + output.
+                    // Deliberately EXCLUDES `cache_read`: that is the prior
+                    // context re-read every turn, so counting it made the sum
+                    // grow ~quadratically and fire the Keeper roughly every
+                    // turn (≈0 realized savings, see MON-123). New material is
+                    // the right unit for "enough happened to distill." Live-
+                    // context size is Pi's native compaction's concern now.
                     let delta = usage
                         .input
                         .saturating_add(usage.output)
-                        .saturating_add(usage.cache_read)
                         .saturating_add(usage.cache_write);
                     state.tokens_since_last_compaction =
                         state.tokens_since_last_compaction.saturating_add(delta);
