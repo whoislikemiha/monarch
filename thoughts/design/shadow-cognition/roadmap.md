@@ -39,9 +39,11 @@ Two corollaries:
 | Memory substrate (L3 storage) | [MON-99](https://linear.app/monarch-commander/issue/MON-99), [MON-100](https://linear.app/monarch-commander/issue/MON-100), [MON-101](https://linear.app/monarch-commander/issue/MON-101), [MON-102](https://linear.app/monarch-commander/issue/MON-102), [MON-103](https://linear.app/monarch-commander/issue/MON-103) — storage, Keeper writes, retrieval injection, executor suggestions, and quest-close trigger are wired. Memory Inspector remains browse-only; eval/reranker/scale work remains P3/P12. |
 | Executor narration + L2 | [MON-107](https://linear.app/monarch-commander/issue/MON-107), [MON-108](https://linear.app/monarch-commander/issue/MON-108), [MON-109](https://linear.app/monarch-commander/issue/MON-109) — nested quest events, `agent_working_memory`, sidecar narration tools, nested timeline, and Agent View Now strip are wired. |
 | Durable execution plans | [MON-110](https://linear.app/monarch-commander/issue/MON-110), [MON-111](https://linear.app/monarch-commander/issue/MON-111), [MON-112](https://linear.app/monarch-commander/issue/MON-112), [MON-114](https://linear.app/monarch-commander/issue/MON-114) — `quest_plan_items`, plan lifecycle events/tools, active/next L2 slice, action `plan_item_id` links, plan panel, and plan-aware Now strip all shipped on master. |
+| First-person quest reports | [MON-118](https://linear.app/monarch-commander/issue/MON-118) (parent), [MON-119](https://linear.app/monarch-commander/issue/MON-119), [MON-120](https://linear.app/monarch-commander/issue/MON-120), [MON-121](https://linear.app/monarch-commander/issue/MON-121), [MON-122](https://linear.app/monarch-commander/issue/MON-122) — `quest_reports` substrate, `complete_quest(report)` tool + executor prompt, report renderer in the quest detail panel, and Keeper consumption on quest-close ticks all shipped on master (P6 slices A–D). |
+| Compaction / Keeper split | [MON-123](https://linear.app/monarch-commander/issue/MON-123) — Slice A + trigger fix shipped on master: retired the per-turn Keeper rewrite/churn so Pi owns live-context compaction and the Keeper is memory-only. Slices B/C (the `session_before_compact` boundary hook + real before→after token deltas) still open. See P2c below. |
 | Auto-memory (the proxy for L1) | Anthropic-side per-project memory in `~/.claude/projects/.../memory/`. Co-exists with MON-98's in-app L1; deprecate when L1 has been in production long enough. |
 
-Everything else implied by the design docs (chat-shadow/two-organ split, project sharing, forking, stale-flagging, quest reports, full Memory Inspector editing, and automatic decomposition) is unbuilt.
+Everything else implied by the design docs (chat-shadow/two-organ split, project sharing, forking, stale-flagging, full Memory Inspector editing, and automatic decomposition) is unbuilt. The post-P2 quality+scale cluster (P3a–d: eval harness, reranker, background/incremental HNSW) is also untouched — it improves P2's memory but blocks nothing downstream.
 
 ## Tracks
 
@@ -161,6 +163,8 @@ P2 ──► P2b ──► P4 ──► P4b ──► P5 ──► P6 ──► 
 - [**MON-123**](https://linear.app/monarch-commander/issue/MON-123) — parent. Slice A: stop `applyKeeperRewrite` / `pendingKeeperRewrite` / the `turn_end` drain in `runtime-manager.ts`; surface Pi `compaction_start` / `compaction_end` through the sidecar protocol; update Rust event handling + UI notices; memory extraction unchanged. Slice B: register a `session_before_compact` handler that runs the Keeper on `preparation.messagesToSummarize` for memory only; remove the per-turn token accumulator (`tokens_since_last_compaction`) + 25k/30k thresholds; keep quest-close. Slice C: real token before→after on compaction rows; reconcile the `compaction_tick` timeline with Pi-driven compaction; retire/repurpose dead `memory.toml` thresholds.
 
 **Tracks.** Backend (sidecar: remove rewrite, add compaction hook; Rust: event plumbing + notice changes) + UI/UX (real token deltas, reconcile timeline) + light config cleanup.
+
+**Current status.** Slice A + the trigger fix are shipped on master: `applyKeeperRewrite` / `pendingKeeperRewrite` / the `turn_end` drain are gone, the per-turn token accumulator no longer churns the Keeper every turn, and Pi's native compaction owns the live window. Memory extraction is unchanged and quest-close distillation still fires. **Remaining:** the `session_before_compact` handler that runs the Keeper on `preparation.messagesToSummarize` at Pi's compaction boundary (so evicted slices get distilled), real before→after token deltas on compaction rows, and the dead-`memory.toml`-threshold cleanup.
 
 **Depends on.** P2 (MON-100/101/103/105) shipped. No dependency on P3+.
 
@@ -317,16 +321,18 @@ P2 ──► P2b ──► P4 ──► P4b ──► P5 ──► P6 ──► 
 
 **Test scenario.** Captain marks a quest done. Executor runs `complete_quest(report)`. Structured payload (summary, outcome, decisions, learned, artifacts, open_threads, reflection, grade) lands in `quest_reports`. UI surfaces the report below the quest detail. Next Keeper tick at quest-close consumes both the raw stream and the report; produces noticeably better claims than P2's report-less Keeper.
 
-**Tickets:** *(unticketed — file at phase open)*
-- *(new)* `quest_reports` table. FK to `quest_nodes`, FK to `memory_keeper_runs` once distilled.
-- *(new)* Executor system-prompt update: teach the report format and when to emit it.
-- *(new)* `complete_quest(report)` tool.
-- *(new)* Report renderer in quest detail panel.
-- *(new)* Keeper input pipeline: include `quest_reports.payload` alongside raw stream slice on quest-close ticks.
+**Tickets:**
+- [**MON-118**](https://linear.app/monarch-commander/issue/MON-118) — Parent issue for P6.
+- [**MON-119**](https://linear.app/monarch-commander/issue/MON-119) — Slice A: backend substrate. `quest_reports` table (FK to `quest_nodes`, FK to `memory_keeper_runs` once distilled), persistence pipeline, Tauri commands, bindings. **Shipped on master.**
+- [**MON-120**](https://linear.app/monarch-commander/issue/MON-120) — Slice B: sidecar `complete_quest(report)` tool + executor system-prompt block teaching the report format and when to emit it. **Shipped on master.**
+- [**MON-121**](https://linear.app/monarch-commander/issue/MON-121) — Slice C: report renderer in the P5 quest detail panel. **Shipped on master.**
+- [**MON-122**](https://linear.app/monarch-commander/issue/MON-122) — Slice D: Keeper input pipeline — feed `quest_reports.payload` alongside the raw stream slice on quest-close ticks. **Shipped on master.**
 
 **Tracks.** Backend + Quest tree (uses `status` from P5) + UI/UX.
 
 **Depends on.** P5 (status transitions trigger the report).
+
+**Current status.** P6 is shipped on master through Slice D (MON-119–122). Quests close with a structured first-person report that the captain reads in the quest detail panel and the Keeper consumes at quest-close. The MON-118 parent remains open in Linear pending a close-out pass.
 
 **Defers.** Captain-edited grades / summaries on the quest node itself (already editable in P5; report is its own artifact).
 
@@ -467,7 +473,7 @@ P2 ──► P2b ──► P4 ──► P4b ──► P5 ──► P6 ──► 
 | **P4** | Timeline reads as a real execution narrative; captain sees `current_action` in the agent view. **Shadow stops feeling like a chat log.** |
 | **P4b** | Current quest has a visible intended plan; actions link to plan items. **Captain can distinguish intended route from actual execution.** Shipped on master through MON-114. |
 | **P5** | Quests have rich fields, manual events, and external refs; captain edits scope/direction with rationale from the inline quest detail panel. Shipped on master through MON-116/MON-117. |
-| **P6** | Quests close with a first-person report. **Compelling captain UX moment.** |
+| **P6** | Quests close with a first-person report. **Compelling captain UX moment.** Shipped on master through MON-119–122. |
 | **P7** | Chat surface stays clean during work; timeline panel runs in parallel; captain can ask "what are you doing?" while the shadow works. **Two-organ vision becomes the daily UX.** |
 | **P8** | Captain redirects, expands, mediates pending actions through chat without ritual; Architect auto-decomposes complex inputs into subquests. |
 | **P9** | Cross-shadow project knowledge; new shadows on a project inherit understanding. |
