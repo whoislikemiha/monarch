@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use crate::agent_state::{
     ApplyOutcome, ContentBlocks, DisplayItem, LiveAgentState, StreamingMessage, ToolExecution,
-    ToolStatus, Usage,
+    ToolStatus,
 };
 
 use super::types::{Message, QuestReport};

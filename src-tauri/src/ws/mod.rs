@@ -17,7 +17,7 @@ use crate::error::MonarchError;
 use crate::memory_index::MemoryIndex;
 use crate::models::ModelCache;
 
-use dispatch::dispatch_command;
+pub(crate) use dispatch::dispatch_command;
 
 /// Shared state passed to each WebSocket connection handler
 pub struct WsState {

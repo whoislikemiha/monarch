@@ -13,10 +13,10 @@
 //! context. Parse failures on *known* tags propagate as
 //! `serde_json::Error` → `MonarchError::Serde` via the existing `From` impl.
 
-mod commands;
-mod config;
-mod events;
-mod types;
+pub mod commands;
+pub mod config;
+pub mod events;
+pub mod types;
 
 pub use commands::SidecarCommand;
 pub use config::{
@@ -24,10 +24,11 @@ pub use config::{
     LoadSessionMessage, ShadowConfig,
 };
 pub use events::{apply_event, AtomicClaim, InnerEvent, SidecarEvent};
-pub use types::{Message, QuestReport, QuestReportArtifact, QuestReportDecision};
+pub use types::QuestReport;
 
 #[cfg(test)]
 mod tests {
+    use super::types::Message;
     use super::*;
     use crate::agent_state::{ApplyOutcome, DisplayItem, LiveAgentState, ToolStatus, Usage};
     use serde_json::json;
