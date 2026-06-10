@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::agent_state::Usage;
+use crate::agent::state::Usage;
 
 /// Typed `message` field carried by `message_start` / `message_update` /
 /// `message_end` inner events. `content` is kept as an opaque

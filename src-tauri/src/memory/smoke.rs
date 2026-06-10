@@ -15,8 +15,8 @@ use tauri::State;
 
 use crate::db::{Database, InsertMemoryPayload};
 use crate::error::MonarchError;
-use crate::memory_config;
-use crate::memory_index::MemoryIndex;
+use crate::memory::config;
+use crate::memory::index::MemoryIndex;
 
 #[tauri::command]
 #[specta::specta]
@@ -33,7 +33,7 @@ pub async fn memory_smoke_insert(
         ));
     }
 
-    let cfg = memory_config::resolved().await;
+    let cfg = config::resolved().await;
     let text = format!("{title}\n\n{content}");
     let embedding = index.embed_to_blob(&text).await?;
 

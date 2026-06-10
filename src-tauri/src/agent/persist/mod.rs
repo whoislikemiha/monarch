@@ -28,7 +28,7 @@ use crate::db::{
     SetPlanPayload, WriteQuestReportPayload,
 };
 use crate::error::MonarchError;
-use crate::memory_index::MemoryIndex;
+use crate::memory::index::MemoryIndex;
 use crate::sidecar_protocol::QuestReport;
 
 use super::event_handler::mark_agent_desynced;

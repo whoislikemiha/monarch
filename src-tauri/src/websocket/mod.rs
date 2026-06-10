@@ -14,7 +14,7 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::agent::{AgentManager, WsBroadcast};
 use crate::db::Database;
 use crate::error::MonarchError;
-use crate::memory_index::MemoryIndex;
+use crate::memory::index::MemoryIndex;
 use crate::models::ModelCache;
 
 pub(crate) use dispatch::dispatch_command;

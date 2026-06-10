@@ -16,6 +16,7 @@
 use serde::Serialize;
 
 pub mod commands;
+pub mod state;
 mod event_handler;
 mod keeper;
 mod manager;

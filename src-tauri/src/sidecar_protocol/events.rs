@@ -1,7 +1,7 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
-use crate::agent_state::{
+use crate::agent::state::{
     ApplyOutcome, ContentBlocks, DisplayItem, LiveAgentState, StreamingMessage, ToolExecution,
     ToolStatus,
 };
@@ -641,7 +641,7 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                 .agent_started_at_ms
                 .take()
                 .map(|start| now_ms().saturating_sub(start))
-                .and_then(crate::agent_state::format_duration_ms)
+                .and_then(crate::agent::state::format_duration_ms)
             {
                 Some(d) => format!("Agent finished in {}", d),
                 None => "Agent finished".to_string(),
@@ -677,7 +677,7 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                     let content = message
                         .content
                         .as_ref()
-                        .map(crate::agent_state::extract_user_text)
+                        .map(crate::agent::state::extract_user_text)
                         .unwrap_or_default();
                     state.items.push(DisplayItem::User {
                         content,

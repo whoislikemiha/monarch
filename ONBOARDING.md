@@ -12,7 +12,7 @@ For the one-paragraph pitch, read [README.md](./README.md). For the product visi
 monarch/
 ├── src/                # Svelte 5 frontend (TypeScript + .svelte components)
 ├── src-tauri/          # Rust backend (Tauri v2)
-│   ├── src/            # Rust source: main.rs, lib.rs, agent/, db/, sidecar_protocol/, ws/, models.rs, persistence.rs
+│   ├── src/            # Rust source: main.rs, lib.rs, agent/, db/, sidecar_protocol/, websocket/, memory/, config/, ui/, models.rs, persistence.rs
 │   ├── tauri.conf.json # Window, dev URL, frontend dist path
 │   ├── Cargo.toml      # Rust deps
 │   └── build.rs        # Tauri build hook
@@ -337,7 +337,7 @@ Sidecar ([`sidecar/src/runtime-manager.ts`](./sidecar/src/runtime-manager.ts) `c
 5. Sidecar forwards every Pi event to Rust.
 6. Rust's async event handler (`handle_sidecar_event`) does three things on each `event`-typed line:
    - Enqueues persistence effects on the bounded single-consumer mpsc pipeline (`PersistCommand`), which applies them in FIFO order by awaiting the async `Database` methods directly — no `spawn_blocking` hop, since `db/` runs on `tokio-rusqlite`.
-   - Feeds the event into the per-agent `LiveAgentState::apply_event` state machine (`src-tauri/src/agent_state.rs`) — Rust owns turn assembly: streaming messages, tool-group stitching, `lastUsage`, `activityStatus`, etc.
+   - Feeds the event into the per-agent `LiveAgentState::apply_event` state machine (`src-tauri/src/agent/state.rs`) — Rust owns turn assembly: streaming messages, tool-group stitching, `lastUsage`, `activityStatus`, etc.
    - Emits the assembled snapshot on `agent-state-{agent_id}` as a JSON-encoded string, with a 16ms debounce coalescing streaming `message_update`s (terminal events flush immediately).
 7. Legacy `agent-event-{agent_id}` forwarding is still present for out-of-band signals only: `session_ready`, `sidecar_error`, and `extension_ui_request`. **Message and tool events are not consumed from this channel by the frontend anymore.** The raw `event` forward on this topic is pending removal (MON-14 follow-up).
 8. `AgentView.svelte` uses a **pull-then-subscribe** pattern: on bind, `invoke("get_agent_state", { agentId })` seeds `liveAgentStore`, then `listen("agent-state-{id}")` applies incremental snapshots. Snapshots are reconciled by `stateVersion` — any incoming snapshot with `version <= entry.stateVersion` is dropped.
@@ -423,7 +423,7 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 
 Quest close lifecycle: `db_update_quest` compares the previous and updated status. A transition to `done` records a `status_change` event, clears `agents.current_quest_id` only when it still points at that quest, and dispatches a Keeper run with `trigger='quest_close'`, `quest_id` populated, and a slice anchored at `quest_nodes.started_at ?? created_at`. Keeper results use the run row's quest provenance for memory `source_quest_id` and `compaction_tick` events, not the agent's later current quest.
 
-`LiveAgentState` is defined in Rust at `src-tauri/src/agent_state.rs`; the TypeScript shape is generated via `specta` + `tauri-specta` into `src/lib/bindings.ts`. To regenerate after a Rust change, run `cargo run -- --export-bindings` from `src-tauri/` — the generated file is post-processed to route through `$lib/api` so the WS fallback still works in non-Tauri environments.
+`LiveAgentState` is defined in Rust at `src-tauri/src/agent/state.rs`; the TypeScript shape is generated via `specta` + `tauri-specta` into `src/lib/bindings.ts`. To regenerate after a Rust change, run `cargo run -- --export-bindings` from `src-tauri/` — the generated file is post-processed to route through `$lib/api` so the WS fallback still works in non-Tauri environments.
 
 ### Example message shapes
 
@@ -568,7 +568,7 @@ Tauri command is added alongside.
    calling a shared inner fn). Declare the submodule in
    `src-tauri/src/toolbox/mod.rs`, add the commands to the `invoke_handler!`
    in `src-tauri/src/lib.rs`, and add matching match arms to
-   `ws::dispatch::dispatch_command` in `src-tauri/src/ws/dispatch.rs`. Add a `ToolDescriptor`
+   `websocket::dispatch::dispatch_command` in `src-tauri/src/websocket/dispatch.rs`. Add a `ToolDescriptor`
    to the list returned by `toolbox::descriptors()`.
 4. **Never import `@tauri-apps/api` directly** from a tool. All `invoke`
    calls go through [`src/lib/api.ts`](./src/lib/api.ts) so the Tauri webview
@@ -704,14 +704,17 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `agent/keeper.rs` | Keeper trigger/result handling + memory-slice rendering. |
 | `agent/quest_prompt.rs` | Quest-prompt heuristics + `rehydrate_user_content`. |
 | `agent/commands.rs` | Tauri command wrappers + request DTOs. |
+| `agent/state.rs` | `LiveAgentState` event-to-state assembly. |
 | `db/` | SQLite persistence, split by domain: `mod.rs` (Database struct + facade re-exports), `schema.rs` (migrations), `agents.rs`, `sessions.rs`, `projects.rs`, `quests.rs`, `plans.rs`, `reports.rs`, `memories.rs`, `identity.rs`, `classifications.rs`, `misc.rs`. |
 | `sidecar_protocol/` | JSONL wire protocol types; config.rs, commands.rs, events.rs, types.rs. |
 | `models.rs` | Provider discovery, model listing, auth status. |
-| `mention.rs` | `list_paths` command — walks cwd for the @-mention file/folder autocomplete (ignore-crate + nucleo-matcher). |
 | `persistence.rs` | Prompt file I/O under `~/.config/monarch/prompts/`. |
 | `toolbox/mod.rs` | Toolbox `ToolDescriptor` list, `toolbox_list_tools` command. |
 | `toolbox/placeholder.rs` | Placeholder tool's `toolbox_placeholder_ping` command. |
-| `ws/` | WebSocket bridge for browser-hosted UI (mirrors the Tauri command set); dispatch.rs + handlers/ per domain. |
+| `websocket/` | WebSocket bridge for browser-hosted UI (mirrors the Tauri command set); dispatch.rs + handlers/ per domain. |
+| `memory/` | Memory substrate: `index.rs` (HNSW + embeddings), `search.rs`, `config.rs` (`memory.toml`), `smoke.rs` (debug smoke-test command). |
+| `config/` | Global TOML config loaders: `thinking.rs` (`thinking.toml`), `classifier.rs` (`classifier.toml`). |
+| `ui/` | Small standalone UI commands: `mention.rs` (@-mention path autocomplete), `zoom.rs` (window zoom). |
 
 ### Sidecar — [`sidecar/src/`](./sidecar/src/)
 

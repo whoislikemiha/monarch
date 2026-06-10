@@ -88,7 +88,7 @@ pub(super) async fn maybe_trigger_keeper(
         _ => return,
     };
 
-    let cfg = crate::memory_config::resolved().await;
+    let cfg = crate::memory::config::resolved().await;
     if !cfg.enabled {
         return;
     }

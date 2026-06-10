@@ -14,9 +14,9 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{broadcast, mpsc};
 
-use crate::agent_state::{ApplyOutcome, DisplayItem, LiveAgentState};
+use crate::agent::state::{ApplyOutcome, DisplayItem, LiveAgentState};
 use crate::db::Database;
-use crate::memory_index::MemoryIndex;
+use crate::memory::index::MemoryIndex;
 use crate::sidecar_protocol::{apply_event, InnerEvent, SidecarCommand, SidecarEvent};
 
 use super::keeper::{handle_keeper_result, maybe_trigger_keeper};
@@ -353,7 +353,7 @@ pub(super) async fn handle_sidecar_event(
             query,
             top_k,
         } => {
-            let (results, error) = match crate::memory_search::search_memories_for_agent_internal(
+            let (results, error) = match crate::memory::search::search_memories_for_agent_internal(
                 db,
                 memory_index,
                 &agent_id,

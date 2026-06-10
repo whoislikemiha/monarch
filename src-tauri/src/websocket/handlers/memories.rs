@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::error::MonarchError;
-use crate::ws::WsState;
+use crate::websocket::WsState;
 use super::str_field;
 
 // ---- DB: Memories (MON-99) ----
@@ -25,7 +25,7 @@ pub(crate) async fn memory_search_for_agent(state: &WsState, args: Value) -> Res
     let agent_id = str_field(&args, "agentId")?;
     let query = str_field(&args, "query")?;
     let top_k = args.get("topK").and_then(|v| v.as_u64()).map(|v| v as u32);
-    let results = crate::memory_search::search_memories_for_agent_internal(
+    let results = crate::memory::search::search_memories_for_agent_internal(
         &state.db,
         &state.memory_index,
         &agent_id,
@@ -39,22 +39,22 @@ pub(crate) async fn memory_search_for_agent(state: &WsState, args: Value) -> Res
 // ---- MON-99: Memory config ----
 
 pub(crate) async fn memory_get_config(_state: &WsState, _args: Value) -> Result<Value, MonarchError> {
-    let cfg = crate::memory_config::resolved().await;
+    let cfg = crate::memory::config::resolved().await;
     serde_json::to_value(cfg).map_err(MonarchError::from)
 }
 
 pub(crate) async fn memory_set_config(_state: &WsState, args: Value) -> Result<Value, MonarchError> {
-    let raw: crate::memory_config::MemoryConfig =
+    let raw: crate::memory::config::MemoryConfig =
         serde_json::from_value(args).map_err(|e| {
             MonarchError::invalid_input(format!("Invalid memory config: {}", e))
         })?;
-    let resolved = crate::memory_config::resolve(raw.clone());
-    crate::memory_config::write_raw_ws(&raw).await?;
+    let resolved = crate::memory::config::resolve(raw.clone());
+    crate::memory::config::write_raw_ws(&raw).await?;
     serde_json::to_value(resolved).map_err(MonarchError::from)
 }
 
 pub(crate) async fn memory_get_config_path(_state: &WsState, _args: Value) -> Result<Value, MonarchError> {
-    let path = crate::memory_config::config_path_ws()?;
+    let path = crate::memory::config::config_path_ws()?;
     Ok(Value::String(path))
 }
 
@@ -77,7 +77,7 @@ pub(crate) async fn memory_smoke_insert(state: &WsState, args: Value) -> Result<
     let agent_id = str_field(&args, "agentId")?;
     let title = str_field(&args, "title")?;
     let content = str_field(&args, "content")?;
-    let cfg = crate::memory_config::resolved().await;
+    let cfg = crate::memory::config::resolved().await;
     let text = format!("{title}\n\n{content}");
     let embedding = state.memory_index.embed_to_blob(&text).await?;
     let payload = crate::db::InsertMemoryPayload {

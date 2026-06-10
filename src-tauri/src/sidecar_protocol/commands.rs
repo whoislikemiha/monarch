@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::memory_search::MemorySearchResult;
+use crate::memory::search::MemorySearchResult;
 
 use super::config::{ClassifierInvocation, KeeperConfig, LoadSessionMessage, ShadowConfig};
 

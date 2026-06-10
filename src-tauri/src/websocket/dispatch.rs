@@ -1,8 +1,8 @@
 use serde_json::Value;
 
 use crate::error::MonarchError;
-use crate::ws::WsState;
-use crate::ws::handlers::{agents, memories, misc, plans, projects, quests, sessions};
+use crate::websocket::WsState;
+use crate::websocket::handlers::{agents, memories, misc, plans, projects, quests, sessions};
 
 /// Dispatch a command to the appropriate internal handler.
 /// Adding a new command = adding one match arm here.

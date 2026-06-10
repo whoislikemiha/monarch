@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::error::MonarchError;
-use crate::ws::WsState;
+use crate::websocket::WsState;
 use super::{str_field, opt_str};
 
 // ---- DB: Projects ----

@@ -30,7 +30,7 @@ pub use types::QuestReport;
 mod tests {
     use super::types::Message;
     use super::*;
-    use crate::agent_state::{ApplyOutcome, DisplayItem, LiveAgentState, ToolStatus, Usage};
+    use crate::agent::state::{ApplyOutcome, DisplayItem, LiveAgentState, ToolStatus, Usage};
     use serde_json::json;
     use serde_json::Value;
 

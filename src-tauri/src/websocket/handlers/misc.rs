@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::error::MonarchError;
-use crate::ws::WsState;
+use crate::websocket::WsState;
 use super::{str_field, opt_str};
 
 // ---- Models ----
@@ -117,7 +117,7 @@ pub(crate) async fn list_paths(_state: &WsState, args: Value) -> Result<Value, M
     let cwd = str_field(&args, "cwd")?;
     let query = str_field(&args, "query")?;
     let result =
-        tokio::task::spawn_blocking(move || crate::mention::list_paths_inner(&cwd, &query))
+        tokio::task::spawn_blocking(move || crate::ui::mention::list_paths_inner(&cwd, &query))
             .await
             .map_err(|e| {
                 MonarchError::persistence(format!("list_paths join error: {e}"))

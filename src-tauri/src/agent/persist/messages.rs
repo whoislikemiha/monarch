@@ -6,7 +6,7 @@ use tokio::sync::broadcast;
 use crate::agent::WsBroadcast;
 use crate::db::{Database, MessageRow, RecordQuestEventPayload, SetPlanPayload};
 use crate::error::MonarchError;
-use crate::memory_index::MemoryIndex;
+use crate::memory::index::MemoryIndex;
 use crate::persistence::write_attachment_bytes;
 use crate::sidecar_protocol::InnerEvent;
 use crate::util::chrono_now;
@@ -517,7 +517,7 @@ pub(super) async fn apply_insert_memory(
         match memory_index.embed_to_blob(&payload.summary).await {
             Ok(blob) => (
                 Some(blob),
-                Some(crate::memory_config::DEFAULT_EMBEDDING_MODEL_ID.to_string()),
+                Some(crate::memory::config::DEFAULT_EMBEDDING_MODEL_ID.to_string()),
             ),
             Err(e) => {
                 eprintln!("[monarch] keeper: embed failed: {}", e);

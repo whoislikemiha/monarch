@@ -17,10 +17,10 @@ use parking_lot::Mutex as PlMutex;
 use tauri::AppHandle;
 use tokio::sync::{broadcast, mpsc, RwLock};
 
-use crate::agent_state::{display_items_from_messages, DisplayItem, LiveAgentState};
+use crate::agent::state::{display_items_from_messages, DisplayItem, LiveAgentState};
 use crate::db::{AgentRow, Database, MessageRow};
 use crate::error::MonarchError;
-use crate::memory_index::MemoryIndex;
+use crate::memory::index::MemoryIndex;
 use crate::persistence::read_agent_prompt_file;
 use crate::sidecar_protocol::{KeeperConfig, LoadSessionMessage, ShadowConfig, SidecarCommand};
 use crate::util::chrono_now;
@@ -298,7 +298,7 @@ impl AgentManager {
         agent_id: &str,
         trigger: KeeperRunTrigger,
     ) -> Result<Option<i64>, MonarchError> {
-        let cfg = crate::memory_config::resolved().await;
+        let cfg = crate::memory::config::resolved().await;
         let Some(km) = cfg.keeper.clone() else {
             return Ok(None);
         };
@@ -557,7 +557,7 @@ impl AgentManager {
     // ---- Shared agent-lifecycle methods (MON-33) ----
     //
     // Each method owns the full business logic for one agent lifecycle
-    // operation. The `#[tauri::command]` entry points and the `ws::dispatch_command`
+    // operation. The `#[tauri::command]` entry points and the `websocket::dispatch_command`
     // arms are thin adapters that only translate transport-specific arguments
     // and delegate here. `ensure_sidecar` is called inside the method, not the
     // adapter, so neither transport can forget it.
@@ -669,7 +669,7 @@ impl AgentManager {
         let effective_thinking = match thinking_level.clone() {
             Some(v) => v,
             None => {
-                crate::thinking_config::default_for(&effective_provider, &effective_model).await
+                crate::config::thinking::default_for(&effective_provider, &effective_model).await
             }
         };
 
@@ -737,7 +737,7 @@ impl AgentManager {
         // user message row lands.
         if let SidecarCommand::Prompt { classifier, .. } = &mut cmd {
             if classifier.is_none() {
-                let resolved = crate::classifier_config::resolved().await;
+                let resolved = crate::config::classifier::resolved().await;
                 if resolved.enabled {
                     *classifier = Some(crate::sidecar_protocol::ClassifierInvocation {
                         id: crate::util::uuid_v4_simple(),
@@ -1068,10 +1068,10 @@ mod tests {
 
     use super::*;
     use crate::db::Database;
-    use crate::memory_index::MemoryIndex;
+    use crate::memory::index::MemoryIndex;
     use crate::models::ModelCache;
     use crate::sidecar_protocol::SidecarCommand;
-    use crate::ws::{self, WsState};
+    use crate::websocket::{self, WsState};
     use super::super::keeper::render_keeper_slice;
     use super::super::quest_prompt::is_meaningful_quest_prompt;
     use tokio::sync::broadcast;
@@ -1179,7 +1179,7 @@ mod tests {
             memory_index,
             broadcast_rx: broadcast_tx,
         };
-        ws::dispatch_command(
+        websocket::dispatch_command(
             &ws_state,
             "kill_agent",
             serde_json::json!({ "id": "ws-kill" }),

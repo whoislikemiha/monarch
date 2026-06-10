@@ -25,7 +25,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
 use tokio::process::{Child as TokioChild, ChildStdin, Command as TokioCommand};
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::agent_state::{display_items_from_messages, DisplayItem};
+use crate::agent::state::{display_items_from_messages, DisplayItem};
 use crate::db::Database;
 use crate::error::MonarchError;
 use crate::sidecar_protocol::{LoadSessionMessage, SidecarCommand};

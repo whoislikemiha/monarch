@@ -24,10 +24,7 @@ pub mod sessions;
 // with zero changes.
 
 // agents
-pub use agents::{
-    AgentRow, AgentStats, AgentTemplateRow, AgentUpdatePayload, SpecializationScores,
-    ToolUsageEntry,
-};
+pub use agents::AgentRow;
 pub use agents::{
     db_archive_agent, db_delete_agent, db_delete_agent_template, db_get_agent_stats,
     db_get_agents, db_list_agent_templates, db_save_agent_template, db_unarchive_agent,
@@ -51,9 +48,8 @@ pub use projects::{
 // quests
 pub use quests::{
     CreateQuestPayload, CreateQuestRefPayload, ManualQuestEventPayload, ManualQuestUpdatePayload,
-    QuestEventNotification, QuestEventRow, QuestRefRow, QuestRow, RecordQuestEventPayload,
-    UpdateQuestPayload, UpdateQuestRefPayload, WorkingMemoryCurrentAction, WorkingMemoryPayload,
-    WorkingMemoryRecentAction,
+    QuestEventNotification, QuestRow, RecordQuestEventPayload, UpdateQuestPayload,
+    UpdateQuestRefPayload,
 };
 pub use quests::{
     db_create_quest, db_create_quest_ref, db_delete_quest_ref, db_get_quest,
@@ -66,9 +62,7 @@ pub use quests::{
 };
 
 // plans
-pub use plans::{
-    AddPlanItemPayload, PlanItemInput, PlanItemRow, SetPlanPayload, UpdatePlanItemPayload,
-};
+pub use plans::{AddPlanItemPayload, PlanItemInput, SetPlanPayload, UpdatePlanItemPayload};
 pub use plans::{
     db_add_plan_item, db_block_plan_item, db_complete_plan_item, db_delete_plan_item,
     db_get_plan_item, db_list_plan_items, db_set_plan, db_skip_plan_item, db_start_plan_item,
@@ -77,12 +71,12 @@ pub use plans::{
 pub use plans::emit_plan_notifications;
 
 // reports
-pub use reports::{QuestReportRow, WriteQuestReportPayload};
+pub use reports::WriteQuestReportPayload;
 pub use reports::{db_get_quest_report, db_list_quest_reports_for_agent, db_save_quest_report};
 pub use reports::emit_quest_report_notification;
 
 // memories
-pub use memories::{FtsMemoryResult, InsertMemoryPayload, KeeperRunRow, MemoryRow};
+pub use memories::{InsertMemoryPayload, MemoryRow};
 pub use memories::{db_get_memory, db_list_memories_for_agent};
 
 // identity
@@ -268,9 +262,6 @@ mod tests {
     use rusqlite::params;
     use super::*;
     use crate::db::agents::AgentRow;
-    use crate::db::quests::{
-        CreateQuestPayload, RecordQuestEventPayload, WorkingMemoryPayload,
-    };
     use crate::db::plans::{AddPlanItemPayload, PlanItemInput, SetPlanPayload};
     use crate::db::reports::WriteQuestReportPayload;
 
