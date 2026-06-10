@@ -590,6 +590,22 @@ impl Database {
                         ON objective_reports(agent_id, created_at);",
                 );
 
+                // P1: campaign as a typed node. `kind='campaign'` marks the
+                // single per-project root container (one per project, never
+                // closed); everything else is `kind='objective'` real work.
+                // `projects.root_objective_id` is the project↔campaign link.
+                // No CHECK on `kind` — SQLite can't add one via ALTER without a
+                // table rebuild; the allowed set is enforced in Rust at insert.
+                let _ = conn.execute_batch(
+                    "ALTER TABLE objective_nodes ADD COLUMN kind TEXT NOT NULL DEFAULT 'objective';",
+                );
+                let _ = conn.execute_batch(
+                    "CREATE INDEX IF NOT EXISTS idx_objective_nodes_kind ON objective_nodes(kind);",
+                );
+                let _ = conn.execute_batch(
+                    "ALTER TABLE projects ADD COLUMN root_objective_id TEXT REFERENCES objective_nodes(id);",
+                );
+
                 // FTS5 virtual table — separate batch because some SQLite
                 // builds don't have FTS5; we log the failure and continue.
                 let _ = conn.execute_batch(

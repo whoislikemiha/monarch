@@ -304,6 +304,7 @@ mod tests {
                 exec_hint: Some("in_context".to_string()),
                 assignee_shadow_id: Some(agent_id.clone()),
                 created_by: Some("monarch".to_string()),
+                kind: None,
             })
             .await
             .expect("objective");
@@ -959,6 +960,54 @@ mod tests {
         db.init_schema()
             .await
             .expect("re-run init_schema is idempotent after migration");
+    }
+
+    // ---- P1: campaign root (typed node) ----
+
+    #[tokio::test]
+    async fn ensure_campaign_root_is_idempotent_and_typed() {
+        let db = Database::new_in_memory().await.expect("db");
+        let now = crate::util::chrono_now();
+        let project_id = db
+            .ensure_project_internal(&crate::db::ProjectRow {
+                id: "p1".into(),
+                name: "Aurora".into(),
+                root_path: "/tmp/aurora".into(),
+                instructions: None,
+                created_at: now.clone(),
+                updated_at: now,
+                root_objective_id: None,
+            })
+            .await
+            .expect("project");
+
+        let root1 = db
+            .ensure_campaign_root_internal(&project_id)
+            .await
+            .expect("root1");
+        let root2 = db
+            .ensure_campaign_root_internal(&project_id)
+            .await
+            .expect("root2");
+        assert_eq!(root1, root2, "one campaign root per project (idempotent)");
+
+        // The root is a typed campaign node: self-rooted, unparented.
+        let row = db
+            .get_objective_internal(&root1)
+            .await
+            .expect("get")
+            .expect("row");
+        assert_eq!(row.kind, "campaign");
+        assert_eq!(row.root_id, root1);
+        assert_eq!(row.parent_id, None);
+
+        // projects.root_objective_id points at it.
+        let proj = db
+            .get_project_by_path_internal("/tmp/aurora")
+            .await
+            .expect("proj")
+            .expect("row");
+        assert_eq!(proj.root_objective_id, Some(root1));
     }
 
     #[tokio::test]

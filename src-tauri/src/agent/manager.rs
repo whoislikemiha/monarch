@@ -1097,7 +1097,7 @@ mod tests {
             &[],
             Some("{\"summary\":\"shipped slice D\",\"outcome\":\"done\"}"),
         );
-        assert!(slice.contains("## QUEST REPORT (first-person from the executor)"));
+        assert!(slice.contains("## OBJECTIVE REPORT (first-person from the executor)"));
         assert!(slice.contains("shipped slice D"));
         // The raw stream marker stays present so the Keeper can still find it.
         assert!(slice.contains("## RECENT ACTIVITY"));
@@ -1106,7 +1106,7 @@ mod tests {
     #[test]
     fn render_keeper_slice_omits_objective_report_section_when_absent() {
         let slice = render_keeper_slice(None, &[], &[], None);
-        assert!(!slice.contains("## QUEST REPORT"));
+        assert!(!slice.contains("## OBJECTIVE REPORT"));
         assert!(slice.contains("## RECENT ACTIVITY"));
     }
 
@@ -1115,7 +1115,7 @@ mod tests {
         // Defensive: an upstream caller that handed us an empty payload
         // string should not produce a header above nothing.
         let slice = render_keeper_slice(None, &[], &[], Some("   \n   "));
-        assert!(!slice.contains("## QUEST REPORT"));
+        assert!(!slice.contains("## OBJECTIVE REPORT"));
     }
 
     #[test]
