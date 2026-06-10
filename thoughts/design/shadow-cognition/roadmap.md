@@ -1,3 +1,8 @@
+> ⚠️ **ARCHIVED — superseded by [`roadmap-v2.md`](./roadmap-v2.md)** (the Campaign Roadmap), 2026-06.
+> This doc delivered the single-shadow *data substrate* (P1–P6 + P2c) and remains the detailed shipped
+> record + design-doc cross-reference. The go-forward plan — campaign/objective, Architect, two-organ,
+> redesign, then multi-agent — lives in v2.
+
 # Shadow Cognition — Implementation Roadmap
 
 > **Status:** Direction document, not a commitment. Sequences the work implied by the four design docs in this folder (`substrate.md`, `attention.md`, `distillation.md`, `flows.md`) into phases that each ship a tangible, testable result. Phase contents are illustrative — when a phase opens, the actual ticket scope gets locked in `thoughts/plan/MON-{N}.md`.

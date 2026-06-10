@@ -50,19 +50,6 @@ main reason curated lists go stale.
 - SQLite DB: `~/.config/monarch/monarch.db`
 - Prompt files: `~/.config/monarch/prompts/{agent_id}.md`
 
-## Workflow
-
-Linear is the source of truth for work items. GitHub is for code and PRs. Every non-trivial change starts with a Linear ticket and ends with a PR linked back to it.
-
-### Linear-first development
-
-- **No ticket, no work.** If a task doesn't have a Linear issue, create one before starting. Use `/linear-to-plan` for the full flow, or create one directly for smaller items.
-- **One ticket = one branch = one PR.** This is the atomic unit of work. If a ticket's scope grows beyond a single coherent PR, split it — create sub-tasks or new tickets for the spun-off work rather than bloating the original.
-- **Keep tickets alive.** Update the Linear issue when reality diverges from the plan: scope changes, things get descoped, blockers surface, acceptance criteria shift. The ticket should reflect what's actually happening, not what was originally imagined.
-### Branches
-
-Named `{github-username}/mon-{N}-{slug}`. One branch per Linear issue. Branch off `master`.
-
 ### Commits
 
 Conventional commits scoped to the Linear issue: `type(mon-N): description`
@@ -89,46 +76,46 @@ If you add a new table, command, event channel, or convention — it belongs in 
 
 ## Start Here (key files)
 
-| Layer | File | Role |
-|-------|------|------|
-| Rust | `src-tauri/src/agent/mod.rs` | Module facade; re-exports + `DEBOUNCE_MILLIS`, `WsBroadcast` |
-| Rust | `src-tauri/src/agent/manager.rs` | `AgentManager`, live-state types, high-level lifecycle |
-| Rust | `src-tauri/src/agent/sidecar.rs` | Sidecar spawn, stdin/stdout I/O, crash recovery |
-| Rust | `src-tauri/src/agent/event_handler.rs` | Inbound sidecar event dispatch + snapshot emission |
-| Rust | `src-tauri/src/agent/persist.rs` | Single-consumer persistence pipeline (MON-37) |
-| Rust | `src-tauri/src/agent/commands.rs` | Tauri command wrappers + request DTOs |
-| Rust | `src-tauri/src/agent_state.rs` | Event-to-state assembly (`LiveAgentState`) |
-| Rust | `src-tauri/src/db.rs` | SQLite schema and persistence (`tokio-rusqlite`) |
-| Rust | `src-tauri/src/sidecar_protocol.rs` | JSONL wire protocol types |
-| Rust | `src-tauri/src/models.rs` | Provider auth, model cache |
-| Rust | `src-tauri/src/persistence.rs` | Prompt/avatar/attachment file I/O |
-| Rust | `src-tauri/src/project/` | Project detection + instruction file commands |
-| Rust | `src-tauri/src/thinking_config.rs` | Per-model thinking-level defaults (`thinking.toml`) |
-| Rust | `src-tauri/src/ws.rs` | WebSocket bridge (mirrors Tauri commands) |
-| Rust | `src-tauri/src/error.rs` | `MonarchError` unified error type |
-| Rust | `src-tauri/src/zoom.rs` | Window zoom command |
-| Sidecar | `sidecar/src/runtime-manager.ts` | Pi SDK session host |
-| Sidecar | `sidecar/src/protocol.ts` | Command + event type definitions |
-| Sidecar | `sidecar/src/shadow-oath.ts` | Shadow identity + system prompt builder |
-| Sidecar | `sidecar/src/ui-bridge.ts` | Pi extension UI request/response routing |
-| Frontend | `src/App.svelte` | App shell, restore flow, agent creation |
-| Frontend | `src/lib/AgentView.svelte` | Live agent UI, event handling, session continuation |
-| Frontend | `src/lib/AgentRoster.svelte` | Left-rail agent list (portraits + status) |
-| Frontend | `src/lib/ChatInput.svelte` | Composer: textarea, attachments, @-mention autocomplete |
-| Frontend | `src/lib/api.ts` | Unified IPC (Tauri webview or WebSocket fallback) |
-| Frontend | `src/lib/bindings.ts` | Auto-generated Tauri command types (**do not edit**) |
-| Frontend | `src/lib/toolbox/liveAgentStore.svelte.ts` | Per-agent reactive state (SvelteMap + `$state`) |
-| Frontend | `src/lib/toolbox/questStore.svelte.ts` | Per-agent quest tree + event-log slice (MON-83) |
-| Frontend | `src/lib/toolbox/tools/QuestTimelineTool.svelte` | Read-only quest timeline + manual create form (MON-83) |
-| Frontend | `src/lib/classifierStore.svelte.ts` | Per-agent user-turn complexity classifications (MON-82) |
-| Frontend | `src/lib/ClassificationPill.svelte` | Read-only complexity pill shown beside each user message (MON-82) |
+| Layer    | File                                                  | Role                                                                        |
+| -------- | ----------------------------------------------------- | --------------------------------------------------------------------------- |
+| Rust     | `src-tauri/src/agent/mod.rs`                          | Module facade; re-exports + `DEBOUNCE_MILLIS`, `WsBroadcast`                |
+| Rust     | `src-tauri/src/agent/manager.rs`                      | `AgentManager`, live-state types, high-level lifecycle                      |
+| Rust     | `src-tauri/src/agent/sidecar.rs`                      | Sidecar spawn, stdin/stdout I/O, crash recovery                             |
+| Rust     | `src-tauri/src/agent/event_handler.rs`                | Inbound sidecar event dispatch + snapshot emission                          |
+| Rust     | `src-tauri/src/agent/persist.rs`                      | Single-consumer persistence pipeline (MON-37)                               |
+| Rust     | `src-tauri/src/agent/commands.rs`                     | Tauri command wrappers + request DTOs                                       |
+| Rust     | `src-tauri/src/agent_state.rs`                        | Event-to-state assembly (`LiveAgentState`)                                  |
+| Rust     | `src-tauri/src/db.rs`                                 | SQLite schema and persistence (`tokio-rusqlite`)                            |
+| Rust     | `src-tauri/src/sidecar_protocol.rs`                   | JSONL wire protocol types                                                   |
+| Rust     | `src-tauri/src/models.rs`                             | Provider auth, model cache                                                  |
+| Rust     | `src-tauri/src/persistence.rs`                        | Prompt/avatar/attachment file I/O                                           |
+| Rust     | `src-tauri/src/project/`                              | Project detection + instruction file commands                               |
+| Rust     | `src-tauri/src/thinking_config.rs`                    | Per-model thinking-level defaults (`thinking.toml`)                         |
+| Rust     | `src-tauri/src/ws.rs`                                 | WebSocket bridge (mirrors Tauri commands)                                   |
+| Rust     | `src-tauri/src/error.rs`                              | `MonarchError` unified error type                                           |
+| Rust     | `src-tauri/src/zoom.rs`                               | Window zoom command                                                         |
+| Sidecar  | `sidecar/src/runtime-manager.ts`                      | Pi SDK session host                                                         |
+| Sidecar  | `sidecar/src/protocol.ts`                             | Command + event type definitions                                            |
+| Sidecar  | `sidecar/src/shadow-oath.ts`                          | Shadow identity + system prompt builder                                     |
+| Sidecar  | `sidecar/src/ui-bridge.ts`                            | Pi extension UI request/response routing                                    |
+| Frontend | `src/App.svelte`                                      | App shell, restore flow, agent creation                                     |
+| Frontend | `src/lib/AgentView.svelte`                            | Live agent UI, event handling, session continuation                         |
+| Frontend | `src/lib/AgentRoster.svelte`                          | Left-rail agent list (portraits + status)                                   |
+| Frontend | `src/lib/ChatInput.svelte`                            | Composer: textarea, attachments, @-mention autocomplete                     |
+| Frontend | `src/lib/api.ts`                                      | Unified IPC (Tauri webview or WebSocket fallback)                           |
+| Frontend | `src/lib/bindings.ts`                                 | Auto-generated Tauri command types (**do not edit**)                        |
+| Frontend | `src/lib/toolbox/liveAgentStore.svelte.ts`            | Per-agent reactive state (SvelteMap + `$state`)                             |
+| Frontend | `src/lib/toolbox/questStore.svelte.ts`                | Per-agent quest tree + event-log slice (MON-83)                             |
+| Frontend | `src/lib/toolbox/tools/QuestTimelineTool.svelte`      | Read-only quest timeline + manual create form (MON-83)                      |
+| Frontend | `src/lib/classifierStore.svelte.ts`                   | Per-agent user-turn complexity classifications (MON-82)                     |
+| Frontend | `src/lib/ClassificationPill.svelte`                   | Read-only complexity pill shown beside each user message (MON-82)           |
 | Frontend | `src/lib/toolbox/tools/ClassifierSettingsTool.svelte` | Global classifier config: primary/fallback models, timeout, prompt (MON-82) |
-| Rust | `src-tauri/src/classifier_config.rs` | `classifier.toml` loader + Tauri commands (MON-82) |
-| Sidecar | `sidecar/src/classifier.ts` | One-shot Haiku/LM Studio classifier invoked on every user turn (MON-82) |
-| Frontend | `src/lib/stores/agentStore.svelte.ts` | Active/saved agent list + selection state |
-| Frontend | `src/lib/stores/notificationsStore.svelte.ts` | App-wide error/warning toasts (MON-51) |
-| Frontend | `src/lib/NotificationStack.svelte` | Top-right overlay rendering notifications (MON-51) |
-| Frontend | `src/lib/thinking.ts` | Thinking-level UI catalogue + per-provider labels |
+| Rust     | `src-tauri/src/classifier_config.rs`                  | `classifier.toml` loader + Tauri commands (MON-82)                          |
+| Sidecar  | `sidecar/src/classifier.ts`                           | One-shot Haiku/LM Studio classifier invoked on every user turn (MON-82)     |
+| Frontend | `src/lib/stores/agentStore.svelte.ts`                 | Active/saved agent list + selection state                                   |
+| Frontend | `src/lib/stores/notificationsStore.svelte.ts`         | App-wide error/warning toasts (MON-51)                                      |
+| Frontend | `src/lib/NotificationStack.svelte`                    | Top-right overlay rendering notifications (MON-51)                          |
+| Frontend | `src/lib/thinking.ts`                                 | Thinking-level UI catalogue + per-provider labels                           |
 
 Full file reference: [ONBOARDING.md](./ONBOARDING.md) section 12.
 
