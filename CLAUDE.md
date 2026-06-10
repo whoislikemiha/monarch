@@ -82,22 +82,27 @@ If you add a new table, command, event channel, or convention — it belongs in 
 | Rust     | `src-tauri/src/agent/manager.rs`                      | `AgentManager`, live-state types, high-level lifecycle                      |
 | Rust     | `src-tauri/src/agent/sidecar.rs`                      | Sidecar spawn, stdin/stdout I/O, crash recovery                             |
 | Rust     | `src-tauri/src/agent/event_handler.rs`                | Inbound sidecar event dispatch + snapshot emission                          |
-| Rust     | `src-tauri/src/agent/persist.rs`                      | Single-consumer persistence pipeline (MON-37)                               |
+| Rust     | `src-tauri/src/agent/persist/`                        | Single-consumer persistence pipeline (MON-37); split into messages.rs, quests.rs, util.rs |
+| Rust     | `src-tauri/src/agent/keeper.rs`                       | Keeper trigger/result handling + memory-slice rendering                     |
+| Rust     | `src-tauri/src/agent/quest_prompt.rs`                 | Quest-prompt heuristics + `rehydrate_user_content`                          |
 | Rust     | `src-tauri/src/agent/commands.rs`                     | Tauri command wrappers + request DTOs                                       |
 | Rust     | `src-tauri/src/agent_state.rs`                        | Event-to-state assembly (`LiveAgentState`)                                  |
 | Rust     | `src-tauri/src/db.rs`                                 | SQLite schema and persistence (`tokio-rusqlite`)                            |
-| Rust     | `src-tauri/src/sidecar_protocol.rs`                   | JSONL wire protocol types                                                   |
+| Rust     | `src-tauri/src/sidecar_protocol/`                     | JSONL wire protocol types; split into config.rs, commands.rs, events.rs, types.rs |
 | Rust     | `src-tauri/src/models.rs`                             | Provider auth, model cache                                                  |
 | Rust     | `src-tauri/src/persistence.rs`                        | Prompt/avatar/attachment file I/O                                           |
 | Rust     | `src-tauri/src/project/`                              | Project detection + instruction file commands                               |
 | Rust     | `src-tauri/src/thinking_config.rs`                    | Per-model thinking-level defaults (`thinking.toml`)                         |
-| Rust     | `src-tauri/src/ws.rs`                                 | WebSocket bridge (mirrors Tauri commands)                                   |
+| Rust     | `src-tauri/src/ws/`                                   | WebSocket bridge (mirrors Tauri commands); dispatch.rs + handlers/ per domain |
 | Rust     | `src-tauri/src/error.rs`                              | `MonarchError` unified error type                                           |
 | Rust     | `src-tauri/src/zoom.rs`                               | Window zoom command                                                         |
 | Sidecar  | `sidecar/src/runtime-manager.ts`                      | Pi SDK session host                                                         |
 | Sidecar  | `sidecar/src/protocol.ts`                             | Command + event type definitions                                            |
 | Sidecar  | `sidecar/src/shadow-oath.ts`                          | Shadow identity + system prompt builder                                     |
 | Sidecar  | `sidecar/src/ui-bridge.ts`                            | Pi extension UI request/response routing                                    |
+| Sidecar  | `sidecar/src/model-resolver.ts`                       | Dynamic model registration + thinking-level resolution                      |
+| Sidecar  | `sidecar/src/stored-content.ts`                       | Stored message content parsing + normalization helpers                      |
+| Sidecar  | `sidecar/src/memory-tools.ts`                         | Pi tool definitions for memory search/inject                                |
 | Frontend | `src/App.svelte`                                      | App shell, restore flow, agent creation                                     |
 | Frontend | `src/lib/AgentView.svelte`                            | Live agent UI, event handling, session continuation                         |
 | Frontend | `src/lib/AgentRoster.svelte`                          | Left-rail agent list (portraits + status)                                   |
@@ -124,7 +129,7 @@ Full file reference: [ONBOARDING.md](./ONBOARDING.md) section 12.
 - **Svelte 5 runes only** — `$state()`, `$derived()`, `$effect()`. No legacy `$:` reactive statements or writable stores.
 - **Tauri commands** are registered via `tauri::generate_handler![]` in `lib.rs`. Types auto-export to `bindings.ts` via tauri-specta. Max 10 args per command (Specta limit) — use request structs beyond that.
 - **IPC abstraction** — all frontend `invoke`/`listen` calls go through `src/lib/api.ts`, never import `@tauri-apps/api` directly. This keeps the WebSocket fallback working for browser-mode dev.
-- **Sidecar protocol** — JSONL over stdin/stdout. Commands: Rust-to-sidecar enums in `sidecar_protocol.rs`. Events: sidecar-to-Rust in `protocol.ts`.
+- **Sidecar protocol** — JSONL over stdin/stdout. Commands: Rust-to-sidecar enums in `sidecar_protocol/commands.rs`. Events: sidecar-to-Rust in `protocol.ts`.
 - **Event channels** — `agent-state-{id}` (Rust-assembled snapshots, canonical), `agent-event-{id}` (out-of-band signals only), `agent-exit-{id}`, `agent-stderr-{id}`, `agent-classification-{id}` (MON-82 per-turn classifier output).
 - **State flow** — Rust assembles `LiveAgentState` from sidecar events, emits snapshots on `agent-state-{id}` with 16ms debounce. Frontend pulls initial state via `get_agent_state()`, then subscribes. Reconcile by `stateVersion` — drop stale updates.
 - **Frontend never writes conversation history.** All `messages`/`sessions` writes happen inside Rust's sidecar event handler.
@@ -152,7 +157,7 @@ Full file reference: [ONBOARDING.md](./ONBOARDING.md) section 12.
 
 1. Create component at `src/lib/toolbox/tools/YourTool.svelte` — must accept `{ agentContext }: ToolProps`.
 2. Register it in `src/lib/toolbox/registry.ts` with a stable `id`, `title`, SVG `icon`, and optional `order`.
-3. (Optional) Add backend: Tauri command in `src-tauri/src/toolbox/`, register in `lib.rs` handler + `ws.rs` dispatch.
+3. (Optional) Add backend: Tauri command in `src-tauri/src/toolbox/`, register in `lib.rs` handler + `ws/dispatch.rs` dispatch.
 
 Existing tools to crib from: `PlaceholderTool.svelte` (full store + backend path), `ContextInspectorTool.svelte` (reads `agentContext.live`), `ShadowStatsTool.svelte` (pulls from `db_get_agent_stats`).
 

@@ -12,12 +12,12 @@ For the one-paragraph pitch, read [README.md](./README.md). For the product visi
 monarch/
 ├── src/                # Svelte 5 frontend (TypeScript + .svelte components)
 ├── src-tauri/          # Rust backend (Tauri v2)
-│   ├── src/            # Rust source: main.rs, lib.rs, agent.rs, db.rs, models.rs, persistence.rs
+│   ├── src/            # Rust source: main.rs, lib.rs, agent/, db.rs, sidecar_protocol/, ws/, models.rs, persistence.rs
 │   ├── tauri.conf.json # Window, dev URL, frontend dist path
 │   ├── Cargo.toml      # Rust deps
 │   └── build.rs        # Tauri build hook
 ├── sidecar/            # Long-lived Node.js process hosting the Pi SDK runtime
-│   ├── src/            # index.ts, runtime-manager.ts, protocol.ts, shadow-oath.ts, ui-bridge.ts
+│   ├── src/            # index.ts, runtime-manager.ts, protocol.ts, shadow-oath.ts, ui-bridge.ts, model-resolver.ts, stored-content.ts, memory-tools.ts
 │   ├── tsconfig.json
 │   └── package.json
 ├── prompts/            # Legacy bundled prompt templates (not used by the current flow)
@@ -103,7 +103,7 @@ Three processes at runtime: the Tauri window (Rust + embedded WebView for Svelte
 
 ### How Rust finds the sidecar
 
-At startup, Rust looks for `sidecar/dist/index.js` in this order (`src-tauri/src/agent.rs`):
+At startup, Rust looks for `sidecar/dist/index.js` in this order (`src-tauri/src/agent/sidecar.rs`):
 
 1. `$MONARCH_SIDECAR_PATH` env var.
 2. `./sidecar/dist/index.js` relative to cwd.
@@ -116,7 +116,7 @@ At startup, Rust looks for `sidecar/dist/index.js` in this order (`src-tauri/src
 
 ## 4. Data model
 
-SQLite lives at `~/.config/monarch/monarch.db` (XDG-ish — `dirs::config_dir()` on each OS). Schema is created in [`src-tauri/src/db.rs`](./src-tauri/src/db.rs).
+SQLite lives at `~/.config/monarch/monarch.db` (XDG-ish — `dirs::config_dir()` on each OS). Schema is created in [`src-tauri/src/db.rs`](./src-tauri/src/db.rs) (`init_schema`).
 
 ### Tables
 
@@ -308,7 +308,7 @@ Frontend ([`src/App.svelte`](./src/App.svelte) `createAgent()`):
 3. Calls `spawn_agent` on the Rust backend.
 4. Attaches listeners for `agent-event-{id}` and `agent-exit-{id}`.
 
-Rust ([`src-tauri/src/agent.rs`](./src-tauri/src/agent.rs) `spawn_agent`):
+Rust ([`src-tauri/src/agent/manager.rs`](./src-tauri/src/agent/manager.rs) `spawn_agent`):
 
 1. Ensures the sidecar process is alive (`ensure_sidecar`).
 2. Re-persists agent/session rows (defensive, in case frontend skipped it).
@@ -369,7 +369,7 @@ From the frontend's perspective, nothing happened: the `agent-state-{id}` listen
 
 ### 5.5 Fully tokio-native backend (MON-14 + MON-27)
 
-The backend is fully tokio-native. The sidecar runs on `tokio::process`, every `#[tauri::command]` in `agent.rs` is `async fn`, the write path is a direct `.await` into a `tokio::sync::Mutex<ChildStdin>` (no mpsc bridge, no dedicated writer task), and SQLite runs on `tokio-rusqlite` so every `Database` method is `async fn` and dispatches work onto the connection's dedicated background thread. `persistence.rs` prompt-file IO uses `tokio::fs`. The one remaining sync bridge is `AgentManager::shutdown_sidecar`, which is called from Tauri's sync `RunEvent::ExitRequested` hook and uses `tauri::async_runtime::block_on` to close the async-owned `ChildStdin` — an unavoidable compromise, since the Tauri hook itself is sync. The critical invariant for any new code is that `parking_lot::MutexGuard` must never be held across an `.await` (`inner`, `sidecar`, `app_handle`).
+The backend is fully tokio-native. The sidecar runs on `tokio::process`, every `#[tauri::command]` in `agent/commands.rs` is `async fn`, the write path is a direct `.await` into a `tokio::sync::Mutex<ChildStdin>` (no mpsc bridge, no dedicated writer task), and SQLite runs on `tokio-rusqlite` so every `Database` method is `async fn` and dispatches work onto the connection's dedicated background thread. `persistence.rs` prompt-file IO uses `tokio::fs`. The one remaining sync bridge is `AgentManager::shutdown_sidecar`, which is called from Tauri's sync `RunEvent::ExitRequested` hook and uses `tauri::async_runtime::block_on` to close the async-owned `ChildStdin` — an unavoidable compromise, since the Tauri hook itself is sync. The critical invariant for any new code is that `parking_lot::MutexGuard` must never be held across an `.await` (`inner`, `sidecar`, `app_handle`).
 
 ---
 
@@ -445,7 +445,7 @@ Subscription-backed, auth from `~/.pi/agent/auth.json` (checked by `get_provider
 - `anthropic` — Claude (Opus, Sonnet, Haiku). Also works with `ANTHROPIC_API_KEY`.
 - `openai-codex` — GPT via Pi's OpenAI Codex login; the model picker locks to the single supported ID.
 
-Dynamic providers built in the sidecar by `buildDynamicModel` in [`sidecar/src/runtime-manager.ts`](./sidecar/src/runtime-manager.ts):
+Dynamic providers built in the sidecar by `buildDynamicModel` in [`sidecar/src/model-resolver.ts`](./sidecar/src/model-resolver.ts):
 - `openrouter` — any model routed via `https://openrouter.ai/api/v1`. Requires `OPENROUTER_API_KEY` in the sidecar's environment.
 - `lmstudio` — local server at `http://127.0.0.1:1234` (override with `LMSTUDIO_BASE_URL`; a trailing `/v1` on the env var is accepted for backward compatibility). The sidecar registers the provider on first use with a dummy API key, since LM Studio accepts any. The per-agent context window is auto-detected from LM Studio's native `/api/v0/models` endpoint — each listed model's `loaded_context_length` is surfaced read-only in the spawn dialog, then persisted on the `agents.context_window` column and forwarded to the sidecar as `CreateSessionCommand.contextWindow`. Only models LM Studio reports as currently loaded are listed, so every picker entry is something you can actually talk to right now. If the native endpoint isn't available (older LM Studio), discovery falls back to `/v1/models` and the sidecar's 32k default is used instead.
 
@@ -568,7 +568,7 @@ Tauri command is added alongside.
    calling a shared inner fn). Declare the submodule in
    `src-tauri/src/toolbox/mod.rs`, add the commands to the `invoke_handler!`
    in `src-tauri/src/lib.rs`, and add matching match arms to
-   `ws::dispatch_command` in `src-tauri/src/ws.rs`. Add a `ToolDescriptor`
+   `ws::dispatch::dispatch_command` in `src-tauri/src/ws/dispatch.rs`. Add a `ToolDescriptor`
    to the list returned by `toolbox::descriptors()`.
 4. **Never import `@tauri-apps/api` directly** from a tool. All `invoke`
    calls go through [`src/lib/api.ts`](./src/lib/api.ts) so the Tauri webview
@@ -696,14 +696,22 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 |---|---|
 | `main.rs` | Tauri entry point. |
 | `lib.rs` | Command registry, plugin setup, state init. |
-| `agent.rs` | Sidecar lifecycle, `spawn_agent`, `send_command`, event handler, crash recovery. |
+| `agent/mod.rs` | Module facade; re-exports + `DEBOUNCE_MILLIS`, `WsBroadcast`. |
+| `agent/manager.rs` | `AgentManager`, live-state types, `spawn_agent`, crash recovery. |
+| `agent/sidecar.rs` | Sidecar spawn, stdin/stdout I/O, crash recovery. |
+| `agent/event_handler.rs` | Inbound sidecar event dispatch + snapshot emission. |
+| `agent/persist/` | Single-consumer persistence pipeline; messages.rs, quests.rs, util.rs. |
+| `agent/keeper.rs` | Keeper trigger/result handling + memory-slice rendering. |
+| `agent/quest_prompt.rs` | Quest-prompt heuristics + `rehydrate_user_content`. |
+| `agent/commands.rs` | Tauri command wrappers + request DTOs. |
 | `db.rs` | SQLite schema, CRUD, ancestry walk. |
+| `sidecar_protocol/` | JSONL wire protocol types; config.rs, commands.rs, events.rs, types.rs. |
 | `models.rs` | Provider discovery, model listing, auth status. |
 | `mention.rs` | `list_paths` command — walks cwd for the @-mention file/folder autocomplete (ignore-crate + nucleo-matcher). |
 | `persistence.rs` | Prompt file I/O under `~/.config/monarch/prompts/`. |
 | `toolbox/mod.rs` | Toolbox `ToolDescriptor` list, `toolbox_list_tools` command. |
 | `toolbox/placeholder.rs` | Placeholder tool's `toolbox_placeholder_ping` command. |
-| `ws.rs` | WebSocket bridge for browser-hosted UI (mirrors the Tauri command set). |
+| `ws/` | WebSocket bridge for browser-hosted UI (mirrors the Tauri command set); dispatch.rs + handlers/ per domain. |
 
 ### Sidecar — [`sidecar/src/`](./sidecar/src/)
 
@@ -714,6 +722,9 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `protocol.ts` | Command + event type definitions. |
 | `shadow-oath.ts` | `buildSystemPrompt(shadow, cwd)` for default prompts. |
 | `ui-bridge.ts` | Extension UI request/response routing. |
+| `model-resolver.ts` | Dynamic model registration + thinking-level resolution. |
+| `stored-content.ts` | Stored message content parsing + normalization helpers. |
+| `memory-tools.ts` | Pi tool definitions for memory search/inject. |
 
 ### Frontend — [`src/`](./src/) and [`src/lib/`](./src/lib/)
 
@@ -765,4 +776,4 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 
 ## Mental model, in one paragraph
 
-Monarch is three processes stapled together with JSON. The **frontend** is a view that renders events. The **Rust backend** owns identity, persistence, and lifecycle — it writes to SQLite, spawns and supervises the sidecar, and routes commands and events between the UI and the sidecar. The **Node sidecar** hosts Pi SDK sessions in memory and is replaceable — on crash it gets respawned and replayed from SQLite. Pi is the execution engine, not the session authority. If you're ever unsure where a piece of state should live: Rust owns it, the frontend displays it, the sidecar operates on it. When in doubt, read [`src-tauri/src/agent.rs`](./src-tauri/src/agent.rs) and [`sidecar/src/runtime-manager.ts`](./sidecar/src/runtime-manager.ts) side by side — they're the contract.
+Monarch is three processes stapled together with JSON. The **frontend** is a view that renders events. The **Rust backend** owns identity, persistence, and lifecycle — it writes to SQLite, spawns and supervises the sidecar, and routes commands and events between the UI and the sidecar. The **Node sidecar** hosts Pi SDK sessions in memory and is replaceable — on crash it gets respawned and replayed from SQLite. Pi is the execution engine, not the session authority. If you're ever unsure where a piece of state should live: Rust owns it, the frontend displays it, the sidecar operates on it. When in doubt, read [`src-tauri/src/agent/`](./src-tauri/src/agent/) and [`sidecar/src/runtime-manager.ts`](./sidecar/src/runtime-manager.ts) side by side — they're the contract.
