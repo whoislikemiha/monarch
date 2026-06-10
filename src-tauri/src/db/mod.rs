@@ -53,7 +53,8 @@ pub use objectives::{
 };
 pub use objectives::{
     db_create_objective, db_create_objective_ref, db_delete_objective_ref, db_get_objective,
-    db_get_objective_tree_for_root, db_get_working_memory, db_list_objective_events,
+    db_get_campaign_root_for_agent, db_get_objective_tree_for_root, db_get_working_memory,
+    db_list_objective_events,
     db_list_objective_refs, db_list_objectives_for_agent, db_record_manual_objective_event,
     db_record_objective_event, db_update_objective, db_update_objective_manual, db_update_objective_ref,
 };
@@ -124,7 +125,8 @@ pub use projects::{
 #[allow(non_snake_case, unused_imports)]
 pub use objectives::{
     __cmd__db_create_objective, __cmd__db_create_objective_ref, __cmd__db_delete_objective_ref,
-    __cmd__db_get_objective, __cmd__db_get_objective_tree_for_root, __cmd__db_get_working_memory,
+    __cmd__db_get_campaign_root_for_agent, __cmd__db_get_objective,
+    __cmd__db_get_objective_tree_for_root, __cmd__db_get_working_memory,
     __cmd__db_list_objective_events, __cmd__db_list_objective_refs, __cmd__db_list_objectives_for_agent,
     __cmd__db_record_manual_objective_event, __cmd__db_record_objective_event, __cmd__db_update_objective,
     __cmd__db_update_objective_manual, __cmd__db_update_objective_ref,
@@ -178,7 +180,8 @@ pub use projects::{
 pub use objectives::{
     __specta__fn__db_create_objective, __specta__fn__db_create_objective_ref,
     __specta__fn__db_delete_objective_ref, __specta__fn__db_get_objective,
-    __specta__fn__db_get_objective_tree_for_root, __specta__fn__db_get_working_memory,
+    __specta__fn__db_get_campaign_root_for_agent, __specta__fn__db_get_objective_tree_for_root,
+    __specta__fn__db_get_working_memory,
     __specta__fn__db_list_objective_events, __specta__fn__db_list_objective_refs,
     __specta__fn__db_list_objectives_for_agent, __specta__fn__db_record_manual_objective_event,
     __specta__fn__db_record_objective_event, __specta__fn__db_update_objective,
@@ -1070,6 +1073,48 @@ mod tests {
             .await
             .expect("call");
         assert_eq!(again, None, "no second objective while current is live");
+    }
+
+    #[tokio::test]
+    async fn get_campaign_root_for_agent_resolves_via_project() {
+        let db = Database::new_in_memory().await.expect("db");
+        let now = crate::util::chrono_now();
+
+        // No project → None.
+        let a0 = test_agent("a0");
+        db.upsert_agent_internal(&a0).await.expect("a0");
+        assert!(db
+            .get_campaign_root_for_agent_internal("a0")
+            .await
+            .expect("call")
+            .is_none());
+
+        // Agent in a project with a campaign root → returns the campaign node.
+        let project_id = db
+            .ensure_project_internal(&crate::db::ProjectRow {
+                id: "p1".into(),
+                name: "Aurora".into(),
+                root_path: "/tmp/aurora".into(),
+                instructions: None,
+                created_at: now.clone(),
+                updated_at: now,
+                root_objective_id: None,
+            })
+            .await
+            .expect("project");
+        db.ensure_campaign_root_internal(&project_id)
+            .await
+            .expect("root");
+        let mut a1 = test_agent("a1");
+        a1.project_id = Some(project_id);
+        db.upsert_agent_internal(&a1).await.expect("a1");
+
+        let root = db
+            .get_campaign_root_for_agent_internal("a1")
+            .await
+            .expect("call")
+            .expect("campaign root");
+        assert_eq!(root.kind, "campaign");
     }
 
     #[tokio::test]
