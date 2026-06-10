@@ -2,7 +2,7 @@ pub mod agents;
 pub mod misc;
 pub mod plans;
 pub mod projects;
-pub mod quests;
+pub mod objectives;
 pub mod sessions;
 pub mod memories;
 

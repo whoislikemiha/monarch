@@ -90,7 +90,7 @@ pub(crate) async fn memory_smoke_insert(state: &WsState, args: Value) -> Result<
         title: title.clone(),
         summary: title,
         content: Some(content),
-        source_quest_id: None,
+        source_objective_id: None,
         source_session_id: None,
         source_events: None,
         file_refs: None,

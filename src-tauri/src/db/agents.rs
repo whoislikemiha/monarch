@@ -379,10 +379,10 @@ impl Database {
         Ok(())
     }
 
-    /// MON-100: lookup `agents.current_quest_id`. Returns None when the
-    /// agent has no current quest, when the row is missing, or on read
-    /// error (caller treats those identically — record no quest event).
-    pub async fn get_agent_current_quest_id_internal(
+    /// MON-100: lookup `agents.current_objective_id`. Returns None when the
+    /// agent has no current objective, when the row is missing, or on read
+    /// error (caller treats those identically — record no objective event).
+    pub async fn get_agent_current_objective_id_internal(
         &self,
         agent_id: &str,
     ) -> Result<Option<String>, MonarchError> {
@@ -392,7 +392,7 @@ impl Database {
             .call(move |conn| {
                 let v: Option<String> = conn
                     .query_row(
-                        "SELECT current_quest_id FROM agents WHERE id = ?1",
+                        "SELECT current_objective_id FROM agents WHERE id = ?1",
                         params![agent_id],
                         |row| row.get(0),
                     )
@@ -403,25 +403,25 @@ impl Database {
             .await?)
     }
 
-    /// MON-103: when a quest closes, clear the agent pointer only if it
-    /// still points at that quest. This lets the next meaningful prompt
-    /// auto-create a fresh current quest without disturbing newer work.
-    pub async fn clear_agent_current_quest_if_matches_internal(
+    /// MON-103: when a objective closes, clear the agent pointer only if it
+    /// still points at that objective. This lets the next meaningful prompt
+    /// auto-create a fresh current objective without disturbing newer work.
+    pub async fn clear_agent_current_objective_if_matches_internal(
         &self,
         agent_id: &str,
-        quest_id: &str,
+        objective_id: &str,
     ) -> Result<(), MonarchError> {
         let agent_id = agent_id.to_string();
-        let quest_id = quest_id.to_string();
+        let objective_id = objective_id.to_string();
         Ok(self
             .conn
             .call(move |conn| {
                 conn.execute(
                     "UPDATE agents
-                     SET current_quest_id = NULL,
+                     SET current_objective_id = NULL,
                          updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                     WHERE id = ?1 AND current_quest_id = ?2",
-                    params![agent_id, quest_id],
+                     WHERE id = ?1 AND current_objective_id = ?2",
+                    params![agent_id, objective_id],
                 )?;
                 Ok(())
             })

@@ -9,12 +9,12 @@ use super::Database;
 
 // ---- Row types ----
 
-// MON-83: Quest system row types. Enums (status/grade/exec_hint/created_by)
+// MON-83: Objective system row types. Enums (status/grade/exec_hint/created_by)
 // are stored as strings matching the CHECK constraints in the schema. See
-// plans/quests.md for the full design.
+// plans/objectives.md for the full design.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct QuestRow {
+pub struct ObjectiveRow {
     pub id: String,
     pub root_id: String,
     pub parent_id: Option<String>,
@@ -48,9 +48,9 @@ pub struct QuestRow {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct QuestEventRow {
+pub struct ObjectiveEventRow {
     pub id: String,
-    pub quest_id: String,
+    pub objective_id: String,
     pub event_type: String,
     pub actor: Option<String>,
     pub payload_json: Option<String>,
@@ -62,12 +62,12 @@ pub struct QuestEventRow {
     pub plan_item_id: Option<String>,
 }
 
-/// Payload for `db_create_quest`. `id` is optional — server generates a
+/// Payload for `db_create_objective`. `id` is optional — server generates a
 /// UUID if omitted. Defaults: `status='pending'`, `grade='C'`,
 /// `exec_hint='in_context'`, `created_by='monarch'`.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateQuestPayload {
+pub struct CreateObjectivePayload {
     pub id: Option<String>,
     pub parent_id: Option<String>,
     pub title: String,
@@ -79,12 +79,12 @@ pub struct CreateQuestPayload {
     pub created_by: Option<String>,
 }
 
-/// Payload for `db_update_quest`. Only non-`None` fields are written.
+/// Payload for `db_update_objective`. Only non-`None` fields are written.
 /// Lifecycle timestamps (`started_at` / `completed_at` / `abandoned_at`)
 /// can be set explicitly by the caller; the Steward owns this in Slice 4+.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct UpdateQuestPayload {
+pub struct UpdateObjectivePayload {
     pub id: String,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -103,11 +103,11 @@ pub struct UpdateQuestPayload {
 }
 
 /// P5 manual editor payload. This narrower path records semantic timeline
-/// events for quest-level changes; generic `db_update_quest` remains available
+/// events for objective-level changes; generic `db_update_objective` remains available
 /// for older callers that only need a direct row patch.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct ManualQuestUpdatePayload {
+pub struct ManualObjectiveUpdatePayload {
     pub id: String,
     #[serde(default)]
     pub status: Option<String>,
@@ -131,9 +131,9 @@ pub struct ManualQuestUpdatePayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct QuestRefRow {
+pub struct ObjectiveRefRow {
     pub id: String,
-    pub quest_id: String,
+    pub objective_id: String,
     pub ref_type: String,
     pub label: Option<String>,
     pub target: String,
@@ -145,10 +145,10 @@ pub struct QuestRefRow {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateQuestRefPayload {
+pub struct CreateObjectiveRefPayload {
     #[serde(default)]
     pub id: Option<String>,
-    pub quest_id: String,
+    pub objective_id: String,
     pub ref_type: String,
     #[serde(default)]
     pub label: Option<String>,
@@ -161,7 +161,7 @@ pub struct CreateQuestRefPayload {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct UpdateQuestRefPayload {
+pub struct UpdateObjectiveRefPayload {
     pub id: String,
     #[serde(default)]
     pub ref_type: Option<String>,
@@ -175,8 +175,8 @@ pub struct UpdateQuestRefPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct ManualQuestEventPayload {
-    pub quest_id: String,
+pub struct ManualObjectiveEventPayload {
+    pub objective_id: String,
     pub event_type: String,
     pub text: String,
     #[serde(default)]
@@ -193,8 +193,8 @@ pub struct ManualQuestEventPayload {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct RecordQuestEventPayload {
-    pub quest_id: String,
+pub struct RecordObjectiveEventPayload {
+    pub objective_id: String,
     pub event_type: String,
     pub actor: Option<String>,
     pub payload_json: Option<String>,
@@ -209,8 +209,8 @@ pub struct RecordQuestEventPayload {
 }
 
 #[derive(Debug, Clone)]
-pub struct QuestEventNotification {
-    pub quest_id: String,
+pub struct ObjectiveEventNotification {
+    pub objective_id: String,
     pub event_id: String,
     pub event_type: String,
 }
@@ -219,7 +219,7 @@ pub struct QuestEventNotification {
 #[serde(rename_all = "camelCase")]
 pub struct WorkingMemoryCurrentAction {
     pub event_id: String,
-    pub quest_id: String,
+    pub objective_id: String,
     pub intent: String,
     pub started_at: String,
 }
@@ -228,7 +228,7 @@ pub struct WorkingMemoryCurrentAction {
 #[serde(rename_all = "camelCase")]
 pub struct WorkingMemoryRecentAction {
     pub event_id: String,
-    pub quest_id: String,
+    pub objective_id: String,
     pub intent: String,
     pub outcome: String,
     pub completed_at: String,
@@ -240,13 +240,13 @@ pub struct WorkingMemoryRecentAction {
 #[serde(rename_all = "camelCase")]
 pub struct WorkingMemoryPayload {
     pub schema_version: i32,
-    pub current_quest_id: Option<String>,
-    pub current_quest_path: Vec<String>,
+    pub current_objective_id: Option<String>,
+    pub current_objective_path: Vec<String>,
     pub current_action: Option<WorkingMemoryCurrentAction>,
     pub recent_actions: Vec<WorkingMemoryRecentAction>,
     pub updated_at: String,
-    // P4b: plan slice. Pointers into `quest_plan_items` for the active
-    // quest. Defaults preserve forward compatibility with v1 rows — old
+    // P4b: plan slice. Pointers into `objective_plan_items` for the active
+    // objective. Defaults preserve forward compatibility with v1 rows — old
     // payloads deserialize cleanly with both fields empty.
     #[serde(default)]
     pub active_plan_item_id: Option<String>,
@@ -254,7 +254,7 @@ pub struct WorkingMemoryPayload {
     pub next_plan_item_ids: Vec<String>,
 }
 
-// Shared column list for quest_nodes SELECTs. `QUEST_SELECT_SQL` is the
+// Shared column list for objective_nodes SELECTs. `QUEST_SELECT_SQL` is the
 // single-row lookup by id; `QUEST_BASE_SELECT` is the prefix for filtered
 // list queries (no WHERE clause).
 pub(super) const QUEST_BASE_SELECT: &str = "SELECT \
@@ -263,7 +263,7 @@ pub(super) const QUEST_BASE_SELECT: &str = "SELECT \
     fork_parent_id, worktree_path, branch_name, \
     base_branch, branched_from_id, superseded_by_id, created_by, created_at, \
     started_at, completed_at, abandoned_at, estimated_tokens, actual_tokens, \
-    estimated_duration_ms, actual_duration_ms, summary FROM quest_nodes";
+    estimated_duration_ms, actual_duration_ms, summary FROM objective_nodes";
 
 pub(super) const QUEST_SELECT_SQL: &str = "SELECT \
     id, root_id, parent_id, title, description, scope, current_direction, \
@@ -272,12 +272,12 @@ pub(super) const QUEST_SELECT_SQL: &str = "SELECT \
     base_branch, branched_from_id, superseded_by_id, created_by, created_at, \
     started_at, completed_at, abandoned_at, estimated_tokens, actual_tokens, \
     estimated_duration_ms, actual_duration_ms, summary \
-    FROM quest_nodes WHERE id = ?1";
+    FROM objective_nodes WHERE id = ?1";
 
 // ---- Row mappers ----
 
-pub(super) fn map_quest(row: &Row<'_>) -> rusqlite::Result<QuestRow> {
-    Ok(QuestRow {
+pub(super) fn map_objective(row: &Row<'_>) -> rusqlite::Result<ObjectiveRow> {
+    Ok(ObjectiveRow {
         id: row.get(0)?,
         root_id: row.get(1)?,
         parent_id: row.get(2)?,
@@ -310,10 +310,10 @@ pub(super) fn map_quest(row: &Row<'_>) -> rusqlite::Result<QuestRow> {
     })
 }
 
-pub(super) fn map_quest_ref(row: &Row<'_>) -> rusqlite::Result<QuestRefRow> {
-    Ok(QuestRefRow {
+pub(super) fn map_objective_ref(row: &Row<'_>) -> rusqlite::Result<ObjectiveRefRow> {
+    Ok(ObjectiveRefRow {
         id: row.get(0)?,
-        quest_id: row.get(1)?,
+        objective_id: row.get(1)?,
         ref_type: row.get(2)?,
         label: row.get(3)?,
         target: row.get(4)?,
@@ -324,10 +324,10 @@ pub(super) fn map_quest_ref(row: &Row<'_>) -> rusqlite::Result<QuestRefRow> {
     })
 }
 
-pub(super) fn map_quest_event(row: &Row<'_>) -> rusqlite::Result<QuestEventRow> {
-    Ok(QuestEventRow {
+pub(super) fn map_objective_event(row: &Row<'_>) -> rusqlite::Result<ObjectiveEventRow> {
+    Ok(ObjectiveEventRow {
         id: row.get(0)?,
-        quest_id: row.get(1)?,
+        objective_id: row.get(1)?,
         event_type: row.get(2)?,
         actor: row.get(3)?,
         payload_json: row.get(4)?,
@@ -342,11 +342,11 @@ pub(super) fn map_quest_event(row: &Row<'_>) -> rusqlite::Result<QuestEventRow> 
 
 // ---- Working memory helpers ----
 
-pub(super) fn empty_working_memory(current_quest_id: &str, now: &str) -> WorkingMemoryPayload {
+pub(super) fn empty_working_memory(current_objective_id: &str, now: &str) -> WorkingMemoryPayload {
     WorkingMemoryPayload {
         schema_version: 2,
-        current_quest_id: Some(current_quest_id.to_string()),
-        current_quest_path: Vec::new(),
+        current_objective_id: Some(current_objective_id.to_string()),
+        current_objective_path: Vec::new(),
         current_action: None,
         recent_actions: Vec::new(),
         updated_at: now.to_string(),
@@ -389,13 +389,13 @@ pub(super) fn save_working_memory_tx(
     Ok(())
 }
 
-pub(super) fn quest_path_tx(tx: &rusqlite::Transaction<'_>, quest_id: &str) -> Vec<String> {
+pub(super) fn objective_path_tx(tx: &rusqlite::Transaction<'_>, objective_id: &str) -> Vec<String> {
     let mut path = Vec::new();
-    let mut current = Some(quest_id.to_string());
+    let mut current = Some(objective_id.to_string());
     while let Some(id) = current {
         let row: Option<(String, Option<String>)> = tx
             .query_row(
-                "SELECT title, parent_id FROM quest_nodes WHERE id = ?1",
+                "SELECT title, parent_id FROM objective_nodes WHERE id = ?1",
                 params![id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -420,7 +420,7 @@ pub(super) fn close_action_tx(
     auto_closed: bool,
     auto_closed_reason: Option<String>,
     completed_at: &str,
-    notes: &mut Vec<QuestEventNotification>,
+    notes: &mut Vec<ObjectiveEventNotification>,
 ) -> rusqlite::Result<()> {
     let status = if auto_closed {
         "auto_closed"
@@ -443,7 +443,7 @@ pub(super) fn close_action_tx(
         }
     }
     tx.execute(
-        "UPDATE quest_events SET payload_json = ?1 WHERE id = ?2",
+        "UPDATE objective_events SET payload_json = ?1 WHERE id = ?2",
         params![parent_payload.to_string(), current.event_id],
     )?;
 
@@ -455,14 +455,14 @@ pub(super) fn close_action_tx(
     })
     .to_string();
     tx.execute(
-        "INSERT INTO quest_events (
-            id, quest_id, event_type, actor, payload_json, created_at,
+        "INSERT INTO objective_events (
+            id, objective_id, event_type, actor, payload_json, created_at,
             parent_event_id, author, surface_override, payload_schema_version
          )
          VALUES (?1, ?2, 'action_outcome', ?3, ?4, ?5, ?6, 'executor', NULL, 1)",
         params![
             outcome_event_id,
-            current.quest_id,
+            current.objective_id,
             agent_id,
             outcome_payload,
             completed_at,
@@ -472,7 +472,7 @@ pub(super) fn close_action_tx(
 
     wm.recent_actions.push(WorkingMemoryRecentAction {
         event_id: current.event_id.clone(),
-        quest_id: current.quest_id.clone(),
+        objective_id: current.objective_id.clone(),
         intent: current.intent.clone(),
         outcome: outcome.to_string(),
         completed_at: completed_at.to_string(),
@@ -482,13 +482,13 @@ pub(super) fn close_action_tx(
         let overflow = wm.recent_actions.len() - 10;
         wm.recent_actions.drain(0..overflow);
     }
-    notes.push(QuestEventNotification {
-        quest_id: current.quest_id.clone(),
+    notes.push(ObjectiveEventNotification {
+        objective_id: current.objective_id.clone(),
         event_id: current.event_id.clone(),
         event_type: "coherent_action".to_string(),
     });
-    notes.push(QuestEventNotification {
-        quest_id: current.quest_id.clone(),
+    notes.push(ObjectiveEventNotification {
+        objective_id: current.objective_id.clone(),
         event_id: outcome_event_id,
         event_type: "action_outcome".to_string(),
     });
@@ -498,17 +498,17 @@ pub(super) fn close_action_tx(
 // ---- impl Database ----
 
 impl Database {
-    // ---- MON-83: Quests ----
+    // ---- MON-83: Objectives ----
 
-    /// Insert a quest node. Uses the payload id if present, otherwise mints a
-    /// fresh UUID. `root_id` is resolved from the parent: root quests have
-    /// `root_id = id`; sub-quests inherit the parent's `root_id`. A
+    /// Insert a objective node. Uses the payload id if present, otherwise mints a
+    /// fresh UUID. `root_id` is resolved from the parent: root objectives have
+    /// `root_id = id`; sub-objectives inherit the parent's `root_id`. A
     /// `status_change: null → <status>` event is seeded in the same
     /// transaction so the event log always has a creation entry (Slice 2
     /// read-only UI relies on this for its success criterion).
-    pub async fn create_quest_internal(
+    pub async fn create_objective_internal(
         &self,
-        payload: &CreateQuestPayload,
+        payload: &CreateObjectivePayload,
     ) -> Result<String, MonarchError> {
         let payload = payload.clone();
         let id = payload
@@ -538,7 +538,7 @@ impl Database {
                 // Resolve root_id: if parent present, inherit its root; else self.
                 let root_id: String = if let Some(pid) = payload.parent_id.as_ref() {
                     tx.query_row(
-                        "SELECT root_id FROM quest_nodes WHERE id = ?1",
+                        "SELECT root_id FROM objective_nodes WHERE id = ?1",
                         params![pid],
                         |row| row.get::<_, String>(0),
                     )?
@@ -546,7 +546,7 @@ impl Database {
                     id.clone()
                 };
                 tx.execute(
-                    "INSERT INTO quest_nodes (
+                    "INSERT INTO objective_nodes (
                         id, root_id, parent_id, title, description,
                         status, grade, exec_hint, assignee_shadow_id,
                         created_by, created_at
@@ -572,7 +572,7 @@ impl Database {
                 })
                 .to_string();
                 tx.execute(
-                    "INSERT INTO quest_events (id, quest_id, event_type, actor, payload_json, created_at)
+                    "INSERT INTO objective_events (id, objective_id, event_type, actor, payload_json, created_at)
                      VALUES (?1, ?2, 'status_change', ?3, ?4, ?5)",
                     params![event_id, id, created_by, event_payload, now],
                 )?;
@@ -585,12 +585,12 @@ impl Database {
 
     /// Partial update — only `Some` fields are written. Status / timestamp
     /// changes that carry semantic weight (e.g. status→done) should ALSO
-    /// record a `quest_events` row via `record_quest_event_internal`; this
+    /// record a `objective_events` row via `record_objective_event_internal`; this
     /// method does not mirror them automatically so the caller keeps full
     /// control over the audit trail.
-    pub async fn update_quest_internal(
+    pub async fn update_objective_internal(
         &self,
-        payload: &UpdateQuestPayload,
+        payload: &UpdateObjectivePayload,
     ) -> Result<(), MonarchError> {
         let payload = payload.clone();
         self.conn
@@ -625,7 +625,7 @@ impl Database {
                 if sets.is_empty() {
                     return Ok(());
                 }
-                let sql = format!("UPDATE quest_nodes SET {} WHERE id = ?", sets.join(", "));
+                let sql = format!("UPDATE objective_nodes SET {} WHERE id = ?", sets.join(", "));
                 args.push(rusqlite::types::Value::Text(payload.id.clone()));
                 let params_slice: Vec<&dyn rusqlite::ToSql> =
                     args.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
@@ -636,18 +636,18 @@ impl Database {
         Ok(())
     }
 
-    pub async fn get_quest_internal(
+    pub async fn get_objective_internal(
         &self,
-        quest_id: &str,
-    ) -> Result<Option<QuestRow>, MonarchError> {
-        let quest_id = quest_id.to_string();
+        objective_id: &str,
+    ) -> Result<Option<ObjectiveRow>, MonarchError> {
+        let objective_id = objective_id.to_string();
         Ok(self
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(QUEST_SELECT_SQL)?;
-                let mut rows = stmt.query(params![quest_id])?;
+                let mut rows = stmt.query(params![objective_id])?;
                 if let Some(row) = rows.next()? {
-                    Ok(Some(map_quest(row)?))
+                    Ok(Some(map_objective(row)?))
                 } else {
                     Ok(None)
                 }
@@ -655,13 +655,13 @@ impl Database {
             .await?)
     }
 
-    /// Every quest where this agent is the assignee, ordered newest-first.
-    /// Filter is assignee-only — `agents.current_quest_id` is a pointer into
+    /// Every objective where this agent is the assignee, ordered newest-first.
+    /// Filter is assignee-only — `agents.current_objective_id` is a pointer into
     /// the tree, not a list key.
-    pub async fn list_quests_for_agent_internal(
+    pub async fn list_objectives_for_agent_internal(
         &self,
         agent_id: &str,
-    ) -> Result<Vec<QuestRow>, MonarchError> {
+    ) -> Result<Vec<ObjectiveRow>, MonarchError> {
         let agent_id = agent_id.to_string();
         Ok(self
             .conn
@@ -671,7 +671,7 @@ impl Database {
                     QUEST_BASE_SELECT
                 ))?;
                 let rows = stmt
-                    .query_map(params![agent_id], map_quest)?
+                    .query_map(params![agent_id], map_objective)?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok(rows)
             })
@@ -681,10 +681,10 @@ impl Database {
     /// Full tree under `root_id`, ordered by created_at so a depth-first
     /// reconstruction on the frontend (using parent_id) produces a stable
     /// visual order.
-    pub async fn get_quest_tree_for_root_internal(
+    pub async fn get_objective_tree_for_root_internal(
         &self,
         root_id: &str,
-    ) -> Result<Vec<QuestRow>, MonarchError> {
+    ) -> Result<Vec<ObjectiveRow>, MonarchError> {
         let root_id = root_id.to_string();
         Ok(self
             .conn
@@ -694,16 +694,16 @@ impl Database {
                     QUEST_BASE_SELECT
                 ))?;
                 let rows = stmt
-                    .query_map(params![root_id], map_quest)?
+                    .query_map(params![root_id], map_objective)?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok(rows)
             })
             .await?)
     }
 
-    pub async fn record_quest_event_internal(
+    pub async fn record_objective_event_internal(
         &self,
-        payload: &RecordQuestEventPayload,
+        payload: &RecordObjectiveEventPayload,
     ) -> Result<String, MonarchError> {
         let payload = payload.clone();
         let id = crate::util::uuid_v4_simple();
@@ -712,14 +712,14 @@ impl Database {
         self.conn
             .call(move |conn| {
                 conn.execute(
-                    "INSERT INTO quest_events (
-                        id, quest_id, event_type, actor, payload_json, created_at,
+                    "INSERT INTO objective_events (
+                        id, objective_id, event_type, actor, payload_json, created_at,
                         parent_event_id, author, surface_override, payload_schema_version
                      )
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     params![
                         id,
-                        payload.quest_id,
+                        payload.objective_id,
                         payload.event_type,
                         payload.actor,
                         payload.payload_json,
@@ -736,38 +736,38 @@ impl Database {
         Ok(id_for_return)
     }
 
-    pub async fn list_quest_events_internal(
+    pub async fn list_objective_events_internal(
         &self,
-        quest_id: &str,
-    ) -> Result<Vec<QuestEventRow>, MonarchError> {
-        let quest_id = quest_id.to_string();
+        objective_id: &str,
+    ) -> Result<Vec<ObjectiveEventRow>, MonarchError> {
+        let objective_id = objective_id.to_string();
         Ok(self
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, quest_id, event_type, actor, payload_json, created_at,
+                    "SELECT id, objective_id, event_type, actor, payload_json, created_at,
                             parent_event_id, author, surface_override, payload_schema_version,
                             plan_item_id
-                     FROM quest_events WHERE quest_id = ?1 ORDER BY created_at ASC",
+                     FROM objective_events WHERE objective_id = ?1 ORDER BY created_at ASC",
                 )?;
                 let rows = stmt
-                    .query_map(params![quest_id], map_quest_event)?
+                    .query_map(params![objective_id], map_objective_event)?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok(rows)
             })
             .await?)
     }
 
-    pub async fn update_quest_manual_internal(
+    pub async fn update_objective_manual_internal(
         &self,
-        payload: &ManualQuestUpdatePayload,
-    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+        payload: &ManualObjectiveUpdatePayload,
+    ) -> Result<Vec<ObjectiveEventNotification>, MonarchError> {
         let payload = payload.clone();
         self.conn
             .call(move |conn| {
                 let tx = conn.unchecked_transaction()?;
                 let mut stmt = tx.prepare(QUEST_SELECT_SQL)?;
-                let before = stmt.query_row(params![payload.id], map_quest)?;
+                let before = stmt.query_row(params![payload.id], map_objective)?;
                 drop(stmt);
 
                 let mut sets: Vec<&str> = Vec::new();
@@ -787,7 +787,7 @@ impl Database {
                 push!(payload.grade, "grade");
                 push!(payload.summary, "summary");
                 if !sets.is_empty() {
-                    let sql = format!("UPDATE quest_nodes SET {} WHERE id = ?", sets.join(", "));
+                    let sql = format!("UPDATE objective_nodes SET {} WHERE id = ?", sets.join(", "));
                     args.push(rusqlite::types::Value::Text(payload.id.clone()));
                     let params_slice: Vec<&dyn rusqlite::ToSql> =
                         args.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
@@ -795,7 +795,7 @@ impl Database {
                 }
 
                 let mut stmt = tx.prepare(QUEST_SELECT_SQL)?;
-                let after = stmt.query_row(params![payload.id], map_quest)?;
+                let after = stmt.query_row(params![payload.id], map_objective)?;
                 drop(stmt);
 
                 let actor = payload.actor.unwrap_or_else(|| "monarch".to_string());
@@ -815,8 +815,8 @@ impl Database {
                             })
                             .to_string();
                             tx.execute(
-                                "INSERT INTO quest_events (
-                                    id, quest_id, event_type, actor, payload_json, created_at,
+                                "INSERT INTO objective_events (
+                                    id, objective_id, event_type, actor, payload_json, created_at,
                                     parent_event_id, author, surface_override, payload_schema_version
                                  )
                                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, NULL, 1)",
@@ -830,8 +830,8 @@ impl Database {
                                     author.clone()
                                 ],
                             )?;
-                            notes.push(QuestEventNotification {
-                                quest_id: after.id.clone(),
+                            notes.push(ObjectiveEventNotification {
+                                objective_id: after.id.clone(),
                                 event_id,
                                 event_type: $event_type.to_string(),
                             });
@@ -845,9 +845,9 @@ impl Database {
                     before.current_direction,
                     after.current_direction
                 );
-                emit_change!("quest_rationale_change", before.rationale, after.rationale);
+                emit_change!("objective_rationale_change", before.rationale, after.rationale);
                 emit_change!("grade_change", before.grade, after.grade);
-                emit_change!("quest_summary_change", before.summary, after.summary);
+                emit_change!("objective_summary_change", before.summary, after.summary);
 
                 tx.commit()?;
                 Ok(notes)
@@ -856,9 +856,9 @@ impl Database {
             .map_err(MonarchError::from)
     }
 
-    pub async fn record_manual_quest_event_internal(
+    pub async fn record_manual_objective_event_internal(
         &self,
-        payload: &ManualQuestEventPayload,
+        payload: &ManualObjectiveEventPayload,
     ) -> Result<String, MonarchError> {
         let event_type = payload.event_type.as_str();
         if !matches!(
@@ -866,7 +866,7 @@ impl Database {
             "note" | "blocker" | "blocker_resolved" | "question" | "answer"
         ) {
             return Err(MonarchError::invalid_input(format!(
-                "Unsupported manual quest event type: {}",
+                "Unsupported manual objective event type: {}",
                 event_type
             )));
         }
@@ -879,8 +879,8 @@ impl Database {
                 .and_then(|raw| serde_json::from_str::<Value>(raw).ok()),
         })
         .to_string();
-        self.record_quest_event_internal(&RecordQuestEventPayload {
-            quest_id: payload.quest_id.clone(),
+        self.record_objective_event_internal(&RecordObjectiveEventPayload {
+            objective_id: payload.objective_id.clone(),
             event_type: payload.event_type.clone(),
             actor: Some(
                 payload
@@ -901,43 +901,43 @@ impl Database {
         .await
     }
 
-    pub async fn list_quest_refs_internal(
+    pub async fn list_objective_refs_internal(
         &self,
-        quest_id: &str,
-    ) -> Result<Vec<QuestRefRow>, MonarchError> {
-        let quest_id = quest_id.to_string();
+        objective_id: &str,
+    ) -> Result<Vec<ObjectiveRefRow>, MonarchError> {
+        let objective_id = objective_id.to_string();
         Ok(self
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, quest_id, ref_type, label, target, metadata_json,
+                    "SELECT id, objective_id, ref_type, label, target, metadata_json,
                             created_by, created_at, updated_at
-                     FROM quest_refs WHERE quest_id = ?1 ORDER BY created_at ASC",
+                     FROM objective_refs WHERE objective_id = ?1 ORDER BY created_at ASC",
                 )?;
                 let rows = stmt
-                    .query_map(params![quest_id], map_quest_ref)?
+                    .query_map(params![objective_id], map_objective_ref)?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok(rows)
             })
             .await?)
     }
 
-    pub async fn get_quest_ref_internal(
+    pub async fn get_objective_ref_internal(
         &self,
         id: &str,
-    ) -> Result<Option<QuestRefRow>, MonarchError> {
+    ) -> Result<Option<ObjectiveRefRow>, MonarchError> {
         let id = id.to_string();
         Ok(self
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, quest_id, ref_type, label, target, metadata_json,
+                    "SELECT id, objective_id, ref_type, label, target, metadata_json,
                             created_by, created_at, updated_at
-                     FROM quest_refs WHERE id = ?1",
+                     FROM objective_refs WHERE id = ?1",
                 )?;
                 let mut rows = stmt.query(params![id])?;
                 if let Some(row) = rows.next()? {
-                    Ok(Some(map_quest_ref(row)?))
+                    Ok(Some(map_objective_ref(row)?))
                 } else {
                     Ok(None)
                 }
@@ -945,9 +945,9 @@ impl Database {
             .await?)
     }
 
-    pub async fn create_quest_ref_internal(
+    pub async fn create_objective_ref_internal(
         &self,
-        payload: &CreateQuestRefPayload,
+        payload: &CreateObjectiveRefPayload,
     ) -> Result<String, MonarchError> {
         if payload.ref_type.trim().is_empty() {
             return Err(MonarchError::invalid_input("refType required"));
@@ -966,14 +966,14 @@ impl Database {
         self.conn
             .call(move |conn| {
                 conn.execute(
-                    "INSERT INTO quest_refs (
-                        id, quest_id, ref_type, label, target, metadata_json,
+                    "INSERT INTO objective_refs (
+                        id, objective_id, ref_type, label, target, metadata_json,
                         created_by, created_at, updated_at
                      )
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
                     params![
                         id,
-                        payload.quest_id,
+                        payload.objective_id,
                         payload.ref_type,
                         payload.label,
                         payload.target,
@@ -988,9 +988,9 @@ impl Database {
         Ok(id_for_return)
     }
 
-    pub async fn update_quest_ref_internal(
+    pub async fn update_objective_ref_internal(
         &self,
-        payload: &UpdateQuestRefPayload,
+        payload: &UpdateObjectiveRefPayload,
     ) -> Result<(), MonarchError> {
         let payload = payload.clone();
         self.conn
@@ -1014,7 +1014,7 @@ impl Database {
                 }
                 sets.push("updated_at = ?");
                 args.push(rusqlite::types::Value::Text(crate::util::chrono_now()));
-                let sql = format!("UPDATE quest_refs SET {} WHERE id = ?", sets.join(", "));
+                let sql = format!("UPDATE objective_refs SET {} WHERE id = ?", sets.join(", "));
                 args.push(rusqlite::types::Value::Text(payload.id.clone()));
                 let params_slice: Vec<&dyn rusqlite::ToSql> =
                     args.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
@@ -1025,11 +1025,11 @@ impl Database {
         Ok(())
     }
 
-    pub async fn delete_quest_ref_internal(&self, id: &str) -> Result<(), MonarchError> {
+    pub async fn delete_objective_ref_internal(&self, id: &str) -> Result<(), MonarchError> {
         let id = id.to_string();
         self.conn
             .call(move |conn| {
-                conn.execute("DELETE FROM quest_refs WHERE id = ?1", params![id])?;
+                conn.execute("DELETE FROM objective_refs WHERE id = ?1", params![id])?;
                 Ok(())
             })
             .await?;
@@ -1059,12 +1059,12 @@ impl Database {
     pub async fn record_action_transition_internal(
         &self,
         agent_id: &str,
-        quest_id: &str,
+        objective_id: &str,
         intent: &str,
         previous_outcome: Option<&str>,
-    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+    ) -> Result<Vec<ObjectiveEventNotification>, MonarchError> {
         let agent_id = agent_id.to_string();
-        let quest_id = quest_id.to_string();
+        let objective_id = objective_id.to_string();
         let intent = intent.to_string();
         let previous_outcome = previous_outcome.map(str::to_string);
         Ok(self
@@ -1074,7 +1074,7 @@ impl Database {
                 let now = crate::util::chrono_now();
                 let mut notes = Vec::new();
                 let mut wm = load_working_memory_tx(&tx, &agent_id)
-                    .unwrap_or_else(|| empty_working_memory(&quest_id, &now));
+                    .unwrap_or_else(|| empty_working_memory(&objective_id, &now));
 
                 if let Some(current) = wm.current_action.clone() {
                     let (outcome, auto_closed, reason) = match previous_outcome.as_deref() {
@@ -1110,30 +1110,30 @@ impl Database {
                 // item without a join through L2. The slice may have shifted
                 // since the previous action — recompute against the live
                 // table here, not the loaded L2 snapshot.
-                let plan_item_id = super::plans::recompute_plan_slice_tx(&tx, &quest_id)
+                let plan_item_id = super::plans::recompute_plan_slice_tx(&tx, &objective_id)
                     .ok()
                     .and_then(|(active, _)| active);
                 tx.execute(
-                    "INSERT INTO quest_events (
-                        id, quest_id, event_type, actor, payload_json, created_at,
+                    "INSERT INTO objective_events (
+                        id, objective_id, event_type, actor, payload_json, created_at,
                         parent_event_id, author, surface_override, payload_schema_version,
                         plan_item_id
                      )
                      VALUES (?1, ?2, 'coherent_action', ?3, ?4, ?5, NULL, 'executor', NULL, 1, ?6)",
-                    params![event_id, quest_id, agent_id, payload, now, plan_item_id],
+                    params![event_id, objective_id, agent_id, payload, now, plan_item_id],
                 )?;
-                wm.current_quest_id = Some(quest_id.clone());
-                wm.current_quest_path = quest_path_tx(&tx, &quest_id);
+                wm.current_objective_id = Some(objective_id.clone());
+                wm.current_objective_path = objective_path_tx(&tx, &objective_id);
                 wm.current_action = Some(WorkingMemoryCurrentAction {
                     event_id: event_id.clone(),
-                    quest_id: quest_id.clone(),
+                    objective_id: objective_id.clone(),
                     intent,
                     started_at: now.clone(),
                 });
                 wm.updated_at = now.clone();
                 save_working_memory_tx(&tx, &agent_id, &wm)?;
-                notes.push(QuestEventNotification {
-                    quest_id,
+                notes.push(ObjectiveEventNotification {
+                    objective_id,
                     event_id,
                     event_type: "coherent_action".to_string(),
                 });
@@ -1147,7 +1147,7 @@ impl Database {
         &self,
         agent_id: &str,
         outcome: &str,
-    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+    ) -> Result<Vec<ObjectiveEventNotification>, MonarchError> {
         let agent_id = agent_id.to_string();
         let outcome = outcome.to_string();
         Ok(self
@@ -1187,12 +1187,12 @@ impl Database {
     pub async fn record_executor_decision_internal(
         &self,
         agent_id: &str,
-        quest_id: &str,
+        objective_id: &str,
         decision: &str,
         rationale: Option<&str>,
-    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+    ) -> Result<Vec<ObjectiveEventNotification>, MonarchError> {
         let agent_id = agent_id.to_string();
-        let quest_id = quest_id.to_string();
+        let objective_id = objective_id.to_string();
         let decision = decision.to_string();
         let rationale = rationale.map(str::to_string);
         Ok(self
@@ -1209,16 +1209,16 @@ impl Database {
                 })
                 .to_string();
                 tx.execute(
-                    "INSERT INTO quest_events (
-                        id, quest_id, event_type, actor, payload_json, created_at,
+                    "INSERT INTO objective_events (
+                        id, objective_id, event_type, actor, payload_json, created_at,
                         parent_event_id, author, surface_override, payload_schema_version
                      )
                      VALUES (?1, ?2, 'executor_decision', ?3, ?4, ?5, ?6, 'executor', NULL, 1)",
-                    params![event_id, quest_id, agent_id, payload, now, parent],
+                    params![event_id, objective_id, agent_id, payload, now, parent],
                 )?;
                 tx.commit()?;
-                Ok(vec![QuestEventNotification {
-                    quest_id,
+                Ok(vec![ObjectiveEventNotification {
+                    objective_id,
                     event_id,
                     event_type: "executor_decision".to_string(),
                 }])
@@ -1229,13 +1229,13 @@ impl Database {
     pub async fn record_tool_call_start_internal(
         &self,
         agent_id: &str,
-        quest_id: &str,
+        objective_id: &str,
         tool_call_id: &str,
         tool_name: &str,
         args: Option<Value>,
-    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+    ) -> Result<Vec<ObjectiveEventNotification>, MonarchError> {
         let agent_id = agent_id.to_string();
-        let quest_id = quest_id.to_string();
+        let objective_id = objective_id.to_string();
         let tool_call_id = tool_call_id.to_string();
         let tool_name = tool_name.to_string();
         Ok(self
@@ -1261,16 +1261,16 @@ impl Database {
                 })
                 .to_string();
                 tx.execute(
-                    "INSERT INTO quest_events (
-                        id, quest_id, event_type, actor, payload_json, created_at,
+                    "INSERT INTO objective_events (
+                        id, objective_id, event_type, actor, payload_json, created_at,
                         parent_event_id, author, surface_override, payload_schema_version
                      )
                      VALUES (?1, ?2, 'tool_call', ?3, ?4, ?5, ?6, 'executor', NULL, 1)",
-                    params![event_id, quest_id, agent_id, payload, now, parent],
+                    params![event_id, objective_id, agent_id, payload, now, parent],
                 )?;
                 tx.commit()?;
-                Ok(vec![QuestEventNotification {
-                    quest_id,
+                Ok(vec![ObjectiveEventNotification {
+                    objective_id,
                     event_id,
                     event_type: "tool_call".to_string(),
                 }])
@@ -1284,7 +1284,7 @@ impl Database {
         result: Option<Value>,
         is_error: bool,
         duration_ms: Option<i64>,
-    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+    ) -> Result<Vec<ObjectiveEventNotification>, MonarchError> {
         let tool_call_id = tool_call_id.to_string();
         Ok(self
             .conn
@@ -1292,8 +1292,8 @@ impl Database {
                 let tx = conn.unchecked_transaction()?;
                 let found: Option<(String, String, String)> = tx
                     .query_row(
-                        "SELECT id, quest_id, payload_json
-                         FROM quest_events
+                        "SELECT id, objective_id, payload_json
+                         FROM objective_events
                          WHERE event_type = 'tool_call'
                            AND json_extract(payload_json, '$.tool_call_id') = ?1
                          ORDER BY created_at DESC
@@ -1302,7 +1302,7 @@ impl Database {
                         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                     )
                     .ok();
-                let Some((event_id, quest_id, raw_payload)) = found else {
+                let Some((event_id, objective_id, raw_payload)) = found else {
                     tx.commit()?;
                     return Ok(Vec::new());
                 };
@@ -1328,12 +1328,12 @@ impl Database {
                     }
                 }
                 tx.execute(
-                    "UPDATE quest_events SET payload_json = ?1 WHERE id = ?2",
+                    "UPDATE objective_events SET payload_json = ?1 WHERE id = ?2",
                     params![payload.to_string(), event_id],
                 )?;
                 tx.commit()?;
-                Ok(vec![QuestEventNotification {
-                    quest_id,
+                Ok(vec![ObjectiveEventNotification {
+                    objective_id,
                     event_id,
                     event_type: "tool_call".to_string(),
                 }])
@@ -1341,10 +1341,10 @@ impl Database {
             .await?)
     }
 
-    /// MON-105: create a root quest for a meaningful user turn and set it as
-    /// the agent's current quest, but only if there is no active current
-    /// quest. Returns `Some(new_id)` when a quest was created.
-    pub async fn auto_create_current_quest_internal(
+    /// MON-105: create a root objective for a meaningful user turn and set it as
+    /// the agent's current objective, but only if there is no active current
+    /// objective. Returns `Some(new_id)` when a objective was created.
+    pub async fn auto_create_current_objective_internal(
         &self,
         agent_id: &str,
         title: &str,
@@ -1361,7 +1361,7 @@ impl Database {
                     .query_row(
                         "SELECT q.id, q.status
                          FROM agents a
-                         LEFT JOIN quest_nodes q ON q.id = a.current_quest_id
+                         LEFT JOIN objective_nodes q ON q.id = a.current_objective_id
                          WHERE a.id = ?1",
                         params![agent_id],
                         |row| {
@@ -1387,7 +1387,7 @@ impl Database {
                 let event_id = crate::util::uuid_v4_simple();
                 let now = crate::util::chrono_now();
                 tx.execute(
-                    "INSERT INTO quest_nodes (
+                    "INSERT INTO objective_nodes (
                         id, root_id, parent_id, title, description,
                         status, grade, exec_hint, assignee_shadow_id,
                         created_by, created_at, started_at
@@ -1401,12 +1401,12 @@ impl Database {
                 })
                 .to_string();
                 tx.execute(
-                    "INSERT INTO quest_events (id, quest_id, event_type, actor, payload_json, created_at)
+                    "INSERT INTO objective_events (id, objective_id, event_type, actor, payload_json, created_at)
                      VALUES (?1, ?2, 'status_change', 'monarch', ?3, ?4)",
                     params![event_id, id, event_payload, now],
                 )?;
                 tx.execute(
-                    "UPDATE agents SET current_quest_id = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?2",
+                    "UPDATE agents SET current_objective_id = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?2",
                     params![id, agent_id],
                 )?;
                 tx.commit()?;
@@ -1432,35 +1432,35 @@ fn preview_value(value: Option<&Value>) -> String {
     }
 }
 
-// ---- Tauri Commands: Quests (MON-83) ----
+// ---- Tauri Commands: Objectives (MON-83) ----
 //
 // Write commands take the `AgentManager` state so they can broadcast event
-// channels (`quest-created-{id}` / `quest-updated-{id}` /
-// `quest-event-{questId}`) via the shared `ws_broadcast` sender. Slice 2
-// payloads are small — the event is the quest id and minimal metadata so
-// subscribers can re-fetch with `db_get_quest` / `db_list_quest_events`.
+// channels (`objective-created-{id}` / `objective-updated-{id}` /
+// `objective-event-{objectiveId}`) via the shared `ws_broadcast` sender. Slice 2
+// payloads are small — the event is the objective id and minimal metadata so
+// subscribers can re-fetch with `db_get_objective` / `db_list_objective_events`.
 
 #[tauri::command]
 #[specta::specta]
-pub async fn db_create_quest(
+pub async fn db_create_objective(
     app: tauri::AppHandle,
     db: tauri::State<'_, Arc<Database>>,
     agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
-    payload: CreateQuestPayload,
+    payload: CreateObjectivePayload,
 ) -> Result<String, MonarchError> {
     let assignee = payload.assignee_shadow_id.clone();
-    let id = db.create_quest_internal(&payload).await?;
+    let id = db.create_objective_internal(&payload).await?;
     crate::agent::emit_event(
         &app,
         &agent_mgr.ws_broadcast,
-        &format!("quest-created-{}", id),
+        &format!("objective-created-{}", id),
         &serde_json::json!({ "id": id.clone() }).to_string(),
     );
     if let Some(agent_id) = assignee {
         crate::agent::emit_event(
             &app,
             &agent_mgr.ws_broadcast,
-            &format!("quest-created-for-agent-{}", agent_id),
+            &format!("objective-created-for-agent-{}", agent_id),
             &serde_json::json!({ "id": id, "agentId": agent_id }).to_string(),
         );
     }
@@ -1469,43 +1469,43 @@ pub async fn db_create_quest(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn db_update_quest(
+pub async fn db_update_objective(
     app: tauri::AppHandle,
     db: tauri::State<'_, Arc<Database>>,
     agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
-    payload: UpdateQuestPayload,
+    payload: UpdateObjectivePayload,
 ) -> Result<(), MonarchError> {
     let id = payload.id.clone();
-    let before = db.get_quest_internal(&id).await?;
-    db.update_quest_internal(&payload).await?;
-    let after = db.get_quest_internal(&id).await?;
+    let before = db.get_objective_internal(&id).await?;
+    db.update_objective_internal(&payload).await?;
+    let after = db.get_objective_internal(&id).await?;
     crate::agent::emit_event(
         &app,
         &agent_mgr.ws_broadcast,
-        &format!("quest-updated-{}", id),
+        &format!("objective-updated-{}", id),
         &serde_json::json!({ "id": id }).to_string(),
     );
-    if let Some(after_quest) = after.as_ref() {
-        if after_quest.root_id != after_quest.id {
+    if let Some(after_objective) = after.as_ref() {
+        if after_objective.root_id != after_objective.id {
             crate::agent::emit_event(
                 &app,
                 &agent_mgr.ws_broadcast,
-                &format!("quest-updated-{}", after_quest.root_id),
-                &serde_json::json!({ "id": after_quest.id, "rootId": after_quest.root_id })
+                &format!("objective-updated-{}", after_objective.root_id),
+                &serde_json::json!({ "id": after_objective.id, "rootId": after_objective.root_id })
                     .to_string(),
             );
         }
     }
-    handle_quest_update_side_effects(&app, db.inner(), agent_mgr.inner(), before, after).await?;
+    handle_objective_update_side_effects(&app, db.inner(), agent_mgr.inner(), before, after).await?;
     Ok(())
 }
 
-pub async fn handle_quest_update_side_effects(
+pub async fn handle_objective_update_side_effects(
     app: &tauri::AppHandle,
     db: &Arc<Database>,
     agent_mgr: &Arc<crate::agent::AgentManager>,
-    before: Option<QuestRow>,
-    after: Option<QuestRow>,
+    before: Option<ObjectiveRow>,
+    after: Option<ObjectiveRow>,
 ) -> Result<(), MonarchError> {
     let Some(after) = after else {
         return Ok(());
@@ -1521,8 +1521,8 @@ pub async fn handle_quest_update_side_effects(
     })
     .to_string();
     let event_id = db
-        .record_quest_event_internal(&RecordQuestEventPayload {
-            quest_id: after.id.clone(),
+        .record_objective_event_internal(&RecordObjectiveEventPayload {
+            objective_id: after.id.clone(),
             event_type: "status_change".to_string(),
             actor: Some("monarch".to_string()),
             payload_json: Some(event_payload),
@@ -1532,7 +1532,7 @@ pub async fn handle_quest_update_side_effects(
     crate::agent::emit_event(
         app,
         &agent_mgr.ws_broadcast,
-        &format!("quest-event-{}", after.id),
+        &format!("objective-event-{}", after.id),
         &serde_json::json!({ "id": event_id, "eventType": "status_change" }).to_string(),
     );
 
@@ -1544,7 +1544,7 @@ pub async fn handle_quest_update_side_effects(
     let Some(agent_id) = after.assignee_shadow_id.clone() else {
         return Ok(());
     };
-    db.clear_agent_current_quest_if_matches_internal(&agent_id, &after.id)
+    db.clear_agent_current_objective_if_matches_internal(&agent_id, &after.id)
         .await?;
     let since = after
         .started_at
@@ -1554,15 +1554,15 @@ pub async fn handle_quest_update_side_effects(
         .dispatch_keeper_run(
             db,
             &agent_id,
-            crate::agent::KeeperRunTrigger::QuestClose {
-                quest_id: after.id.clone(),
+            crate::agent::KeeperRunTrigger::ObjectiveClose {
+                objective_id: after.id.clone(),
                 since,
             },
         )
         .await
     {
         eprintln!(
-            "[monarch] quest-close keeper dispatch failed for {} quest {}: {:?}",
+            "[monarch] objective-close keeper dispatch failed for {} objective {}: {:?}",
             agent_id, after.id, e
         );
     }
@@ -1571,46 +1571,46 @@ pub async fn handle_quest_update_side_effects(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn db_get_quest(
+pub async fn db_get_objective(
     db: tauri::State<'_, Arc<Database>>,
-    quest_id: String,
-) -> Result<Option<QuestRow>, MonarchError> {
-    db.get_quest_internal(&quest_id).await
+    objective_id: String,
+) -> Result<Option<ObjectiveRow>, MonarchError> {
+    db.get_objective_internal(&objective_id).await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn db_list_quests_for_agent(
+pub async fn db_list_objectives_for_agent(
     db: tauri::State<'_, Arc<Database>>,
     agent_id: String,
-) -> Result<Vec<QuestRow>, MonarchError> {
-    db.list_quests_for_agent_internal(&agent_id).await
+) -> Result<Vec<ObjectiveRow>, MonarchError> {
+    db.list_objectives_for_agent_internal(&agent_id).await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn db_get_quest_tree_for_root(
+pub async fn db_get_objective_tree_for_root(
     db: tauri::State<'_, Arc<Database>>,
     root_id: String,
-) -> Result<Vec<QuestRow>, MonarchError> {
-    db.get_quest_tree_for_root_internal(&root_id).await
+) -> Result<Vec<ObjectiveRow>, MonarchError> {
+    db.get_objective_tree_for_root_internal(&root_id).await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn db_record_quest_event(
+pub async fn db_record_objective_event(
     app: tauri::AppHandle,
     db: tauri::State<'_, Arc<Database>>,
     agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
-    payload: RecordQuestEventPayload,
+    payload: RecordObjectiveEventPayload,
 ) -> Result<String, MonarchError> {
-    let quest_id = payload.quest_id.clone();
+    let objective_id = payload.objective_id.clone();
     let event_type = payload.event_type.clone();
-    let id = db.record_quest_event_internal(&payload).await?;
+    let id = db.record_objective_event_internal(&payload).await?;
     crate::agent::emit_event(
         &app,
         &agent_mgr.ws_broadcast,
-        &format!("quest-event-{}", quest_id),
+        &format!("objective-event-{}", objective_id),
         &serde_json::json!({ "id": id, "eventType": event_type }).to_string(),
     );
     Ok(id)
@@ -1618,46 +1618,46 @@ pub async fn db_record_quest_event(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn db_list_quest_events(
+pub async fn db_list_objective_events(
     db: tauri::State<'_, Arc<Database>>,
-    quest_id: String,
-) -> Result<Vec<QuestEventRow>, MonarchError> {
-    db.list_quest_events_internal(&quest_id).await
+    objective_id: String,
+) -> Result<Vec<ObjectiveEventRow>, MonarchError> {
+    db.list_objective_events_internal(&objective_id).await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn db_update_quest_manual(
+pub async fn db_update_objective_manual(
     app: tauri::AppHandle,
     db: tauri::State<'_, Arc<Database>>,
     agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
-    payload: ManualQuestUpdatePayload,
+    payload: ManualObjectiveUpdatePayload,
 ) -> Result<(), MonarchError> {
     let id = payload.id.clone();
-    let before = db.get_quest_internal(&id).await?;
-    let notes = db.update_quest_manual_internal(&payload).await?;
-    let after = db.get_quest_internal(&id).await?;
-    emit_quest_updated_notifications(&app, &agent_mgr.ws_broadcast, &id, after.as_ref());
+    let before = db.get_objective_internal(&id).await?;
+    let notes = db.update_objective_manual_internal(&payload).await?;
+    let after = db.get_objective_internal(&id).await?;
+    emit_objective_updated_notifications(&app, &agent_mgr.ws_broadcast, &id, after.as_ref());
     super::plans::emit_plan_notifications(&app, &agent_mgr.ws_broadcast, notes);
-    handle_quest_update_side_effects(&app, db.inner(), agent_mgr.inner(), before, after).await?;
+    handle_objective_update_side_effects(&app, db.inner(), agent_mgr.inner(), before, after).await?;
     Ok(())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn db_record_manual_quest_event(
+pub async fn db_record_manual_objective_event(
     app: tauri::AppHandle,
     db: tauri::State<'_, Arc<Database>>,
     agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
-    payload: ManualQuestEventPayload,
+    payload: ManualObjectiveEventPayload,
 ) -> Result<String, MonarchError> {
-    let quest_id = payload.quest_id.clone();
+    let objective_id = payload.objective_id.clone();
     let event_type = payload.event_type.clone();
-    let id = db.record_manual_quest_event_internal(&payload).await?;
+    let id = db.record_manual_objective_event_internal(&payload).await?;
     crate::agent::emit_event(
         &app,
         &agent_mgr.ws_broadcast,
-        &format!("quest-event-{}", quest_id),
+        &format!("objective-event-{}", objective_id),
         &serde_json::json!({ "id": id, "eventType": event_type }).to_string(),
     );
     Ok(id)
@@ -1665,59 +1665,59 @@ pub async fn db_record_manual_quest_event(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn db_list_quest_refs(
+pub async fn db_list_objective_refs(
     db: tauri::State<'_, Arc<Database>>,
-    quest_id: String,
-) -> Result<Vec<QuestRefRow>, MonarchError> {
-    db.list_quest_refs_internal(&quest_id).await
+    objective_id: String,
+) -> Result<Vec<ObjectiveRefRow>, MonarchError> {
+    db.list_objective_refs_internal(&objective_id).await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn db_create_quest_ref(
+pub async fn db_create_objective_ref(
     app: tauri::AppHandle,
     db: tauri::State<'_, Arc<Database>>,
     agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
-    payload: CreateQuestRefPayload,
+    payload: CreateObjectiveRefPayload,
 ) -> Result<String, MonarchError> {
-    let quest_id = payload.quest_id.clone();
-    let id = db.create_quest_ref_internal(&payload).await?;
-    emit_quest_ref_notification(&app, &agent_mgr.ws_broadcast, &quest_id, "created", &id);
+    let objective_id = payload.objective_id.clone();
+    let id = db.create_objective_ref_internal(&payload).await?;
+    emit_objective_ref_notification(&app, &agent_mgr.ws_broadcast, &objective_id, "created", &id);
     Ok(id)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn db_update_quest_ref(
+pub async fn db_update_objective_ref(
     app: tauri::AppHandle,
     db: tauri::State<'_, Arc<Database>>,
     agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
-    payload: UpdateQuestRefPayload,
+    payload: UpdateObjectiveRefPayload,
 ) -> Result<(), MonarchError> {
     let id = payload.id.clone();
-    let before = db.get_quest_ref_internal(&id).await?;
-    db.update_quest_ref_internal(&payload).await?;
+    let before = db.get_objective_ref_internal(&id).await?;
+    db.update_objective_ref_internal(&payload).await?;
     if let Some(row) = before {
-        emit_quest_ref_notification(&app, &agent_mgr.ws_broadcast, &row.quest_id, "updated", &id);
+        emit_objective_ref_notification(&app, &agent_mgr.ws_broadcast, &row.objective_id, "updated", &id);
     }
     Ok(())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn db_delete_quest_ref(
+pub async fn db_delete_objective_ref(
     app: tauri::AppHandle,
     db: tauri::State<'_, Arc<Database>>,
     agent_mgr: tauri::State<'_, Arc<crate::agent::AgentManager>>,
     ref_id: String,
 ) -> Result<(), MonarchError> {
-    let before = db.get_quest_ref_internal(&ref_id).await?;
-    db.delete_quest_ref_internal(&ref_id).await?;
+    let before = db.get_objective_ref_internal(&ref_id).await?;
+    db.delete_objective_ref_internal(&ref_id).await?;
     if let Some(row) = before {
-        emit_quest_ref_notification(
+        emit_objective_ref_notification(
             &app,
             &agent_mgr.ws_broadcast,
-            &row.quest_id,
+            &row.objective_id,
             "deleted",
             &ref_id,
         );
@@ -1734,42 +1734,42 @@ pub async fn db_get_working_memory(
     db.get_working_memory_internal(&agent_id).await
 }
 
-pub fn emit_quest_updated_notifications(
+pub fn emit_objective_updated_notifications(
     app: &tauri::AppHandle,
     ws_tx: &tokio::sync::broadcast::Sender<crate::agent::WsBroadcast>,
     id: &str,
-    after: Option<&QuestRow>,
+    after: Option<&ObjectiveRow>,
 ) {
     crate::agent::emit_event(
         app,
         ws_tx,
-        &format!("quest-updated-{}", id),
+        &format!("objective-updated-{}", id),
         &serde_json::json!({ "id": id }).to_string(),
     );
-    if let Some(after_quest) = after {
-        if after_quest.root_id != after_quest.id {
+    if let Some(after_objective) = after {
+        if after_objective.root_id != after_objective.id {
             crate::agent::emit_event(
                 app,
                 ws_tx,
-                &format!("quest-updated-{}", after_quest.root_id),
-                &serde_json::json!({ "id": after_quest.id, "rootId": after_quest.root_id })
+                &format!("objective-updated-{}", after_objective.root_id),
+                &serde_json::json!({ "id": after_objective.id, "rootId": after_objective.root_id })
                     .to_string(),
             );
         }
     }
 }
 
-pub fn emit_quest_ref_notification(
+pub fn emit_objective_ref_notification(
     app: &tauri::AppHandle,
     ws_tx: &tokio::sync::broadcast::Sender<crate::agent::WsBroadcast>,
-    quest_id: &str,
+    objective_id: &str,
     action: &str,
     ref_id: &str,
 ) {
     crate::agent::emit_event(
         app,
         ws_tx,
-        &format!("quest-refs-{}", quest_id),
-        &serde_json::json!({ "id": ref_id, "questId": quest_id, "action": action }).to_string(),
+        &format!("objective-refs-{}", objective_id),
+        &serde_json::json!({ "id": ref_id, "objectiveId": objective_id, "action": action }).to_string(),
     );
 }

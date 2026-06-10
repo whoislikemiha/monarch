@@ -4,7 +4,7 @@ use tauri::AppHandle;
 use tokio::sync::broadcast;
 
 use crate::agent::WsBroadcast;
-use crate::db::{Database, MessageRow, RecordQuestEventPayload, SetPlanPayload};
+use crate::db::{Database, MessageRow, RecordObjectiveEventPayload, SetPlanPayload};
 use crate::error::MonarchError;
 use crate::memory::index::MemoryIndex;
 use crate::persistence::write_attachment_bytes;
@@ -94,7 +94,7 @@ pub(crate) fn build_persist_commands(
     event: &InnerEvent,
     inner_raw: Option<&serde_json::Value>,
     durations: EventDurations,
-    current_quest_id: Option<String>,
+    current_objective_id: Option<String>,
 ) -> Vec<PersistCommand> {
     let mut cmds: Vec<PersistCommand> = Vec::with_capacity(2);
 
@@ -251,11 +251,11 @@ pub(crate) fn build_persist_commands(
             tool_name,
             args,
         } => {
-            if let Some(quest_id) = current_quest_id {
+            if let Some(objective_id) = current_objective_id {
                 if !is_narration_tool(tool_name) {
                     cmds.push(PersistCommand::ToolCallStart {
                         agent_id: agent_id.to_string(),
-                        quest_id,
+                        objective_id,
                         tool_call_id: tool_call_id.clone(),
                         tool_name: tool_name.clone(),
                         args: args.clone(),
@@ -267,10 +267,10 @@ pub(crate) fn build_persist_commands(
             intent,
             previous_outcome,
         } => {
-            if let Some(quest_id) = current_quest_id {
+            if let Some(objective_id) = current_objective_id {
                 cmds.push(PersistCommand::ActionTransition {
                     agent_id: agent_id.to_string(),
-                    quest_id,
+                    objective_id,
                     intent: intent.clone(),
                     previous_outcome: previous_outcome.clone(),
                 });
@@ -286,21 +286,21 @@ pub(crate) fn build_persist_commands(
             decision,
             rationale,
         } => {
-            if let Some(quest_id) = current_quest_id {
+            if let Some(objective_id) = current_objective_id {
                 cmds.push(PersistCommand::ExecutorDecision {
                     agent_id: agent_id.to_string(),
-                    quest_id,
+                    objective_id,
                     decision: decision.clone(),
                     rationale: rationale.clone(),
                 });
             }
         }
         InnerEvent::PlanSet { items, rationale } => {
-            if let Some(quest_id) = current_quest_id {
+            if let Some(objective_id) = current_objective_id {
                 cmds.push(PersistCommand::PlanSet {
                     agent_id: agent_id.to_string(),
                     payload: SetPlanPayload {
-                        quest_id,
+                        objective_id,
                         items: items.clone(),
                         created_by: Some("executor".to_string()),
                         rationale: rationale.clone(),
@@ -345,16 +345,16 @@ pub(crate) fn build_persist_commands(
             summary,
             content,
         } => {
-            if let Some(quest_id) = current_quest_id {
+            if let Some(objective_id) = current_objective_id {
                 let payload_json = serde_json::json!({
                     "title": title,
                     "summary": summary,
                     "content": content,
                 })
                 .to_string();
-                cmds.push(PersistCommand::RecordQuestEvent {
-                    payload: RecordQuestEventPayload {
-                        quest_id,
+                cmds.push(PersistCommand::RecordObjectiveEvent {
+                    payload: RecordObjectiveEventPayload {
+                        objective_id,
                         event_type: "memory_suggestion".to_string(),
                         actor: Some(agent_id.to_string()),
                         payload_json: Some(payload_json),
@@ -363,21 +363,21 @@ pub(crate) fn build_persist_commands(
                 });
             } else {
                 eprintln!(
-                    "[monarch] dropping memory_suggestion for {} with no current quest",
+                    "[monarch] dropping memory_suggestion for {} with no current objective",
                     agent_id
                 );
             }
         }
-        InnerEvent::QuestReport { report } => {
-            if let Some(quest_id) = current_quest_id {
-                cmds.push(PersistCommand::CompleteQuest {
+        InnerEvent::ObjectiveReport { report } => {
+            if let Some(objective_id) = current_objective_id {
+                cmds.push(PersistCommand::CompleteObjective {
                     agent_id: agent_id.to_string(),
-                    quest_id,
+                    objective_id,
                     report: report.clone(),
                 });
             } else {
                 eprintln!(
-                    "[monarch] dropping quest_report for {} with no current quest",
+                    "[monarch] dropping objective_report for {} with no current objective",
                     agent_id
                 );
             }

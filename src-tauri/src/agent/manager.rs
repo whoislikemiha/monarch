@@ -29,9 +29,9 @@ use super::commands::{ExtensionUiResponseRequest, SpawnAgentRequest};
 use super::event_handler::{emit_event, emit_state_event};
 use super::keeper::render_keeper_slice;
 use super::persist::{run_persist_consumer, PersistCommand};
-use super::quest_prompt::{
-    extract_text_from_stored_content, is_meaningful_quest_prompt, prompt_text,
-    quest_description_from_prompt, quest_title_from_prompt, rehydrate_user_content,
+use super::objective_prompt::{
+    extract_text_from_stored_content, is_meaningful_objective_prompt, prompt_text,
+    objective_description_from_prompt, objective_title_from_prompt, rehydrate_user_content,
 };
 use super::sidecar::SidecarProcess;
 use super::{TaskHandle, WsBroadcast};
@@ -123,8 +123,8 @@ pub(crate) enum InternalDispatch {
 #[derive(Debug, Clone)]
 pub(crate) enum KeeperRunTrigger {
     Continuous,
-    QuestClose {
-        quest_id: String,
+    ObjectiveClose {
+        objective_id: String,
         since: Option<String>,
     },
 }
@@ -133,14 +133,14 @@ impl KeeperRunTrigger {
     fn label(&self) -> &'static str {
         match self {
             Self::Continuous => "continuous",
-            Self::QuestClose { .. } => "quest_close",
+            Self::ObjectiveClose { .. } => "objective_close",
         }
     }
 
-    fn quest_id(&self) -> Option<&str> {
+    fn objective_id(&self) -> Option<&str> {
         match self {
             Self::Continuous => None,
-            Self::QuestClose { quest_id, .. } => Some(quest_id.as_str()),
+            Self::ObjectiveClose { objective_id, .. } => Some(objective_id.as_str()),
         }
     }
 }
@@ -316,8 +316,8 @@ impl AgentManager {
         let model_id = format!("{}/{}", km.provider, km.model);
 
         // Slice anchor. Continuous compaction resumes after the last
-        // successful Keeper run; quest-close distillation scopes to the
-        // quest's own lifetime.
+        // successful Keeper run; objective-close distillation scopes to the
+        // objective's own lifetime.
         let last_run = db
             .last_successful_keeper_run_internal(agent_id)
             .await
@@ -329,12 +329,12 @@ impl AgentManager {
             last_run.as_ref().and_then(|r| r.output_summary.clone());
         let since: Option<String> = match &trigger {
             KeeperRunTrigger::Continuous => last_completed_at,
-            KeeperRunTrigger::QuestClose { since, .. } => since.clone(),
+            KeeperRunTrigger::ObjectiveClose { since, .. } => since.clone(),
         };
-        let quest_id = match &trigger {
-            KeeperRunTrigger::QuestClose { quest_id, .. } => Some(quest_id.clone()),
+        let objective_id = match &trigger {
+            KeeperRunTrigger::ObjectiveClose { objective_id, .. } => Some(objective_id.clone()),
             KeeperRunTrigger::Continuous => db
-                .get_agent_current_quest_id_internal(agent_id)
+                .get_agent_current_objective_id_internal(agent_id)
                 .await
                 .ok()
                 .flatten(),
@@ -388,13 +388,13 @@ impl AgentManager {
             out
         };
 
-        // P6 Slice D (MON-122): fold the first-person quest report into the
-        // slice on quest-close runs so the Keeper sees the executor's own
+        // P6 Slice D (MON-122): fold the first-person objective report into the
+        // slice on objective-close runs so the Keeper sees the executor's own
         // framing alongside the raw stream. Continuous runs never include a
-        // report even when a current quest happens to be set.
-        let quest_close_report: Option<String> = match &trigger {
-            KeeperRunTrigger::QuestClose { quest_id, .. } => db
-                .get_quest_report_by_quest_internal(quest_id)
+        // report even when a current objective happens to be set.
+        let objective_close_report: Option<String> = match &trigger {
+            KeeperRunTrigger::ObjectiveClose { objective_id, .. } => db
+                .get_objective_report_by_objective_internal(objective_id)
                 .await
                 .ok()
                 .flatten()
@@ -406,14 +406,14 @@ impl AgentManager {
             prior_summary.as_deref(),
             &related,
             &kept,
-            quest_close_report.as_deref(),
+            objective_close_report.as_deref(),
         );
 
         let run_id = db
             .insert_keeper_run_internal(
                 agent_id,
                 &trigger_label,
-                quest_id.as_deref().or_else(|| trigger.quest_id()),
+                objective_id.as_deref().or_else(|| trigger.objective_id()),
                 &model_id,
             )
             .await?;
@@ -761,14 +761,14 @@ impl AgentManager {
             }
         }
         if let SidecarCommand::Prompt { message, .. } = &cmd {
-            self.maybe_auto_create_quest_for_prompt(app, db, &id, message)
+            self.maybe_auto_create_objective_for_prompt(app, db, &id, message)
                 .await;
         }
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
             .await
     }
 
-    async fn maybe_auto_create_quest_for_prompt(
+    async fn maybe_auto_create_objective_for_prompt(
         &self,
         app: &AppHandle,
         db: &Arc<Database>,
@@ -776,35 +776,35 @@ impl AgentManager {
         message: &serde_json::Value,
     ) {
         let text = prompt_text(message);
-        if !is_meaningful_quest_prompt(&text) {
+        if !is_meaningful_objective_prompt(&text) {
             return;
         }
-        let title = quest_title_from_prompt(&text)
+        let title = objective_title_from_prompt(&text)
             .unwrap_or_else(|| format!("Task from {}", crate::util::chrono_now()));
-        let description = quest_description_from_prompt(&text);
+        let description = objective_description_from_prompt(&text);
         match db
-            .auto_create_current_quest_internal(agent_id, &title, description.as_deref())
+            .auto_create_current_objective_internal(agent_id, &title, description.as_deref())
             .await
         {
-            Ok(Some(quest_id)) => {
-                let payload = serde_json::json!({ "id": quest_id, "agentId": agent_id });
+            Ok(Some(objective_id)) => {
+                let payload = serde_json::json!({ "id": objective_id, "agentId": agent_id });
                 emit_event(
                     app,
                     &self.ws_broadcast,
-                    &format!("quest-created-{}", quest_id),
+                    &format!("objective-created-{}", objective_id),
                     &payload.to_string(),
                 );
                 emit_event(
                     app,
                     &self.ws_broadcast,
-                    &format!("quest-created-for-agent-{}", agent_id),
+                    &format!("objective-created-for-agent-{}", agent_id),
                     &payload.to_string(),
                 );
             }
             Ok(None) => {}
             Err(e) => {
                 eprintln!(
-                    "[monarch] auto quest creation failed for {}: {:?}",
+                    "[monarch] auto objective creation failed for {}: {:?}",
                     agent_id, e
                 );
             }
@@ -1073,7 +1073,7 @@ mod tests {
     use crate::sidecar_protocol::SidecarCommand;
     use crate::websocket::{self, WsState};
     use super::super::keeper::render_keeper_slice;
-    use super::super::quest_prompt::is_meaningful_quest_prompt;
+    use super::super::objective_prompt::is_meaningful_objective_prompt;
     use tokio::sync::broadcast;
 
     fn seeded_agent_state(agent_id: &str, session_id: &str) -> AgentState {
@@ -1087,10 +1087,10 @@ mod tests {
         }
     }
 
-    // ---- P6 Slice D (MON-122): render_keeper_slice quest-report wiring ----
+    // ---- P6 Slice D (MON-122): render_keeper_slice objective-report wiring ----
 
     #[test]
-    fn render_keeper_slice_includes_quest_report_section_when_present() {
+    fn render_keeper_slice_includes_objective_report_section_when_present() {
         let slice = render_keeper_slice(
             None,
             &[],
@@ -1104,14 +1104,14 @@ mod tests {
     }
 
     #[test]
-    fn render_keeper_slice_omits_quest_report_section_when_absent() {
+    fn render_keeper_slice_omits_objective_report_section_when_absent() {
         let slice = render_keeper_slice(None, &[], &[], None);
         assert!(!slice.contains("## QUEST REPORT"));
         assert!(slice.contains("## RECENT ACTIVITY"));
     }
 
     #[test]
-    fn render_keeper_slice_omits_quest_report_section_when_whitespace() {
+    fn render_keeper_slice_omits_objective_report_section_when_whitespace() {
         // Defensive: an upstream caller that handed us an empty payload
         // string should not produce a header above nothing.
         let slice = render_keeper_slice(None, &[], &[], Some("   \n   "));
@@ -1119,21 +1119,21 @@ mod tests {
     }
 
     #[test]
-    fn auto_quest_heuristic_ignores_chitchat() {
-        assert!(!is_meaningful_quest_prompt("thanks"));
-        assert!(!is_meaningful_quest_prompt("how are you?"));
-        assert!(!is_meaningful_quest_prompt("ok"));
+    fn auto_objective_heuristic_ignores_chitchat() {
+        assert!(!is_meaningful_objective_prompt("thanks"));
+        assert!(!is_meaningful_objective_prompt("how are you?"));
+        assert!(!is_meaningful_objective_prompt("ok"));
     }
 
     #[test]
-    fn auto_quest_heuristic_accepts_task_prompts() {
-        assert!(is_meaningful_quest_prompt(
+    fn auto_objective_heuristic_accepts_task_prompts() {
+        assert!(is_meaningful_objective_prompt(
             "fix the failing memory retrieval test"
         ));
-        assert!(is_meaningful_quest_prompt(
-            "let's set up the auto quest ticket first"
+        assert!(is_meaningful_objective_prompt(
+            "let's set up the auto objective ticket first"
         ));
-        assert!(is_meaningful_quest_prompt(
+        assert!(is_meaningful_objective_prompt(
             "Please inspect the Rust sidecar protocol and update the roadmap notes."
         ));
     }

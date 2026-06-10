@@ -13,7 +13,7 @@
 //! next, and errors still surface via `mark_agent_desynced`.
 
 mod messages;
-mod quests;
+mod objectives;
 mod util;
 
 use dashmap::DashMap;
@@ -24,12 +24,12 @@ use tauri::AppHandle;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::db::{
-    Database, InsertMemoryPayload, MessageRow, RecordQuestEventPayload, SaveClassificationPayload,
-    SetPlanPayload, WriteQuestReportPayload,
+    Database, InsertMemoryPayload, MessageRow, RecordObjectiveEventPayload, SaveClassificationPayload,
+    SetPlanPayload, WriteObjectiveReportPayload,
 };
 use crate::error::MonarchError;
 use crate::memory::index::MemoryIndex;
-use crate::sidecar_protocol::QuestReport;
+use crate::sidecar_protocol::ObjectiveReport;
 
 use super::event_handler::mark_agent_desynced;
 use super::manager::AgentStateEntry;
@@ -135,49 +135,49 @@ pub(super) enum PersistCommand {
         tokens_in: Option<i64>,
         tokens_out: Option<i64>,
     },
-    /// MON-122: P6 Slice D — attribute a quest's first-person report to the
+    /// MON-122: P6 Slice D — attribute a objective's first-person report to the
     /// Keeper run that distilled it. Sent from `handle_keeper_result` after a
-    /// successful `quest_close` run that had a report row. No-op when no
-    /// report exists for the quest. Rides the pipeline so the write is
+    /// successful `objective_close` run that had a report row. No-op when no
+    /// report exists for the objective. Rides the pipeline so the write is
     /// serialized with the in-flight `InsertMemory` / `CompleteKeeperRun`
     /// commands from the same run.
-    AttributeQuestReport {
+    AttributeObjectiveReport {
         agent_id: String,
-        quest_id: String,
+        objective_id: String,
         run_id: i64,
     },
-    /// MON-100 / MON-83: append one row to `quest_events` and broadcast on
-    /// `quest-event-{questId}` so the QuestTimelineTool wakes. Wraps the
-    /// existing `db.record_quest_event_internal` + `agent::emit_event` pair
-    /// from the `db_record_quest_event` Tauri command.
-    RecordQuestEvent {
-        payload: RecordQuestEventPayload,
+    /// MON-100 / MON-83: append one row to `objective_events` and broadcast on
+    /// `objective-event-{objectiveId}` so the ObjectiveTimelineTool wakes. Wraps the
+    /// existing `db.record_objective_event_internal` + `agent::emit_event` pair
+    /// from the `db_record_objective_event` Tauri command.
+    RecordObjectiveEvent {
+        payload: RecordObjectiveEventPayload,
     },
-    /// MON-119: P6 Slice A — upsert a first-person quest report. The
-    /// sidecar `complete_quest(report)` tool in Slice B is the intended
+    /// MON-119: P6 Slice A — upsert a first-person objective report. The
+    /// sidecar `complete_objective(report)` tool in Slice B is the intended
     /// producer; this variant lives here so the pipeline is ready when
     /// that wiring lands. Captain-initiated saves bypass the pipeline and
-    /// go straight through the `db_save_quest_report` Tauri command,
-    /// matching the `db_create_quest_ref` precedent.
-    WriteQuestReport {
-        payload: WriteQuestReportPayload,
+    /// go straight through the `db_save_objective_report` Tauri command,
+    /// matching the `db_create_objective_ref` precedent.
+    WriteObjectiveReport {
+        payload: WriteObjectiveReportPayload,
     },
-    /// MON-120: P6 Slice B — the executor's `complete_quest` produced a
+    /// MON-120: P6 Slice B — the executor's `complete_objective` produced a
     /// first-person report. The apply upserts the report into
-    /// `quest_reports`, then for a terminal `outcome` (`done` / `abandoned`)
-    /// transitions the quest's status and runs the same quest-close side
-    /// effects as the captain's `db_update_quest` path (status_change
-    /// event, clear current-quest pointer, dispatch quest-close Keeper).
-    /// Report write happens before the status transition so the quest-close
+    /// `objective_reports`, then for a terminal `outcome` (`done` / `abandoned`)
+    /// transitions the objective's status and runs the same objective-close side
+    /// effects as the captain's `db_update_objective` path (status_change
+    /// event, clear current-objective pointer, dispatch objective-close Keeper).
+    /// Report write happens before the status transition so the objective-close
     /// Keeper tick (Slice D) sees the report.
-    CompleteQuest {
+    CompleteObjective {
         agent_id: String,
-        quest_id: String,
-        report: QuestReport,
+        objective_id: String,
+        report: ObjectiveReport,
     },
     ActionTransition {
         agent_id: String,
-        quest_id: String,
+        objective_id: String,
         intent: String,
         previous_outcome: Option<String>,
     },
@@ -187,13 +187,13 @@ pub(super) enum PersistCommand {
     },
     ExecutorDecision {
         agent_id: String,
-        quest_id: String,
+        objective_id: String,
         decision: String,
         rationale: Option<String>,
     },
     ToolCallStart {
         agent_id: String,
-        quest_id: String,
+        objective_id: String,
         tool_call_id: String,
         tool_name: String,
         args: Option<serde_json::Value>,
@@ -205,7 +205,7 @@ pub(super) enum PersistCommand {
         is_error: bool,
         duration_ms: Option<i64>,
     },
-    /// P4b: bulk replace a quest's plan. The sidecar `set_plan` tool
+    /// P4b: bulk replace a objective's plan. The sidecar `set_plan` tool
     /// emits this; manual UI edits go directly through the Tauri
     /// command path (which calls `Database::set_plan_internal`).
     PlanSet {
@@ -219,8 +219,8 @@ pub(super) enum PersistCommand {
         item_id: String,
     },
     /// P4b: complete the currently active plan item on the agent's
-    /// current quest. The active item is looked up server-side from
-    /// `quest_plan_items.status = 'active'`.
+    /// current objective. The active item is looked up server-side from
+    /// `objective_plan_items.status = 'active'`.
     PlanItemComplete {
         agent_id: String,
         outcome: Option<String>,
@@ -267,18 +267,18 @@ impl PersistCommand {
             | Self::PlanItemComplete { agent_id, .. }
             | Self::PlanItemSkip { agent_id, .. }
             | Self::PlanItemBlock { agent_id, .. }
-            | Self::CompleteQuest { agent_id, .. }
-            | Self::AttributeQuestReport { agent_id, .. } => agent_id,
+            | Self::CompleteObjective { agent_id, .. }
+            | Self::AttributeObjectiveReport { agent_id, .. } => agent_id,
             Self::SaveClassification { payload } => &payload.agent_id,
-            // CompleteKeeperRun + RecordQuestEvent + WriteQuestReport don't
+            // CompleteKeeperRun + RecordObjectiveEvent + WriteObjectiveReport don't
             // carry an agent id directly — failures still log but cannot
             // flip a per-agent desync flag. Empty string causes the
             // consumer's desync helper to short-circuit
-            // (`if agent_id.is_empty()`). WriteQuestReport resolves the
-            // agent from quest_nodes.assignee_shadow_id inside the apply.
+            // (`if agent_id.is_empty()`). WriteObjectiveReport resolves the
+            // agent from objective_nodes.assignee_shadow_id inside the apply.
             Self::CompleteKeeperRun { .. }
-            | Self::RecordQuestEvent { .. }
-            | Self::WriteQuestReport { .. } => "",
+            | Self::RecordObjectiveEvent { .. }
+            | Self::WriteObjectiveReport { .. } => "",
         }
     }
 
@@ -349,7 +349,7 @@ impl PersistCommand {
                 tokens_in,
                 tokens_out,
             } => {
-                quests::apply_complete_keeper_run(
+                objectives::apply_complete_keeper_run(
                     db,
                     run_id,
                     outcome,
@@ -359,66 +359,66 @@ impl PersistCommand {
                 )
                 .await
             }
-            Self::AttributeQuestReport {
+            Self::AttributeObjectiveReport {
                 agent_id: _,
-                quest_id,
+                objective_id,
                 run_id,
-            } => quests::apply_attribute_quest_report(db, quest_id, run_id).await,
-            Self::RecordQuestEvent { payload } => {
-                quests::apply_record_quest_event(db, app, ws_tx, payload).await
+            } => objectives::apply_attribute_objective_report(db, objective_id, run_id).await,
+            Self::RecordObjectiveEvent { payload } => {
+                objectives::apply_record_objective_event(db, app, ws_tx, payload).await
             }
-            Self::WriteQuestReport { payload } => {
-                quests::apply_write_quest_report(db, app, ws_tx, payload).await
+            Self::WriteObjectiveReport { payload } => {
+                objectives::apply_write_objective_report(db, app, ws_tx, payload).await
             }
-            Self::CompleteQuest {
+            Self::CompleteObjective {
                 agent_id: _,
-                quest_id,
+                objective_id,
                 report,
-            } => quests::apply_complete_quest(db, app, ws_tx, quest_id, report).await,
+            } => objectives::apply_complete_objective(db, app, ws_tx, objective_id, report).await,
             Self::ActionTransition {
                 agent_id,
-                quest_id,
+                objective_id,
                 intent,
                 previous_outcome,
             } => {
-                quests::apply_action_transition(
+                objectives::apply_action_transition(
                     db,
                     app,
                     ws_tx,
                     agent_id,
-                    quest_id,
+                    objective_id,
                     intent,
                     previous_outcome,
                 )
                 .await
             }
             Self::ActionComplete { agent_id, outcome } => {
-                quests::apply_action_complete(db, app, ws_tx, agent_id, outcome).await
+                objectives::apply_action_complete(db, app, ws_tx, agent_id, outcome).await
             }
             Self::ExecutorDecision {
                 agent_id,
-                quest_id,
+                objective_id,
                 decision,
                 rationale,
             } => {
-                quests::apply_executor_decision(
-                    db, app, ws_tx, agent_id, quest_id, decision, rationale,
+                objectives::apply_executor_decision(
+                    db, app, ws_tx, agent_id, objective_id, decision, rationale,
                 )
                 .await
             }
             Self::ToolCallStart {
                 agent_id,
-                quest_id,
+                objective_id,
                 tool_call_id,
                 tool_name,
                 args,
             } => {
-                quests::apply_tool_call_start(
+                objectives::apply_tool_call_start(
                     db,
                     app,
                     ws_tx,
                     agent_id,
-                    quest_id,
+                    objective_id,
                     tool_call_id,
                     tool_name,
                     args,
@@ -432,28 +432,28 @@ impl PersistCommand {
                 duration_ms,
                 ..
             } => {
-                quests::apply_tool_call_end(db, app, ws_tx, tool_call_id, result, is_error, duration_ms)
+                objectives::apply_tool_call_end(db, app, ws_tx, tool_call_id, result, is_error, duration_ms)
                     .await
             }
             Self::PlanSet { payload, .. } => {
-                quests::apply_plan_set(db, app, ws_tx, payload).await
+                objectives::apply_plan_set(db, app, ws_tx, payload).await
             }
             Self::PlanItemStart { item_id, .. } => {
-                quests::apply_plan_item_start(db, app, ws_tx, item_id).await
+                objectives::apply_plan_item_start(db, app, ws_tx, item_id).await
             }
             Self::PlanItemComplete { agent_id, outcome } => {
-                quests::apply_plan_item_complete(db, app, ws_tx, agent_id, outcome).await
+                objectives::apply_plan_item_complete(db, app, ws_tx, agent_id, outcome).await
             }
             Self::PlanItemSkip {
                 agent_id,
                 item_id,
                 reason,
-            } => quests::apply_plan_item_skip(db, app, ws_tx, agent_id, item_id, reason).await,
+            } => objectives::apply_plan_item_skip(db, app, ws_tx, agent_id, item_id, reason).await,
             Self::PlanItemBlock {
                 agent_id,
                 item_id,
                 reason,
-            } => quests::apply_plan_item_block(db, app, ws_tx, agent_id, item_id, reason).await,
+            } => objectives::apply_plan_item_block(db, app, ws_tx, agent_id, item_id, reason).await,
             Self::RebuildHnsw { agent_id } => {
                 messages::apply_rebuild_hnsw(db, memory_index, agent_id).await
             }
@@ -507,11 +507,11 @@ pub(super) async fn run_persist_consumer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::CreateQuestPayload;
-    use crate::sidecar_protocol::{InnerEvent, QuestReport};
+    use crate::db::CreateObjectivePayload;
+    use crate::sidecar_protocol::{InnerEvent, ObjectiveReport};
 
-    fn sample_report(outcome: &str) -> QuestReport {
-        QuestReport {
+    fn sample_report(outcome: &str) -> ObjectiveReport {
+        ObjectiveReport {
             summary: "shipped slice B".to_string(),
             outcome: outcome.to_string(),
             decisions: vec![],
@@ -523,13 +523,13 @@ mod tests {
         }
     }
 
-    /// Create a quest with no assignee — the report's `agent_id` resolves to
+    /// Create a objective with no assignee — the report's `agent_id` resolves to
     /// NULL, so no agent row is needed for the FK.
-    async fn seed_quest(db: &Database) -> String {
-        db.create_quest_internal(&CreateQuestPayload {
+    async fn seed_objective(db: &Database) -> String {
+        db.create_objective_internal(&CreateObjectivePayload {
             id: None,
             parent_id: None,
-            title: "Test quest".to_string(),
+            title: "Test objective".to_string(),
             description: None,
             status: Some("in_progress".to_string()),
             grade: Some("C".to_string()),
@@ -538,12 +538,12 @@ mod tests {
             created_by: Some("monarch".to_string()),
         })
         .await
-        .expect("create quest")
+        .expect("create objective")
     }
 
-    /// Consumer context with no `AppHandle`. The `CompleteQuest` apply still
-    /// upserts the report and transitions quest status (both DB-only); only
-    /// `handle_quest_update_side_effects` is gated on the handle and skipped.
+    /// Consumer context with no `AppHandle`. The `CompleteObjective` apply still
+    /// upserts the report and transitions objective status (both DB-only); only
+    /// `handle_objective_update_side_effects` is gated on the handle and skipped.
     fn headless_ctx() -> (
         Arc<MemoryIndex>,
         Arc<PlMutex<Option<AppHandle>>>,
@@ -556,8 +556,8 @@ mod tests {
     }
 
     #[test]
-    fn quest_report_event_builds_complete_quest_command() {
-        let event = InnerEvent::QuestReport {
+    fn objective_report_event_builds_complete_objective_command() {
+        let event = InnerEvent::ObjectiveReport {
             report: sample_report("done"),
         };
         let cmds = build_persist_commands(
@@ -566,28 +566,28 @@ mod tests {
             &event,
             None,
             EventDurations::default(),
-            Some("quest-1".to_string()),
+            Some("objective-1".to_string()),
         );
-        // LogEvent is always first; CompleteQuest follows.
+        // LogEvent is always first; CompleteObjective follows.
         assert_eq!(cmds.len(), 2);
         assert!(matches!(cmds[0], PersistCommand::LogEvent { .. }));
         match &cmds[1] {
-            PersistCommand::CompleteQuest {
+            PersistCommand::CompleteObjective {
                 agent_id,
-                quest_id,
+                objective_id,
                 report,
             } => {
                 assert_eq!(agent_id, "agent-1");
-                assert_eq!(quest_id, "quest-1");
+                assert_eq!(objective_id, "objective-1");
                 assert_eq!(report.outcome, "done");
             }
-            other => panic!("expected CompleteQuest, got {:?}", other),
+            other => panic!("expected CompleteObjective, got {:?}", other),
         }
     }
 
     #[test]
-    fn quest_report_event_without_current_quest_drops_command() {
-        let event = InnerEvent::QuestReport {
+    fn objective_report_event_without_current_objective_drops_command() {
+        let event = InnerEvent::ObjectiveReport {
             report: sample_report("done"),
         };
         let cmds = build_persist_commands(
@@ -598,21 +598,21 @@ mod tests {
             EventDurations::default(),
             None,
         );
-        // Only the always-on LogEvent — no CompleteQuest without a quest.
+        // Only the always-on LogEvent — no CompleteObjective without a objective.
         assert_eq!(cmds.len(), 1);
         assert!(matches!(cmds[0], PersistCommand::LogEvent { .. }));
     }
 
     #[tokio::test]
-    async fn complete_quest_apply_writes_report_and_closes_done() {
+    async fn complete_objective_apply_writes_report_and_closes_done() {
         let db = Database::new_in_memory().await.expect("db");
-        let quest_id = seed_quest(&db).await;
+        let objective_id = seed_objective(&db).await;
         let (memory_index, app, ws_tx) = headless_ctx();
         let mut ctx = PersistContext::default();
 
-        PersistCommand::CompleteQuest {
+        PersistCommand::CompleteObjective {
             agent_id: "agent-1".to_string(),
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             report: sample_report("done"),
         }
         .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
@@ -621,59 +621,59 @@ mod tests {
 
         // The report row landed, carrying the structured payload verbatim.
         let report = db
-            .get_quest_report_by_quest_internal(&quest_id)
+            .get_objective_report_by_objective_internal(&objective_id)
             .await
             .expect("get report")
             .expect("report row");
         assert!(report.payload.contains("shipped slice B"));
 
-        // ...and the quest closed as done with a completion timestamp.
-        let quest = db
-            .get_quest_internal(&quest_id)
+        // ...and the objective closed as done with a completion timestamp.
+        let objective = db
+            .get_objective_internal(&objective_id)
             .await
-            .expect("get quest")
-            .expect("quest");
-        assert_eq!(quest.status, "done");
-        assert!(quest.completed_at.is_some());
-        assert!(quest.abandoned_at.is_none());
+            .expect("get objective")
+            .expect("objective");
+        assert_eq!(objective.status, "done");
+        assert!(objective.completed_at.is_some());
+        assert!(objective.abandoned_at.is_none());
     }
 
     #[tokio::test]
-    async fn complete_quest_apply_abandoned_sets_abandoned_status() {
+    async fn complete_objective_apply_abandoned_sets_abandoned_status() {
         let db = Database::new_in_memory().await.expect("db");
-        let quest_id = seed_quest(&db).await;
+        let objective_id = seed_objective(&db).await;
         let (memory_index, app, ws_tx) = headless_ctx();
         let mut ctx = PersistContext::default();
 
-        PersistCommand::CompleteQuest {
+        PersistCommand::CompleteObjective {
             agent_id: "agent-1".to_string(),
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             report: sample_report("abandoned"),
         }
         .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
         .await
         .expect("apply");
 
-        let quest = db
-            .get_quest_internal(&quest_id)
+        let objective = db
+            .get_objective_internal(&objective_id)
             .await
-            .expect("get quest")
-            .expect("quest");
-        assert_eq!(quest.status, "abandoned");
-        assert!(quest.abandoned_at.is_some());
-        assert!(quest.completed_at.is_none());
+            .expect("get objective")
+            .expect("objective");
+        assert_eq!(objective.status, "abandoned");
+        assert!(objective.abandoned_at.is_some());
+        assert!(objective.completed_at.is_none());
     }
 
     #[tokio::test]
-    async fn complete_quest_apply_blocked_writes_report_leaves_quest_open() {
+    async fn complete_objective_apply_blocked_writes_report_leaves_objective_open() {
         let db = Database::new_in_memory().await.expect("db");
-        let quest_id = seed_quest(&db).await;
+        let objective_id = seed_objective(&db).await;
         let (memory_index, app, ws_tx) = headless_ctx();
         let mut ctx = PersistContext::default();
 
-        PersistCommand::CompleteQuest {
+        PersistCommand::CompleteObjective {
             agent_id: "agent-1".to_string(),
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             report: sample_report("blocked"),
         }
         .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
@@ -682,54 +682,54 @@ mod tests {
 
         // Non-terminal outcome: the report is still recorded...
         let report = db
-            .get_quest_report_by_quest_internal(&quest_id)
+            .get_objective_report_by_objective_internal(&objective_id)
             .await
             .expect("get report");
         assert!(report.is_some());
 
-        // ...but the quest stays open at its original status.
-        let quest = db
-            .get_quest_internal(&quest_id)
+        // ...but the objective stays open at its original status.
+        let objective = db
+            .get_objective_internal(&objective_id)
             .await
-            .expect("get quest")
-            .expect("quest");
-        assert_eq!(quest.status, "in_progress");
-        assert!(quest.completed_at.is_none());
-        assert!(quest.abandoned_at.is_none());
+            .expect("get objective")
+            .expect("objective");
+        assert_eq!(objective.status, "in_progress");
+        assert!(objective.completed_at.is_none());
+        assert!(objective.abandoned_at.is_none());
     }
 
-    // ---- P6 Slice D (MON-122): AttributeQuestReport apply path -----------
+    // ---- P6 Slice D (MON-122): AttributeObjectiveReport apply path -----------
 
-    /// Seed a quest, upsert a first-person report on it, and insert a Keeper
-    /// run row. Returns `(quest_id, report_id, run_id)` for the test to drive
+    /// Seed a objective, upsert a first-person report on it, and insert a Keeper
+    /// run row. Returns `(objective_id, report_id, run_id)` for the test to drive
     /// the attribute command.
-    async fn seed_quest_report_and_run(db: &Database) -> (String, String, i64) {
-        let quest_id = seed_quest(db).await;
+    async fn seed_objective_report_and_run(db: &Database) -> (String, String, i64) {
+        let objective_id = seed_objective(db).await;
         let report_id = db
-            .upsert_quest_report_internal(&crate::db::WriteQuestReportPayload {
+            .upsert_objective_report_internal(&crate::db::WriteObjectiveReportPayload {
                 id: None,
-                quest_id: quest_id.clone(),
+                objective_id: objective_id.clone(),
                 payload: "{\"summary\":\"slice D test\",\"outcome\":\"done\"}".to_string(),
             })
             .await
             .expect("upsert report");
         let run_id = db
-            .insert_keeper_run_internal("agent-1", "quest_close", Some(&quest_id), "test/model")
+            .insert_keeper_run_internal("agent-1", "objective_close", Some(&objective_id), "test/model")
             .await
             .expect("insert keeper run");
-        (quest_id, report_id, run_id)
+        (objective_id, report_id, run_id)
     }
 
     #[tokio::test]
-    async fn attribute_quest_report_sets_distilled_by_keeper_run_id() {
+    async fn attribute_objective_report_sets_distilled_by_keeper_run_id() {
         let db = Database::new_in_memory().await.expect("db");
         let (memory_index, app, ws_tx) = headless_ctx();
         let mut ctx = PersistContext::default();
-        let (quest_id, _report_id, run_id) = seed_quest_report_and_run(&db).await;
+        let (objective_id, _report_id, run_id) = seed_objective_report_and_run(&db).await;
 
-        PersistCommand::AttributeQuestReport {
+        PersistCommand::AttributeObjectiveReport {
             agent_id: "agent-1".to_string(),
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             run_id,
         }
         .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
@@ -737,7 +737,7 @@ mod tests {
         .expect("apply");
 
         let report = db
-            .get_quest_report_by_quest_internal(&quest_id)
+            .get_objective_report_by_objective_internal(&objective_id)
             .await
             .expect("get report")
             .expect("report row");
@@ -745,31 +745,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn attribute_quest_report_rewrites_attribution_on_rerun() {
+    async fn attribute_objective_report_rewrites_attribution_on_rerun() {
         let db = Database::new_in_memory().await.expect("db");
         let (memory_index, app, ws_tx) = headless_ctx();
         let mut ctx = PersistContext::default();
-        let (quest_id, _report_id, first_run) = seed_quest_report_and_run(&db).await;
+        let (objective_id, _report_id, first_run) = seed_objective_report_and_run(&db).await;
         let second_run = db
-            .insert_keeper_run_internal("agent-1", "quest_close", Some(&quest_id), "test/model")
+            .insert_keeper_run_internal("agent-1", "objective_close", Some(&objective_id), "test/model")
             .await
             .expect("second run");
 
         // First attribution.
-        PersistCommand::AttributeQuestReport {
+        PersistCommand::AttributeObjectiveReport {
             agent_id: "agent-1".to_string(),
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             run_id: first_run,
         }
         .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
         .await
         .expect("apply first");
 
-        // Re-running the Keeper for the same quest must overwrite cleanly,
+        // Re-running the Keeper for the same objective must overwrite cleanly,
         // not violate uniqueness.
-        PersistCommand::AttributeQuestReport {
+        PersistCommand::AttributeObjectiveReport {
             agent_id: "agent-1".to_string(),
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             run_id: second_run,
         }
         .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
@@ -777,7 +777,7 @@ mod tests {
         .expect("apply second");
 
         let report = db
-            .get_quest_report_by_quest_internal(&quest_id)
+            .get_objective_report_by_objective_internal(&objective_id)
             .await
             .expect("get report")
             .expect("report row");
@@ -785,23 +785,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn attribute_quest_report_is_noop_when_no_report_exists() {
+    async fn attribute_objective_report_is_noop_when_no_report_exists() {
         let db = Database::new_in_memory().await.expect("db");
         let (memory_index, app, ws_tx) = headless_ctx();
         let mut ctx = PersistContext::default();
 
-        // Quest exists, report does not. Quest-close runs can still fire on
-        // quests that never produced a report (e.g. captain-edited close),
+        // Objective exists, report does not. Objective-close runs can still fire on
+        // objectives that never produced a report (e.g. captain-edited close),
         // and the apply must not error on that path.
-        let quest_id = seed_quest(&db).await;
+        let objective_id = seed_objective(&db).await;
         let run_id = db
-            .insert_keeper_run_internal("agent-1", "quest_close", Some(&quest_id), "test/model")
+            .insert_keeper_run_internal("agent-1", "objective_close", Some(&objective_id), "test/model")
             .await
             .expect("insert keeper run");
 
-        PersistCommand::AttributeQuestReport {
+        PersistCommand::AttributeObjectiveReport {
             agent_id: "agent-1".to_string(),
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             run_id,
         }
         .apply(&db, &memory_index, &app, &ws_tx, &mut ctx)
@@ -810,7 +810,7 @@ mod tests {
 
         // Sanity: still no report row was created by the no-op.
         let report = db
-            .get_quest_report_by_quest_internal(&quest_id)
+            .get_objective_report_by_objective_internal(&objective_id)
             .await
             .expect("get report");
         assert!(report.is_none());

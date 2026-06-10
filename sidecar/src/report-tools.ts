@@ -3,7 +3,7 @@ import { Type } from "@mariozechner/pi-ai";
 import type { EmitFn } from "./ui-bridge.js";
 
 // Gentle length caps. Hard truncation rather than rejection — a
-// complete_quest call should never fail; the report should land even if a
+// complete_objective call should never fail; the report should land even if a
 // field is overlong. Mirrors the pattern in plan-tools.ts.
 const SUMMARY_MAX = 1500;
 const REFLECTION_MAX = 1500;
@@ -37,23 +37,23 @@ function cleanStringList(value: unknown, max: number): string[] {
 export function createReportTools(agentId: string, emit: EmitFn) {
 	return [
 		defineTool({
-			name: "complete_quest",
-			label: "Complete Quest",
+			name: "complete_objective",
+			label: "Complete Objective",
 			description:
-				"Write the first-person quest report and close the quest. Call this once, as the final action on a quest, when your work on it is finished.",
+				"Write the first-person objective report and close the objective. Call this once, as the final action on a objective, when your work on it is finished.",
 			promptSnippet:
-				"complete_quest(report) - write the first-person quest report and close the quest.",
+				"complete_objective(report) - write the first-person objective report and close the objective.",
 			promptGuidelines: [
-				"Call complete_quest exactly once per quest, when work on it is finished — it is the last thing you do on that quest.",
-				"The report is your own first-person account: what the quest was, what you decided and why, what you learned, what you produced, what is left.",
-				"outcome 'done' or 'abandoned' closes the quest; 'partial' or 'blocked' record the report but leave the quest open.",
+				"Call complete_objective exactly once per objective, when work on it is finished — it is the last thing you do on that objective.",
+				"The report is your own first-person account: what the objective was, what you decided and why, what you learned, what you produced, what is left.",
+				"outcome 'done' or 'abandoned' closes the objective; 'partial' or 'blocked' record the report but leave the objective open.",
 				"learned[] are your own suggestions to the Keeper — durable lessons, not a transcript. grade is your self-assessment; the Keeper or captain may override it.",
 			],
 			parameters: Type.Object({
 				report: Type.Object({
 					summary: Type.String({
 						description:
-							"One to a few sentences: what the quest was and how it went.",
+							"One to a few sentences: what the objective was and how it went.",
 					}),
 					outcome: Type.Union(
 						[
@@ -64,7 +64,7 @@ export function createReportTools(agentId: string, emit: EmitFn) {
 						],
 						{
 							description:
-								"done | blocked | abandoned | partial. 'done' and 'abandoned' close the quest; 'blocked' and 'partial' leave it open.",
+								"done | blocked | abandoned | partial. 'done' and 'abandoned' close the objective; 'blocked' and 'partial' leave it open.",
 						},
 					),
 					decisions: Type.Array(
@@ -80,7 +80,7 @@ export function createReportTools(agentId: string, emit: EmitFn) {
 						}),
 						{
 							description:
-								"Explicit decisions made during the quest. Empty array if none worth recording.",
+								"Explicit decisions made during the objective. Empty array if none worth recording.",
 						},
 					),
 					learned: Type.Array(Type.String(), {
@@ -98,20 +98,20 @@ export function createReportTools(agentId: string, emit: EmitFn) {
 							}),
 						}),
 						{
-							description: "Files or other artifacts the quest produced or changed.",
+							description: "Files or other artifacts the objective produced or changed.",
 						},
 					),
 					open_threads: Type.Array(Type.String(), {
 						description:
-							"Unfinished work, follow-ups, or known gaps left after this quest.",
+							"Unfinished work, follow-ups, or known gaps left after this objective.",
 					}),
 					reflection: Type.String({
 						description:
-							"Brief first-person reflection on how the quest went.",
+							"Brief first-person reflection on how the objective went.",
 					}),
 					grade: Type.String({
 						description:
-							"Your self-assessed grade for the quest (e.g. A, B, C). Self-suggested; may be overridden.",
+							"Your self-assessed grade for the objective (e.g. A, B, C). Self-suggested; may be overridden.",
 					}),
 				}),
 			}),
@@ -147,7 +147,7 @@ export function createReportTools(agentId: string, emit: EmitFn) {
 					type: "event",
 					agentId,
 					event: {
-						type: "quest_report",
+						type: "objective_report",
 						report,
 					},
 				});
@@ -158,8 +158,8 @@ export function createReportTools(agentId: string, emit: EmitFn) {
 						{
 							type: "text",
 							text: closed
-								? `Quest report recorded; quest closed as ${report.outcome}.`
-								: "Quest report recorded; quest left open.",
+								? `Objective report recorded; objective closed as ${report.outcome}.`
+								: "Objective report recorded; objective left open.",
 						},
 					],
 					details: { outcome: report.outcome, closed },

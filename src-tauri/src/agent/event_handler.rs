@@ -34,7 +34,7 @@ fn get_session_id(inner: &Arc<PlMutex<AgentManagerInner>>, agent_id: &str) -> Op
 
 /// Emit an event to both Tauri webview and WebSocket clients.
 /// MON-83: promoted from `pub(super)` to `pub(crate)` so non-agent
-/// command surfaces (e.g. quest CRUD in `db.rs`) can broadcast their own
+/// command surfaces (e.g. objective CRUD in `db.rs`) can broadcast their own
 /// event channels without rebuilding the dual-emit plumbing.
 pub(crate) fn emit_event(
     app: &AppHandle,
@@ -207,15 +207,15 @@ pub(super) async fn handle_sidecar_event(
             // apply clears the turn anchor and writes the duration onto the
             // ToolExecution — peeking after would see the mutation.
             let durations = compute_event_durations(live_states, &agent_id, &inner_event).await;
-            let current_quest_id =
-                current_quest_for_event(app, ws_tx, db, &agent_id, &inner_event).await;
+            let current_objective_id =
+                current_objective_for_event(app, ws_tx, db, &agent_id, &inner_event).await;
             for cmd in build_persist_commands(
                 &agent_id,
                 session_id,
                 &inner_event,
                 inner_raw,
                 durations,
-                current_quest_id,
+                current_objective_id,
             ) {
                 if persist_tx.send(cmd).await.is_err() {
                     eprintln!("[monarch] persist consumer closed, dropping event");
@@ -421,7 +421,7 @@ pub(super) async fn push_status_for_agent(
     emit_state_event(app, ws_tx, &entry.topic, &snap);
 }
 
-async fn current_quest_for_event(
+async fn current_objective_for_event(
     app: &AppHandle,
     ws_tx: &broadcast::Sender<WsBroadcast>,
     db: &Arc<Database>,
@@ -433,13 +433,13 @@ async fn current_quest_for_event(
         | InnerEvent::ToolExecutionStart { .. }
         | InnerEvent::ToolExecutionEnd { .. }
         | InnerEvent::ExecutorDecision { .. } => db
-            .get_agent_current_quest_id_internal(agent_id)
+            .get_agent_current_objective_id_internal(agent_id)
             .await
             .ok()
             .flatten(),
         InnerEvent::ActionTransition { intent, .. } => {
             if let Some(qid) = db
-                .get_agent_current_quest_id_internal(agent_id)
+                .get_agent_current_objective_id_internal(agent_id)
                 .await
                 .ok()
                 .flatten()
@@ -451,7 +451,7 @@ async fn current_quest_for_event(
                 return None;
             }
             match db
-                .auto_create_current_quest_internal(agent_id, title, None)
+                .auto_create_current_objective_internal(agent_id, title, None)
                 .await
             {
                 Ok(Some(qid)) => {
@@ -459,25 +459,25 @@ async fn current_quest_for_event(
                     emit_event(
                         app,
                         ws_tx,
-                        &format!("quest-created-{}", qid),
+                        &format!("objective-created-{}", qid),
                         &payload.to_string(),
                     );
                     emit_event(
                         app,
                         ws_tx,
-                        &format!("quest-created-for-agent-{}", agent_id),
+                        &format!("objective-created-for-agent-{}", agent_id),
                         &payload.to_string(),
                     );
                     Some(qid)
                 }
                 Ok(None) => db
-                    .get_agent_current_quest_id_internal(agent_id)
+                    .get_agent_current_objective_id_internal(agent_id)
                     .await
                     .ok()
                     .flatten(),
                 Err(e) => {
                     eprintln!(
-                        "[monarch] P4 action narration could not create quest for {}: {:?}",
+                        "[monarch] P4 action narration could not create objective for {}: {:?}",
                         agent_id, e
                     );
                     None

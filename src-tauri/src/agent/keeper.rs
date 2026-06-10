@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::db::{Database, InsertMemoryPayload, MemoryRow, MessageRow, RecordQuestEventPayload};
+use crate::db::{Database, InsertMemoryPayload, MemoryRow, MessageRow, RecordObjectiveEventPayload};
 use crate::sidecar_protocol::AtomicClaim;
 
 use super::event_handler::{emit_state_event, push_status_for_agent};
@@ -20,7 +20,7 @@ pub(super) fn render_keeper_slice(
     prior_summary: Option<&str>,
     related: &[MemoryRow],
     messages: &[MessageRow],
-    quest_report: Option<&str>,
+    objective_report: Option<&str>,
 ) -> String {
     let mut s = String::new();
     if let Some(p) = prior_summary {
@@ -39,11 +39,11 @@ pub(super) fn render_keeper_slice(
         s.push('\n');
     }
     // P6 Slice D (MON-122): the executor's first-person report on the closing
-    // quest, included only for quest-close runs. Placed before the raw stream
+    // objective, included only for objective-close runs. Placed before the raw stream
     // so the Keeper reads the executor's own framing first; the JSON shape is
     // kept verbatim (the report tool already trims field sizes) and the LLM
     // is told via the section header that this is first-person.
-    if let Some(report) = quest_report {
+    if let Some(report) = objective_report {
         let trimmed = report.trim();
         if !trimmed.is_empty() {
             s.push_str("## QUEST REPORT (first-person from the executor)\n\n");
@@ -53,7 +53,7 @@ pub(super) fn render_keeper_slice(
     }
     s.push_str("## RECENT ACTIVITY\n\n");
     for m in messages {
-        let body = super::quest_prompt::extract_text_from_stored_content(&m.content);
+        let body = super::objective_prompt::extract_text_from_stored_content(&m.content);
         let body = if body.trim().is_empty() {
             m.content.clone()
         } else {
@@ -134,7 +134,7 @@ pub(super) async fn maybe_trigger_keeper(
 ///
 /// On success: clear `keeper_in_flight` + reset `tokens_since_last_compaction`
 /// in the live state, then enqueue persist commands FIFO: N × InsertMemory →
-/// CompleteKeeperRun → RecordQuestEvent (when a current quest is set) →
+/// CompleteKeeperRun → RecordObjectiveEvent (when a current objective is set) →
 /// RebuildHnsw. The sidecar already rewrote Pi's `state.messages` in-place.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_keeper_result(
@@ -188,19 +188,19 @@ pub(super) async fn handle_keeper_result(
     let summary = compaction_summary.unwrap_or_default();
     let session_id = inner.lock().session_map.get(agent_id).cloned();
 
-    // Resolve the Keeper run provenance once. Quest-close runs must attach
-    // memories/events to the quest that closed, even if the agent has moved
-    // on and auto-created a new current quest before the model returns.
+    // Resolve the Keeper run provenance once. Objective-close runs must attach
+    // memories/events to the objective that closed, even if the agent has moved
+    // on and auto-created a new current objective before the model returns.
     let run_row = db.get_keeper_run_internal(run_id).await.ok().flatten();
     let trigger = run_row
         .as_ref()
         .map(|r| r.trigger.clone())
         .unwrap_or_else(|| "continuous".to_string());
-    let provenance_quest_id = run_row.as_ref().and_then(|r| r.quest_id.clone());
-    let current_quest_id = if provenance_quest_id.is_some() {
-        provenance_quest_id
+    let provenance_objective_id = run_row.as_ref().and_then(|r| r.objective_id.clone());
+    let current_objective_id = if provenance_objective_id.is_some() {
+        provenance_objective_id
     } else {
-        db.get_agent_current_quest_id_internal(agent_id)
+        db.get_agent_current_objective_id_internal(agent_id)
             .await
             .ok()
             .flatten()
@@ -222,7 +222,7 @@ pub(super) async fn handle_keeper_result(
             title: c.title.clone(),
             summary: c.summary.clone(),
             content: Some(c.content.clone()),
-            source_quest_id: current_quest_id.clone(),
+            source_objective_id: current_objective_id.clone(),
             source_session_id: session_id.clone(),
             source_events: None,
             file_refs: None,
@@ -256,16 +256,16 @@ pub(super) async fn handle_keeper_result(
         return;
     }
 
-    // P6 Slice D (MON-122): attribute the closing quest's first-person report
-    // to this Keeper run. Quest-close runs only; other triggers leave the
-    // report attribution alone. No-op when no report row exists for the quest
+    // P6 Slice D (MON-122): attribute the closing objective's first-person report
+    // to this Keeper run. Objective-close runs only; other triggers leave the
+    // report attribution alone. No-op when no report row exists for the objective
     // — logged inside the apply path so dispatch here can stay declarative.
-    if trigger == "quest_close" {
-        if let Some(qid) = run_row.as_ref().and_then(|r| r.quest_id.clone()) {
+    if trigger == "objective_close" {
+        if let Some(qid) = run_row.as_ref().and_then(|r| r.objective_id.clone()) {
             if persist_tx
-                .send(PersistCommand::AttributeQuestReport {
+                .send(PersistCommand::AttributeObjectiveReport {
                     agent_id: agent_id.to_string(),
-                    quest_id: qid,
+                    objective_id: qid,
                     run_id,
                 })
                 .await
@@ -276,10 +276,10 @@ pub(super) async fn handle_keeper_result(
         }
     }
 
-    // Compaction tick on the quest timeline — only when an agent has a
-    // current quest. Plan: when no quest is set, the run is visible only
+    // Compaction tick on the objective timeline — only when an agent has a
+    // current objective. Plan: when no objective is set, the run is visible only
     // via `memory_keeper_runs` and the new memories themselves.
-    if let Some(qid) = current_quest_id {
+    if let Some(qid) = current_objective_id {
         let payload_json = serde_json::json!({
             "keeper_run_id": run_id,
             "trigger": trigger,
@@ -288,9 +288,9 @@ pub(super) async fn handle_keeper_result(
         })
         .to_string();
         let _ = persist_tx
-            .send(PersistCommand::RecordQuestEvent {
-                payload: RecordQuestEventPayload {
-                    quest_id: qid,
+            .send(PersistCommand::RecordObjectiveEvent {
+                payload: RecordObjectiveEventPayload {
+                    objective_id: qid,
                     event_type: "compaction_tick".to_string(),
                     actor: Some("keeper".to_string()),
                     payload_json: Some(payload_json),
