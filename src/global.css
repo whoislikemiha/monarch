@@ -110,6 +110,79 @@
   --unsaved-badge-bg: rgba(255, 176, 32, 0.15);
 }
 
+/* ============================================================
+   VISUAL-LANGUAGE LAYER  (Monarch design system)
+   The foundation token vocabulary. Most tokens alias onto the
+   themed tokens above via var() indirection, so they re-theme
+   for free across purple/obsidian/midnight/light. Only the grade
+   ramp (no legacy equivalent) lives in the JS theme objects.
+   Depth = elevation + 1px border + space. No shadows on new UI.
+   ============================================================ */
+:root {
+  /* — Elevation ladder (deepest → raised) — */
+  --bg-sink: var(--bg-sidebar); /* deepest recesses, rails behind panels */
+  --bg-base: var(--bg-app); /* app canvas */
+  /* --bg-panel already defined above — the working surface */
+  --bg-raised: var(--bg-panel-2); /* inputs, hover, raised rows */
+  --bg-overlay: var(--bg-panel-3); /* selected/active fills, menus, tooltips */
+
+  /* — Text on accent fill — */
+  --accent-ink: var(--text-on-accent);
+
+  /* — Secondary accent — */
+  --accent-2: var(--accent-blue);
+  --accent-2-hover: var(--accent-blue-hover);
+
+  /* — Status (pair with shape + label, never color alone) — */
+  --status-success: var(--success);
+  --status-warning: var(--warning);
+  --status-error: var(--error);
+  --status-info: var(--accent-blue);
+
+  /* — Border mid-weight (subtle < border < strong) — */
+  --border: var(--accent-border-subtle);
+
+  /* — Focus ring + scrim — */
+  --focus: var(--accent);
+  --scrim: var(--overlay-backdrop);
+
+  /* — Spacing scale (4px base) — */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+  --s8: 64px;
+
+  /* — Radius scale (deliberately small; circle only for dots/avatars) — */
+  --r-sm: 2px;
+  --r-md: 4px;
+  --r-lg: 6px;
+  --r-full: 9999px;
+
+  /* — Row rhythm — re-scoped by data-density for narrow inspectors — */
+  --row-py: 7px;
+  --row-px: 12px;
+  --row-gap: 10px;
+}
+
+/* Compact density: ONLY for inspector panels ~300px wide.
+   Tightens rhythm; never shrinks type below 11px. */
+[data-density="compact"] {
+  --row-py: 4px;
+  --row-px: 8px;
+  --row-gap: 7px;
+}
+
+/* Mono helper — JetBrains Mono is reserved for data: ids, metrics,
+   paths, timestamps, code. Everything a human reads as language is Inter. */
+.mono {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-feature-settings: "zero" 1;
+}
+
 html,
 body,
 #app {

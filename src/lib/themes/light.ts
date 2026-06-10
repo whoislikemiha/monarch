@@ -110,4 +110,12 @@ export const light: Theme = {
 
   // Unsaved badge
   unsavedBadgeBg: "rgba(202, 138, 4, 0.1)",
+
+  // Grade ramp — darker variants for contrast on light surfaces
+  gradeE: "#766a88",
+  gradeD: "#1f9d57",
+  gradeC: "#0a6ebd",
+  gradeB: "#6d28d9",
+  gradeA: "#b07d00",
+  gradeS: "#cf2370",
 };
