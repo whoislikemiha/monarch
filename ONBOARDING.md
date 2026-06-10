@@ -189,12 +189,15 @@ CREATE INDEX idx_memories_layer    ON memories(layer);
 CREATE INDEX idx_events_agent      ON events(agent_id);
 CREATE INDEX idx_events_type       ON events(event_type);
 
--- MON-83: Quest system. Fractal unit of work. Quests are orthogonal
--- to sessions: a quest can span sessions, a session can span quests.
-CREATE TABLE quest_nodes (
+-- MON-83 / P1: Objective system. Fractal unit of work. Objectives are
+-- orthogonal to sessions: an objective can span sessions, a session can span
+-- objectives. P1 adds `kind`: each project has one campaign (kind='campaign',
+-- parent_id=NULL, root_id=self, linked from projects.root_objective_id) and
+-- all real work is kind='objective' branching under it.
+CREATE TABLE objective_nodes (
   id                    TEXT PRIMARY KEY,
-  root_id               TEXT NOT NULL,           -- root of this quest's tree
-  parent_id             TEXT REFERENCES quest_nodes(id) ON DELETE CASCADE,
+  root_id               TEXT NOT NULL,           -- root of this objective's tree
+  parent_id             TEXT REFERENCES objective_nodes(id) ON DELETE CASCADE,
   title                 TEXT NOT NULL,
   description           TEXT,
   status                TEXT NOT NULL,           -- pending | in_progress | claimed_done
@@ -207,8 +210,8 @@ CREATE TABLE quest_nodes (
   worktree_path         TEXT,
   branch_name           TEXT,
   base_branch           TEXT,
-  branched_from_id      TEXT REFERENCES quest_nodes(id),   -- fork lineage
-  superseded_by_id      TEXT REFERENCES quest_nodes(id),   -- fork-winner pointer
+  branched_from_id      TEXT REFERENCES objective_nodes(id),   -- fork lineage
+  superseded_by_id      TEXT REFERENCES objective_nodes(id),   -- fork-winner pointer
   created_by            TEXT NOT NULL,           -- architect | steward | orchestrator | monarch
   created_at            TEXT NOT NULL DEFAULT (datetime('now')),
   started_at            TEXT,
@@ -218,17 +221,18 @@ CREATE TABLE quest_nodes (
   actual_tokens         INTEGER,
   estimated_duration_ms INTEGER,
   actual_duration_ms    INTEGER,
-  summary               TEXT                     -- Memory-Keeper-distilled on done (Slice 8)
+  summary               TEXT,                    -- Memory-Keeper-distilled on done (Slice 8)
+  kind                  TEXT NOT NULL DEFAULT 'objective'  -- P1: 'campaign' | 'objective'
 );
 
-CREATE TABLE quest_events (
+CREATE TABLE objective_events (
   id                     TEXT PRIMARY KEY,
-  quest_id               TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
+  objective_id               TEXT NOT NULL REFERENCES objective_nodes(id) ON DELETE CASCADE,
   event_type             TEXT NOT NULL,          -- coherent_action | tool_call | action_outcome | status_change | ...
   actor                  TEXT,                   -- concrete writer id/name, usually shadow_id
   payload_json           TEXT,
   created_at             TEXT NOT NULL DEFAULT (datetime('now')),
-  parent_event_id        TEXT REFERENCES quest_events(id) ON DELETE CASCADE,
+  parent_event_id        TEXT REFERENCES objective_events(id) ON DELETE CASCADE,
   author                 TEXT,                   -- executor | chat_shadow | captain | keeper | system
   surface_override       TEXT,                   -- optional renderer hint
   payload_schema_version INTEGER NOT NULL DEFAULT 1
@@ -236,13 +240,13 @@ CREATE TABLE quest_events (
 
 CREATE TABLE agent_working_memory (
   agent_id     TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
-  payload_json TEXT NOT NULL,                    -- L2 v0: current_action, recent_actions, current quest path
+  payload_json TEXT NOT NULL,                    -- L2 v0: current_action, recent_actions, current objective path
   updated_at   TEXT NOT NULL
 );
 
-CREATE TABLE quest_refs (
+CREATE TABLE objective_refs (
   id            TEXT PRIMARY KEY,
-  quest_id      TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
+  objective_id      TEXT NOT NULL REFERENCES objective_nodes(id) ON DELETE CASCADE,
   ref_type      TEXT NOT NULL,                    -- linear | github_issue | github_pr | file | url | artifact | ...
   label         TEXT,
   target        TEXT NOT NULL,
@@ -252,26 +256,29 @@ CREATE TABLE quest_refs (
   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- FK extensions on existing tables. messages.quest_id is still mostly
--- event/roadmap territory; agents.current_quest_id is populated by
--- auto-created active quests and cleared when that exact quest closes.
-ALTER TABLE messages ADD COLUMN quest_id         TEXT REFERENCES quest_nodes(id);
-ALTER TABLE agents   ADD COLUMN current_quest_id TEXT REFERENCES quest_nodes(id);
-ALTER TABLE quest_nodes ADD COLUMN scope             TEXT;
-ALTER TABLE quest_nodes ADD COLUMN current_direction TEXT;
-ALTER TABLE quest_nodes ADD COLUMN rationale         TEXT;
-ALTER TABLE quest_nodes ADD COLUMN fork_parent_id    TEXT REFERENCES quest_nodes(id);
+-- FK extensions on existing tables. messages.objective_id is still mostly
+-- event/roadmap territory; agents.current_objective_id is populated by
+-- auto-created active objectives and cleared when that exact objective closes.
+ALTER TABLE messages ADD COLUMN objective_id         TEXT REFERENCES objective_nodes(id);
+ALTER TABLE agents   ADD COLUMN current_objective_id TEXT REFERENCES objective_nodes(id);
+-- P1: project ↔ campaign link. ensure_campaign_root_internal creates the one
+-- campaign root per project on detect and points root_objective_id at it.
+ALTER TABLE projects ADD COLUMN root_objective_id TEXT REFERENCES objective_nodes(id);
+ALTER TABLE objective_nodes ADD COLUMN scope             TEXT;
+ALTER TABLE objective_nodes ADD COLUMN current_direction TEXT;
+ALTER TABLE objective_nodes ADD COLUMN rationale         TEXT;
+ALTER TABLE objective_nodes ADD COLUMN fork_parent_id    TEXT REFERENCES objective_nodes(id);
 
-CREATE INDEX idx_quest_nodes_root           ON quest_nodes(root_id);
-CREATE INDEX idx_quest_nodes_parent         ON quest_nodes(parent_id);
-CREATE INDEX idx_quest_nodes_assignee_status ON quest_nodes(assignee_shadow_id, status);
-CREATE INDEX idx_quest_events_quest         ON quest_events(quest_id, created_at);
-CREATE INDEX idx_quest_events_parent        ON quest_events(parent_event_id);
-CREATE INDEX idx_quest_refs_quest           ON quest_refs(quest_id, created_at);
-CREATE INDEX idx_messages_quest             ON messages(quest_id);
+CREATE INDEX idx_objective_nodes_root           ON objective_nodes(root_id);
+CREATE INDEX idx_objective_nodes_parent         ON objective_nodes(parent_id);
+CREATE INDEX idx_objective_nodes_assignee_status ON objective_nodes(assignee_shadow_id, status);
+CREATE INDEX idx_objective_events_objective         ON objective_events(objective_id, created_at);
+CREATE INDEX idx_objective_events_parent        ON objective_events(parent_event_id);
+CREATE INDEX idx_objective_refs_objective           ON objective_refs(objective_id, created_at);
+CREATE INDEX idx_messages_objective             ON messages(objective_id);
 ```
 
-`quest_events` is the execution narrative spine. Top-level `coherent_action` events describe what the executor is doing; child `tool_call`, `action_outcome`, and `executor_decision` events attach evidence and decisions to the action. `actor` remains the concrete writer id/name; `author` answers which semantic role wrote the event. `agent_working_memory` stores L2 v0 for fast rehydration (`current_action`, `recent_actions`, current quest path) plus the active/next plan-item slice. Durable `quest_plan_items` store the intended route, and `quest_events.plan_item_id` links actual coherent actions back to the active plan item without making timeline actions into plan rows. Rich quest fields (`scope`, `current_direction`, `rationale`) are the captain-facing what/why layer; `quest_refs` links external artifacts while keeping the quest canonical.
+`objective_events` is the execution narrative spine. Top-level `coherent_action` events describe what the executor is doing; child `tool_call`, `action_outcome`, and `executor_decision` events attach evidence and decisions to the action. `actor` remains the concrete writer id/name; `author` answers which semantic role wrote the event. `agent_working_memory` stores L2 v0 for fast rehydration (`current_action`, `recent_actions`, current objective path) plus the active/next plan-item slice. Durable `objective_plan_items` store the intended route, and `objective_events.plan_item_id` links actual coherent actions back to the active plan item without making timeline actions into plan rows. Rich objective fields (`scope`, `current_direction`, `rationale`) are the captain-facing what/why layer; `objective_refs` links external artifacts while keeping the objective canonical.
 
 ### Session ancestry — the key concept
 
@@ -392,7 +399,7 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 | `load_session`            | Inject an array of messages into the session (used on restore and recovery). |
 | `set_custom_prompt`       | Replace the active system prompt; also updates the `promptRef` closure. |
 | `extension_ui_response`   | Reply to a pending Pi extension UI request. |
-| `keeper_run`              | Ask the sidecar Keeper worker to distill a recent message slice into memory claims. Carries `trigger` (`continuous` or `quest_close`) so future prompt/model tiers can branch. |
+| `keeper_run`              | Ask the sidecar Keeper worker to distill a recent message slice into memory claims. Carries `trigger` (`continuous` or `objective_close`) so future prompt/model tiers can branch. |
 | `memory_search_response`  | Reply to a pending sidecar memory lookup request before a user turn is forwarded to Pi. |
 
 ### Sidecar → Rust (events)
@@ -417,11 +424,11 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 | `agent-event-{id}`        | Varies (JSON) | Out-of-band signals only: `session_ready`, `sidecar_error`, `extension_ui_request`. **Message and tool forwarding on this channel is deprecated** — a follow-up issue removes the Rust-side emit after verifying no frontend subscribers remain. |
 | `agent-exit-{id}`         | `number \| null` | Pi process exit code. |
 | `agent-stderr-{id}`       | `string` | Per-line sidecar stderr, buffered into `agent.stderrLines`. |
-| `quest-created-{id}`      | `{ id }` | A quest node was created; known-root subscribers re-fetch. |
-| `quest-created-for-agent-{id}` | `{ id, agentId }` | A root quest was created for an agent, including auto-created current quests. The Quest Timeline listens here so an empty timeline wakes up. |
-| `quest-updated-{rootId}` / `quest-event-{questId}` | `{ id, ... }` | Quest tree or event-log invalidation for the toolbox timeline. |
+| `objective-created-{id}`      | `{ id }` | A objective node was created; known-root subscribers re-fetch. |
+| `objective-created-for-agent-{id}` | `{ id, agentId }` | An objective was created for an agent — including auto-created current objectives, which P1 branches under the project's campaign root (not a fresh per-turn root; project-less agents create nothing). The Objective Timeline listens here so an empty timeline wakes up. |
+| `objective-updated-{rootId}` / `objective-event-{objectiveId}` | `{ id, ... }` | Objective tree or event-log invalidation for the toolbox timeline. |
 
-Quest close lifecycle: `db_update_quest` compares the previous and updated status. A transition to `done` records a `status_change` event, clears `agents.current_quest_id` only when it still points at that quest, and dispatches a Keeper run with `trigger='quest_close'`, `quest_id` populated, and a slice anchored at `quest_nodes.started_at ?? created_at`. Keeper results use the run row's quest provenance for memory `source_quest_id` and `compaction_tick` events, not the agent's later current quest.
+Objective close lifecycle: `db_update_objective` compares the previous and updated status. A transition to `done` records a `status_change` event, clears `agents.current_objective_id` only when it still points at that objective, and dispatches a Keeper run with `trigger='objective_close'`, `objective_id` populated, and a slice anchored at `objective_nodes.started_at ?? created_at`. Keeper results use the run row's objective provenance for memory `source_objective_id` and `compaction_tick` events, not the agent's later current objective.
 
 `LiveAgentState` is defined in Rust at `src-tauri/src/agent/state.rs`; the TypeScript shape is generated via `specta` + `tauri-specta` into `src/lib/bindings.ts`. To regenerate after a Rust change, run `cargo run -- --export-bindings` from `src-tauri/` — the generated file is post-processed to route through `$lib/api` so the WS fallback still works in non-Tauri environments.
 
@@ -673,8 +680,8 @@ A quick map of the delta between [VISION.md](./VISION.md) and reality. Not exhau
 | Tool-call interception & approval flows | ❌ | Events flow through Rust but there's no gate to pause a tool call. Tracked under the *Agent loop* project in Linear. |
 | Memory keeper / layered memory | ⚠️ Partial | P2 substrate, Keeper writes, and user-turn retrieval are wired. Editing, project sharing, reranking/evals, stale-file validation, and polished Inspector workflows remain roadmap work. |
 | Executor narration / L2 working memory | ⚠️ Partial | Backend substrate, sidecar narration tools, nested timeline rendering, and Agent View `Now`/recent-action strip are wired. P4b extends the strip with active/next plan context. |
-| Durable execution plans | ⚠️ Partial | `quest_plan_items`, active/next plan slice in L2, action-to-plan links, sidecar plan tools, manual plan panel, plan lifecycle rows, and action chips are wired. Future work: richer plan editing, chat-shadow/architect plan manipulation, and decomposition. |
-| Rich quest model / editor | ⚠️ Partial | P5 backend metadata and `quest_refs` are wired. Quest detail/editor UI is next. |
+| Durable execution plans | ⚠️ Partial | `objective_plan_items`, active/next plan slice in L2, action-to-plan links, sidecar plan tools, manual plan panel, plan lifecycle rows, and action chips are wired. Future work: richer plan editing, chat-shadow/architect plan manipulation, and decomposition. |
+| Rich objective model / editor | ⚠️ Partial | P5 backend metadata and `objective_refs` are wired. Objective detail/editor UI is next. |
 | Context inspector / manipulation UI | ❌ | No way to see what Pi actually has in context. Tracked under *Memory & context tools*. |
 | Time travel / branching UI | ⚠️ Partial | Session ancestry supports branching in the data model, but no UI for rewind/fork. |
 | Headless loop / mobile / remote | ❌ | Tauri desktop only. No web server, no tunnel. |
@@ -700,12 +707,12 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `agent/manager.rs` | `AgentManager`, live-state types, `spawn_agent`, crash recovery. |
 | `agent/sidecar.rs` | Sidecar spawn, stdin/stdout I/O, crash recovery. |
 | `agent/event_handler.rs` | Inbound sidecar event dispatch + snapshot emission. |
-| `agent/persist/` | Single-consumer persistence pipeline; messages.rs, quests.rs, util.rs. |
+| `agent/persist/` | Single-consumer persistence pipeline; messages.rs, objectives.rs, util.rs. |
 | `agent/keeper.rs` | Keeper trigger/result handling + memory-slice rendering. |
-| `agent/quest_prompt.rs` | Quest-prompt heuristics + `rehydrate_user_content`. |
+| `agent/objective_prompt.rs` | Objective-prompt heuristics + `rehydrate_user_content`. |
 | `agent/commands.rs` | Tauri command wrappers + request DTOs. |
 | `agent/state.rs` | `LiveAgentState` event-to-state assembly. |
-| `db/` | SQLite persistence, split by domain: `mod.rs` (Database struct + facade re-exports), `schema.rs` (migrations), `agents.rs`, `sessions.rs`, `projects.rs`, `quests.rs`, `plans.rs`, `reports.rs`, `memories.rs`, `identity.rs`, `classifications.rs`, `misc.rs`. |
+| `db/` | SQLite persistence, split by domain: `mod.rs` (Database struct + facade re-exports), `schema.rs` (migrations), `agents.rs`, `sessions.rs`, `projects.rs`, `objectives.rs`, `plans.rs`, `reports.rs`, `memories.rs`, `identity.rs`, `classifications.rs`, `misc.rs`. |
 | `sidecar_protocol/` | JSONL wire protocol types; config.rs, commands.rs, events.rs, types.rs. |
 | `models.rs` | Provider discovery, model listing, auth status. |
 | `persistence.rs` | Prompt file I/O under `~/.config/monarch/prompts/`. |
