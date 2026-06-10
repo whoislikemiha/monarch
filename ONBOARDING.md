@@ -12,7 +12,7 @@ For the one-paragraph pitch, read [README.md](./README.md). For the product visi
 monarch/
 ├── src/                # Svelte 5 frontend (TypeScript + .svelte components)
 ├── src-tauri/          # Rust backend (Tauri v2)
-│   ├── src/            # Rust source: main.rs, lib.rs, agent/, db.rs, sidecar_protocol/, ws/, models.rs, persistence.rs
+│   ├── src/            # Rust source: main.rs, lib.rs, agent/, db/, sidecar_protocol/, ws/, models.rs, persistence.rs
 │   ├── tauri.conf.json # Window, dev URL, frontend dist path
 │   ├── Cargo.toml      # Rust deps
 │   └── build.rs        # Tauri build hook
@@ -116,7 +116,7 @@ At startup, Rust looks for `sidecar/dist/index.js` in this order (`src-tauri/src
 
 ## 4. Data model
 
-SQLite lives at `~/.config/monarch/monarch.db` (XDG-ish — `dirs::config_dir()` on each OS). Schema is created in [`src-tauri/src/db.rs`](./src-tauri/src/db.rs) (`init_schema`).
+SQLite lives at `~/.config/monarch/monarch.db` (XDG-ish — `dirs::config_dir()` on each OS). Schema is created in [`src-tauri/src/db/schema.rs`](./src-tauri/src/db/schema.rs) (`init_schema`).
 
 ### Tables
 
@@ -336,7 +336,7 @@ Sidecar ([`sidecar/src/runtime-manager.ts`](./sidecar/src/runtime-manager.ts) `c
 4. Pi runs the LLM loop, streaming events (`message_start` → `message_update` → `message_end`, `tool_execution_*`, `turn_*`).
 5. Sidecar forwards every Pi event to Rust.
 6. Rust's async event handler (`handle_sidecar_event`) does three things on each `event`-typed line:
-   - Enqueues persistence effects on the bounded single-consumer mpsc pipeline (`PersistCommand`), which applies them in FIFO order by awaiting the async `Database` methods directly — no `spawn_blocking` hop, since `db.rs` runs on `tokio-rusqlite`.
+   - Enqueues persistence effects on the bounded single-consumer mpsc pipeline (`PersistCommand`), which applies them in FIFO order by awaiting the async `Database` methods directly — no `spawn_blocking` hop, since `db/` runs on `tokio-rusqlite`.
    - Feeds the event into the per-agent `LiveAgentState::apply_event` state machine (`src-tauri/src/agent_state.rs`) — Rust owns turn assembly: streaming messages, tool-group stitching, `lastUsage`, `activityStatus`, etc.
    - Emits the assembled snapshot on `agent-state-{agent_id}` as a JSON-encoded string, with a 16ms debounce coalescing streaming `message_update`s (terminal events flush immediately).
 7. Legacy `agent-event-{agent_id}` forwarding is still present for out-of-band signals only: `session_ready`, `sidecar_error`, and `extension_ui_request`. **Message and tool events are not consumed from this channel by the frontend anymore.** The raw `event` forward on this topic is pending removal (MON-14 follow-up).
@@ -704,7 +704,7 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `agent/keeper.rs` | Keeper trigger/result handling + memory-slice rendering. |
 | `agent/quest_prompt.rs` | Quest-prompt heuristics + `rehydrate_user_content`. |
 | `agent/commands.rs` | Tauri command wrappers + request DTOs. |
-| `db.rs` | SQLite schema, CRUD, ancestry walk. |
+| `db/` | SQLite persistence, split by domain: `mod.rs` (Database struct + facade re-exports), `schema.rs` (migrations), `agents.rs`, `sessions.rs`, `projects.rs`, `quests.rs`, `plans.rs`, `reports.rs`, `memories.rs`, `identity.rs`, `classifications.rs`, `misc.rs`. |
 | `sidecar_protocol/` | JSONL wire protocol types; config.rs, commands.rs, events.rs, types.rs. |
 | `models.rs` | Provider discovery, model listing, auth status. |
 | `mention.rs` | `list_paths` command — walks cwd for the @-mention file/folder autocomplete (ignore-crate + nucleo-matcher). |

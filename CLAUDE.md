@@ -87,7 +87,7 @@ If you add a new table, command, event channel, or convention — it belongs in 
 | Rust     | `src-tauri/src/agent/quest_prompt.rs`                 | Quest-prompt heuristics + `rehydrate_user_content`                          |
 | Rust     | `src-tauri/src/agent/commands.rs`                     | Tauri command wrappers + request DTOs                                       |
 | Rust     | `src-tauri/src/agent_state.rs`                        | Event-to-state assembly (`LiveAgentState`)                                  |
-| Rust     | `src-tauri/src/db.rs`                                 | SQLite schema and persistence (`tokio-rusqlite`)                            |
+| Rust     | `src-tauri/src/db/`                                   | SQLite persistence (`tokio-rusqlite`), split by domain; schema/migrations in `db/schema.rs` |
 | Rust     | `src-tauri/src/sidecar_protocol/`                     | JSONL wire protocol types; split into config.rs, commands.rs, events.rs, types.rs |
 | Rust     | `src-tauri/src/models.rs`                             | Provider auth, model cache                                                  |
 | Rust     | `src-tauri/src/persistence.rs`                        | Prompt/avatar/attachment file I/O                                           |
