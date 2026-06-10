@@ -79,6 +79,12 @@ pub(crate) async fn db_get_objective_tree_for_root(state: &WsState, args: Value)
     serde_json::to_value(tree).map_err(MonarchError::from)
 }
 
+pub(crate) async fn db_get_campaign_root_for_agent(state: &WsState, args: Value) -> Result<Value, MonarchError> {
+    let agent_id = str_field(&args, "agentId")?;
+    let root = state.db.get_campaign_root_for_agent_internal(&agent_id).await?;
+    serde_json::to_value(root).map_err(MonarchError::from)
+}
+
 pub(crate) async fn db_record_objective_event(state: &WsState, args: Value) -> Result<Value, MonarchError> {
     let payload: crate::db::RecordObjectiveEventPayload =
         serde_json::from_value(args.get("payload").cloned().unwrap_or(args.clone()))
