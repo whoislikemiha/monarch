@@ -7,7 +7,7 @@
 //! - `persist`        — single-consumer persistence pipeline (MON-37).
 //! - `commands`       — Tauri command wrappers + request DTOs.
 //! - `keeper`         — `render_keeper_slice`, `maybe_trigger_keeper`, `handle_keeper_result`.
-//! - `quest_prompt`   — quest-prompt heuristics and content helpers.
+//! - `objective_prompt`   — objective-prompt heuristics and content helpers.
 //!
 //! Cross-cutting types (`WsBroadcast`, `TaskHandle`) and the
 //! `DEBOUNCE_MILLIS` constant live here so every submodule can reach them
@@ -21,7 +21,7 @@ mod event_handler;
 mod keeper;
 mod manager;
 mod persist;
-mod quest_prompt;
+mod objective_prompt;
 mod sidecar;
 
 // DTOs re-exported at the module root so `crate::agent::SpawnAgentRequest`
@@ -34,7 +34,7 @@ pub(crate) use manager::KeeperRunTrigger;
 
 /// MON-83: cross-module access to the dual (Tauri + WS) emit helper so
 /// non-agent command surfaces can broadcast their own event channels
-/// (e.g. `quest-created-{id}`) through the same broadcast pipeline.
+/// (e.g. `objective-created-{id}`) through the same broadcast pipeline.
 pub(crate) use event_handler::emit_event;
 
 /// Debounce window for streaming `message_update` events. Token-rate chunks

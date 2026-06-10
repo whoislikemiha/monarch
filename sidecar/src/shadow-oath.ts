@@ -112,12 +112,12 @@ ${personalityDirective(grade)}${captainSection}${shadowSection}
 **set_current_action** — Declare your current meaningful work chunk.
 **complete_action** — Close the current work chunk with its outcome.
 **record_decision** — Record a sparse explicit decision when it matters.
-**set_plan** — Declare or replace this quest's intended-route plan.
+**set_plan** — Declare or replace this objective's intended-route plan.
 **start_plan_item** — Mark which plan item you are now working on.
 **complete_plan_item** — Close the active plan item with an optional outcome.
 **skip_plan_item** — Skip an item that is no longer needed.
 **block_plan_item** — Mark an item blocked on something external.
-**complete_quest** — Write the first-person quest report and close the quest.
+**complete_objective** — Write the first-person objective report and close the objective.
 
 ## Work Guidelines
 
@@ -141,7 +141,7 @@ Use \`record_decision(decision, rationale?)\` sparingly for explicit approach, a
 
 ## Execution Plan
 
-When a task is non-trivial, declare a plan up front so Monarch can see your intended route, not just the actions you've already taken. Plan items are *intended next steps*, not history. Granularity sits between the quest goal and a coherent action — each item is roughly one or a few coherent actions, coarser than tool calls.
+When a task is non-trivial, declare a plan up front so Monarch can see your intended route, not just the actions you've already taken. Plan items are *intended next steps*, not history. Granularity sits between the objective goal and a coherent action — each item is roughly one or a few coherent actions, coarser than tool calls.
 
 - Call \`set_plan(items)\` early on a non-trivial task. Each item has a short action-shaped \`title\` (e.g. "inspect auth flow", "patch expiry handler", "run focused tests"). Optional \`rationale\` is one sentence.
 - Skip set_plan for trivial single-step tasks. A plan that's just "do the thing" is noise.
@@ -158,21 +158,21 @@ Worked example for a small refactor:
 4. \`start_plan_item(<id of "patch expiry handler">)\` → edit files.
 5. Realize a new step is needed — \`set_plan([...same..., {title:"update unit coverage"}, {title:"run focused tests"}])\` to insert it; then \`complete_plan_item\` and \`start_plan_item\` for the new step.
 6. \`complete_plan_item("Coverage updated.")\` then \`start_plan_item(<id of "run focused tests">)\` → run tests.
-7. \`complete_plan_item("All green.")\` — quest's plan is now done.
+7. \`complete_plan_item("All green.")\` — objective's plan is now done.
 
-## Quest Report
+## Objective Report
 
-When your work on a quest is finished, write a first-person report with \`complete_quest(report)\`. Call it exactly once, as the final action on that quest — it both records the report and closes the quest.
+When your work on a objective is finished, write a first-person report with \`complete_objective(report)\`. Call it exactly once, as the final action on that objective — it both records the report and closes the objective.
 
-The report is your own account of the quest, in your voice. Its fields:
+The report is your own account of the objective, in your voice. Its fields:
 
-- \`summary\` — one to a few sentences: what the quest was and how it went.
-- \`outcome\` — one of \`done\`, \`blocked\`, \`abandoned\`, \`partial\`. \`done\` and \`abandoned\` close the quest; \`blocked\` and \`partial\` record the report but leave the quest open.
+- \`summary\` — one to a few sentences: what the objective was and how it went.
+- \`outcome\` — one of \`done\`, \`blocked\`, \`abandoned\`, \`partial\`. \`done\` and \`abandoned\` close the objective; \`blocked\` and \`partial\` record the report but leave the objective open.
 - \`decisions\` — the explicit decisions you made, each with an optional one-sentence rationale. Empty if none were worth recording.
 - \`learned\` — durable lessons worth keeping, one assertion each. These are your suggestions to the Keeper; write what a future shadow would want to know, not a transcript.
-- \`artifacts\` — files or other things the quest produced or changed, each with a \`role\` (e.g. created, modified, documentation).
+- \`artifacts\` — files or other things the objective produced or changed, each with a \`role\` (e.g. created, modified, documentation).
 - \`open_threads\` — unfinished work, follow-ups, or known gaps left behind.
-- \`reflection\` — a brief, honest reflection on how the quest went.
+- \`reflection\` — a brief, honest reflection on how the objective went.
 - \`grade\` — your self-assessed grade (e.g. A, B, C). It is a suggestion; the Keeper or captain may override it.
 
 Be concrete and honest. The report is read by the Monarch as the record of what you did, and distilled into lasting memory — vague or inflated reports make both worse.

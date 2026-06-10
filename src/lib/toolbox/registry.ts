@@ -1,7 +1,7 @@
 import ContextInspectorTool from "./tools/ContextInspectorTool.svelte";
 import ShadowStatsTool from "./tools/ShadowStatsTool.svelte";
 import PlaceholderTool from "./tools/PlaceholderTool.svelte";
-import QuestTimelineTool from "./tools/QuestTimelineTool.svelte";
+import ObjectiveTimelineTool from "./tools/ObjectiveTimelineTool.svelte";
 import ClassifierSettingsTool from "./tools/ClassifierSettingsTool.svelte";
 import IdentityTool from "./tools/IdentityTool.svelte";
 import MemoryInspectorTool from "./tools/MemoryInspectorTool.svelte";
@@ -48,13 +48,13 @@ export const TOOLS: ToolDefinition[] = [
     component: ShadowStatsTool,
   },
   {
-    id: "quest-timeline",
-    title: "Quests",
+    id: "objective-timeline",
+    title: "Objectives",
     order: 20,
     hasBackend: true,
-    // compass / map icon — quest tree navigation
+    // compass / map icon — objective tree navigation
     icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polygon points="16 8 14 14 8 16 10 10 16 8"/></svg>`,
-    component: QuestTimelineTool,
+    component: ObjectiveTimelineTool,
   },
   {
     id: "classifier-settings",

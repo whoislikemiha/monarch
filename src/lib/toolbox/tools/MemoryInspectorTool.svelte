@@ -6,7 +6,7 @@
    *
    * Read-only in Slice A. No edit / archive / promote affordances —
    * those are P12. Selecting a memory shows full provenance (source
-   * quest, file refs, supersedes chain) so the captain can verify the
+   * objective, file refs, supersedes chain) so the captain can verify the
    * Keeper's writes once Slice B (MON-100) lands.
    */
   import { invoke } from "$lib/api";
@@ -137,7 +137,7 @@
       <aside class="tree">
         {#if memories.length === 0 && !loading}
           <p class="empty">
-            No memories yet. The Keeper will write some when a quest closes
+            No memories yet. The Keeper will write some when a objective closes
             (MON-100). For now you can use <code>memory_smoke_insert</code>
             from the dev console to populate one.
           </p>
@@ -197,8 +197,8 @@
               <dt>Created</dt><dd>{fmtTime(selected.createdAt)}</dd>
               <dt>Last accessed</dt><dd>{fmtTime(selected.lastAccessedAt)}</dd>
               <dt>Access count</dt><dd>{selected.accessCount}</dd>
-              {#if selected.sourceQuestId}
-                <dt>Source quest</dt><dd class="mono">{selected.sourceQuestId}</dd>
+              {#if selected.sourceObjectiveId}
+                <dt>Source objective</dt><dd class="mono">{selected.sourceObjectiveId}</dd>
               {/if}
               {#if selected.sourceSessionId}
                 <dt>Source session</dt><dd class="mono">{selected.sourceSessionId}</dd>

@@ -67,7 +67,7 @@ pub(super) fn prompt_text(message: &serde_json::Value) -> String {
     }
 }
 
-pub(super) fn is_meaningful_quest_prompt(text: &str) -> bool {
+pub(super) fn is_meaningful_objective_prompt(text: &str) -> bool {
     let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let lower = compact.to_lowercase();
     if compact.len() < 18 {
@@ -131,7 +131,7 @@ pub(super) fn is_meaningful_quest_prompt(text: &str) -> bool {
         || task_markers.iter().any(|marker| lower.contains(marker))
 }
 
-pub(super) fn quest_title_from_prompt(text: &str) -> Option<String> {
+pub(super) fn objective_title_from_prompt(text: &str) -> Option<String> {
     let first = text
         .lines()
         .map(str::trim)
@@ -153,7 +153,7 @@ pub(super) fn quest_title_from_prompt(text: &str) -> Option<String> {
     Some(title)
 }
 
-pub(super) fn quest_description_from_prompt(text: &str) -> Option<String> {
+pub(super) fn objective_description_from_prompt(text: &str) -> Option<String> {
     let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if compact.is_empty() {
         return None;

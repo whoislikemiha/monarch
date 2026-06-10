@@ -5,19 +5,19 @@ use tokio::sync::broadcast;
 
 use crate::agent::WsBroadcast;
 use crate::db::{
-    Database, QuestEventNotification, RecordQuestEventPayload, UpdateQuestPayload,
-    WriteQuestReportPayload,
+    Database, ObjectiveEventNotification, RecordObjectiveEventPayload, UpdateObjectivePayload,
+    WriteObjectiveReportPayload,
 };
 use crate::error::MonarchError;
-use crate::sidecar_protocol::QuestReport;
+use crate::sidecar_protocol::ObjectiveReport;
 use crate::util::chrono_now;
 
 use crate::agent::emit_event;
 
-pub(super) fn emit_quest_notifications(
+pub(super) fn emit_objective_notifications(
     app: &Arc<PlMutex<Option<AppHandle>>>,
     ws_tx: &broadcast::Sender<WsBroadcast>,
-    notes: Vec<QuestEventNotification>,
+    notes: Vec<ObjectiveEventNotification>,
 ) {
     if notes.is_empty() {
         return;
@@ -30,13 +30,13 @@ pub(super) fn emit_quest_notifications(
         emit_event(
             &app,
             ws_tx,
-            &format!("quest-event-{}", note.quest_id),
+            &format!("objective-event-{}", note.objective_id),
             &serde_json::json!({ "id": note.event_id, "eventType": note.event_type }).to_string(),
         );
     }
 }
 
-// ---- apply arms: quest / plan / report ----
+// ---- apply arms: objective / plan / report ----
 
 pub(super) async fn apply_complete_keeper_run(
     db: &Database,
@@ -50,88 +50,88 @@ pub(super) async fn apply_complete_keeper_run(
         .await
 }
 
-pub(super) async fn apply_attribute_quest_report(
+pub(super) async fn apply_attribute_objective_report(
     db: &Database,
-    quest_id: String,
+    objective_id: String,
     run_id: i64,
 ) -> Result<(), MonarchError> {
-    // No-op when no report row exists for the quest. Logged so a
+    // No-op when no report row exists for the objective. Logged so a
     // quiet wiring regression is visible, but never an error —
-    // a quest can close without ever having a report.
+    // a objective can close without ever having a report.
     let attributed = db
-        .attribute_quest_report_to_keeper_run_internal(&quest_id, run_id)
+        .attribute_objective_report_to_keeper_run_internal(&objective_id, run_id)
         .await?;
     if !attributed {
         eprintln!(
-            "[monarch] keeper run {} closed quest {} with no report to attribute",
-            run_id, quest_id
+            "[monarch] keeper run {} closed objective {} with no report to attribute",
+            run_id, objective_id
         );
     }
     Ok(())
 }
 
-pub(super) async fn apply_record_quest_event(
+pub(super) async fn apply_record_objective_event(
     db: &Database,
     app: &Arc<PlMutex<Option<AppHandle>>>,
     ws_tx: &broadcast::Sender<WsBroadcast>,
-    payload: RecordQuestEventPayload,
+    payload: RecordObjectiveEventPayload,
 ) -> Result<(), MonarchError> {
-    let quest_id = payload.quest_id.clone();
+    let objective_id = payload.objective_id.clone();
     let event_type = payload.event_type.clone();
-    let id = db.record_quest_event_internal(&payload).await?;
-    // Mirrors the `db_record_quest_event` Tauri command's broadcast
-    // so the QuestTimelineTool wakes regardless of how the event
+    let id = db.record_objective_event_internal(&payload).await?;
+    // Mirrors the `db_record_objective_event` Tauri command's broadcast
+    // so the ObjectiveTimelineTool wakes regardless of how the event
     // was authored (UI button, Keeper tick, executor, …).
     let app_opt = app.lock().clone();
     if let Some(app) = app_opt {
         emit_event(
             &app,
             ws_tx,
-            &format!("quest-event-{}", quest_id),
+            &format!("objective-event-{}", objective_id),
             &serde_json::json!({ "id": id, "eventType": event_type }).to_string(),
         );
     }
     Ok(())
 }
 
-pub(super) async fn apply_write_quest_report(
+pub(super) async fn apply_write_objective_report(
     db: &Database,
     app: &Arc<PlMutex<Option<AppHandle>>>,
     ws_tx: &broadcast::Sender<WsBroadcast>,
-    payload: WriteQuestReportPayload,
+    payload: WriteObjectiveReportPayload,
 ) -> Result<(), MonarchError> {
-    let quest_id = payload.quest_id.clone();
-    let id = db.upsert_quest_report_internal(&payload).await?;
-    // Same broadcast shape as RecordQuestEvent so the captain UI
+    let objective_id = payload.objective_id.clone();
+    let id = db.upsert_objective_report_internal(&payload).await?;
+    // Same broadcast shape as RecordObjectiveEvent so the captain UI
     // (Slice C) wakes when a Keeper or executor write lands,
-    // matching how `db_save_quest_report` Tauri command emits.
+    // matching how `db_save_objective_report` Tauri command emits.
     let app_opt = app.lock().clone();
     if let Some(app) = app_opt {
         emit_event(
             &app,
             ws_tx,
-            &format!("quest-report-{}", quest_id),
+            &format!("objective-report-{}", objective_id),
             &serde_json::json!({ "id": id, "action": "saved" }).to_string(),
         );
     }
     Ok(())
 }
 
-pub(super) async fn apply_complete_quest(
+pub(super) async fn apply_complete_objective(
     db: &Database,
     app: &Arc<PlMutex<Option<AppHandle>>>,
     ws_tx: &broadcast::Sender<WsBroadcast>,
-    quest_id: String,
-    report: QuestReport,
+    objective_id: String,
+    report: ObjectiveReport,
 ) -> Result<(), MonarchError> {
-    // 1. Persist the report first — the quest-close Keeper tick
+    // 1. Persist the report first — the objective-close Keeper tick
     //    (Slice D) must see it. The structured report is stored
     //    verbatim as the JSON `payload`.
     let payload_json = serde_json::to_string(&report)?;
     let report_id = db
-        .upsert_quest_report_internal(&WriteQuestReportPayload {
+        .upsert_objective_report_internal(&WriteObjectiveReportPayload {
             id: None,
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             payload: payload_json,
         })
         .await?;
@@ -140,23 +140,23 @@ pub(super) async fn apply_complete_quest(
         emit_event(
             app,
             ws_tx,
-            &format!("quest-report-{}", quest_id),
+            &format!("objective-report-{}", objective_id),
             &serde_json::json!({ "id": report_id, "action": "saved" }).to_string(),
         );
     }
-    // 2. Terminal outcomes close the quest. `blocked` / `partial`
+    // 2. Terminal outcomes close the objective. `blocked` / `partial`
     //    (and any unrecognized outcome) record the report but
-    //    leave the quest open.
+    //    leave the objective open.
     let new_status = match report.outcome.as_str() {
         "done" => Some("done"),
         "abandoned" => Some("abandoned"),
         _ => None,
     };
     if let Some(status) = new_status {
-        let before = db.get_quest_internal(&quest_id).await?;
+        let before = db.get_objective_internal(&objective_id).await?;
         let now = chrono_now();
-        db.update_quest_internal(&UpdateQuestPayload {
-            id: quest_id.clone(),
+        db.update_objective_internal(&UpdateObjectivePayload {
+            id: objective_id.clone(),
             title: None,
             description: None,
             scope: None,
@@ -173,11 +173,11 @@ pub(super) async fn apply_complete_quest(
             abandoned_at: (status == "abandoned").then(|| now.clone()),
         })
         .await?;
-        let after = db.get_quest_internal(&quest_id).await?;
-        // 3. Run the same quest-close side effects as the
-        //    captain's `db_update_quest` path: status_change
-        //    event, clear the agent current-quest pointer,
-        //    dispatch the quest-close Keeper run. Reached via
+        let after = db.get_objective_internal(&objective_id).await?;
+        // 3. Run the same objective-close side effects as the
+        //    captain's `db_update_objective` path: status_change
+        //    event, clear the agent current-objective pointer,
+        //    dispatch the objective-close Keeper run. Reached via
         //    `AppHandle::state()` because the persist consumer
         //    is not handed `AgentManager` directly.
         if let Some(app) = app_opt {
@@ -186,7 +186,7 @@ pub(super) async fn apply_complete_quest(
                 .state::<Arc<crate::agent::AgentManager>>()
                 .inner()
                 .clone();
-            crate::db::handle_quest_update_side_effects(&app, &db_arc, &mgr_arc, before, after)
+            crate::db::handle_objective_update_side_effects(&app, &db_arc, &mgr_arc, before, after)
                 .await?;
         }
     }
@@ -198,19 +198,19 @@ pub(super) async fn apply_action_transition(
     app: &Arc<PlMutex<Option<AppHandle>>>,
     ws_tx: &broadcast::Sender<WsBroadcast>,
     agent_id: String,
-    quest_id: String,
+    objective_id: String,
     intent: String,
     previous_outcome: Option<String>,
 ) -> Result<(), MonarchError> {
     let notes = db
         .record_action_transition_internal(
             &agent_id,
-            &quest_id,
+            &objective_id,
             &intent,
             previous_outcome.as_deref(),
         )
         .await?;
-    emit_quest_notifications(app, ws_tx, notes);
+    emit_objective_notifications(app, ws_tx, notes);
     Ok(())
 }
 
@@ -222,7 +222,7 @@ pub(super) async fn apply_action_complete(
     outcome: String,
 ) -> Result<(), MonarchError> {
     let notes = db.complete_action_internal(&agent_id, &outcome).await?;
-    emit_quest_notifications(app, ws_tx, notes);
+    emit_objective_notifications(app, ws_tx, notes);
     Ok(())
 }
 
@@ -231,19 +231,19 @@ pub(super) async fn apply_executor_decision(
     app: &Arc<PlMutex<Option<AppHandle>>>,
     ws_tx: &broadcast::Sender<WsBroadcast>,
     agent_id: String,
-    quest_id: String,
+    objective_id: String,
     decision: String,
     rationale: Option<String>,
 ) -> Result<(), MonarchError> {
     let notes = db
         .record_executor_decision_internal(
             &agent_id,
-            &quest_id,
+            &objective_id,
             &decision,
             rationale.as_deref(),
         )
         .await?;
-    emit_quest_notifications(app, ws_tx, notes);
+    emit_objective_notifications(app, ws_tx, notes);
     Ok(())
 }
 
@@ -252,7 +252,7 @@ pub(super) async fn apply_tool_call_start(
     app: &Arc<PlMutex<Option<AppHandle>>>,
     ws_tx: &broadcast::Sender<WsBroadcast>,
     agent_id: String,
-    quest_id: String,
+    objective_id: String,
     tool_call_id: String,
     tool_name: String,
     args: Option<serde_json::Value>,
@@ -260,13 +260,13 @@ pub(super) async fn apply_tool_call_start(
     let notes = db
         .record_tool_call_start_internal(
             &agent_id,
-            &quest_id,
+            &objective_id,
             &tool_call_id,
             &tool_name,
             args,
         )
         .await?;
-    emit_quest_notifications(app, ws_tx, notes);
+    emit_objective_notifications(app, ws_tx, notes);
     Ok(())
 }
 
@@ -282,7 +282,7 @@ pub(super) async fn apply_tool_call_end(
     let notes = db
         .record_tool_call_end_internal(&tool_call_id, result, is_error, duration_ms)
         .await?;
-    emit_quest_notifications(app, ws_tx, notes);
+    emit_objective_notifications(app, ws_tx, notes);
     Ok(())
 }
 
@@ -293,7 +293,7 @@ pub(super) async fn apply_plan_set(
     payload: crate::db::SetPlanPayload,
 ) -> Result<(), MonarchError> {
     let notes = db.set_plan_internal(&payload).await?;
-    emit_quest_notifications(app, ws_tx, notes);
+    emit_objective_notifications(app, ws_tx, notes);
     Ok(())
 }
 
@@ -304,7 +304,7 @@ pub(super) async fn apply_plan_item_start(
     item_id: String,
 ) -> Result<(), MonarchError> {
     let notes = db.start_plan_item_internal(&item_id).await?;
-    emit_quest_notifications(app, ws_tx, notes);
+    emit_objective_notifications(app, ws_tx, notes);
     Ok(())
 }
 
@@ -324,7 +324,7 @@ pub(super) async fn apply_plan_item_complete(
     let notes = db
         .complete_plan_item_internal(&item_id, outcome.as_deref())
         .await?;
-    emit_quest_notifications(app, ws_tx, notes);
+    emit_objective_notifications(app, ws_tx, notes);
     Ok(())
 }
 
@@ -349,7 +349,7 @@ pub(super) async fn apply_plan_item_skip(
     let notes = db
         .skip_plan_item_internal(&item_id, reason.as_deref())
         .await?;
-    emit_quest_notifications(app, ws_tx, notes);
+    emit_objective_notifications(app, ws_tx, notes);
     Ok(())
 }
 
@@ -372,6 +372,6 @@ pub(super) async fn apply_plan_item_block(
         return Ok(());
     };
     let notes = db.block_plan_item_internal(&item_id, &reason).await?;
-    emit_quest_notifications(app, ws_tx, notes);
+    emit_objective_notifications(app, ws_tx, notes);
     Ok(())
 }

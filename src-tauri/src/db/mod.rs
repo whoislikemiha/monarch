@@ -12,7 +12,7 @@ pub mod memories;
 pub mod misc;
 pub mod plans;
 pub mod projects;
-pub mod quests;
+pub mod objectives;
 pub mod reports;
 pub mod schema;
 pub mod sessions;
@@ -45,20 +45,20 @@ pub use projects::{
     db_update_project_instructions, db_upsert_project,
 };
 
-// quests
-pub use quests::{
-    CreateQuestPayload, CreateQuestRefPayload, ManualQuestEventPayload, ManualQuestUpdatePayload,
-    QuestEventNotification, QuestRow, RecordQuestEventPayload, UpdateQuestPayload,
-    UpdateQuestRefPayload,
+// objectives
+pub use objectives::{
+    CreateObjectivePayload, CreateObjectiveRefPayload, ManualObjectiveEventPayload, ManualObjectiveUpdatePayload,
+    ObjectiveEventNotification, ObjectiveRow, RecordObjectiveEventPayload, UpdateObjectivePayload,
+    UpdateObjectiveRefPayload,
 };
-pub use quests::{
-    db_create_quest, db_create_quest_ref, db_delete_quest_ref, db_get_quest,
-    db_get_quest_tree_for_root, db_get_working_memory, db_list_quest_events,
-    db_list_quest_refs, db_list_quests_for_agent, db_record_manual_quest_event,
-    db_record_quest_event, db_update_quest, db_update_quest_manual, db_update_quest_ref,
+pub use objectives::{
+    db_create_objective, db_create_objective_ref, db_delete_objective_ref, db_get_objective,
+    db_get_objective_tree_for_root, db_get_working_memory, db_list_objective_events,
+    db_list_objective_refs, db_list_objectives_for_agent, db_record_manual_objective_event,
+    db_record_objective_event, db_update_objective, db_update_objective_manual, db_update_objective_ref,
 };
-pub use quests::{
-    emit_quest_ref_notification, emit_quest_updated_notifications, handle_quest_update_side_effects,
+pub use objectives::{
+    emit_objective_ref_notification, emit_objective_updated_notifications, handle_objective_update_side_effects,
 };
 
 // plans
@@ -71,9 +71,9 @@ pub use plans::{
 pub use plans::emit_plan_notifications;
 
 // reports
-pub use reports::WriteQuestReportPayload;
-pub use reports::{db_get_quest_report, db_list_quest_reports_for_agent, db_save_quest_report};
-pub use reports::emit_quest_report_notification;
+pub use reports::WriteObjectiveReportPayload;
+pub use reports::{db_get_objective_report, db_list_objective_reports_for_agent, db_save_objective_report};
+pub use reports::emit_objective_report_notification;
 
 // memories
 pub use memories::{InsertMemoryPayload, MemoryRow};
@@ -122,17 +122,17 @@ pub use projects::{
     __cmd__db_rename_project, __cmd__db_update_project_instructions, __cmd__db_upsert_project,
 };
 #[allow(non_snake_case, unused_imports)]
-pub use quests::{
-    __cmd__db_create_quest, __cmd__db_create_quest_ref, __cmd__db_delete_quest_ref,
-    __cmd__db_get_quest, __cmd__db_get_quest_tree_for_root, __cmd__db_get_working_memory,
-    __cmd__db_list_quest_events, __cmd__db_list_quest_refs, __cmd__db_list_quests_for_agent,
-    __cmd__db_record_manual_quest_event, __cmd__db_record_quest_event, __cmd__db_update_quest,
-    __cmd__db_update_quest_manual, __cmd__db_update_quest_ref,
+pub use objectives::{
+    __cmd__db_create_objective, __cmd__db_create_objective_ref, __cmd__db_delete_objective_ref,
+    __cmd__db_get_objective, __cmd__db_get_objective_tree_for_root, __cmd__db_get_working_memory,
+    __cmd__db_list_objective_events, __cmd__db_list_objective_refs, __cmd__db_list_objectives_for_agent,
+    __cmd__db_record_manual_objective_event, __cmd__db_record_objective_event, __cmd__db_update_objective,
+    __cmd__db_update_objective_manual, __cmd__db_update_objective_ref,
 };
 #[allow(non_snake_case, unused_imports)]
 pub use reports::{
-    __cmd__db_get_quest_report, __cmd__db_list_quest_reports_for_agent,
-    __cmd__db_save_quest_report,
+    __cmd__db_get_objective_report, __cmd__db_list_objective_reports_for_agent,
+    __cmd__db_save_objective_report,
 };
 #[allow(non_snake_case, unused_imports)]
 pub use sessions::{
@@ -175,19 +175,19 @@ pub use projects::{
     __specta__fn__db_update_project_instructions, __specta__fn__db_upsert_project,
 };
 #[allow(non_snake_case, unused_imports)]
-pub use quests::{
-    __specta__fn__db_create_quest, __specta__fn__db_create_quest_ref,
-    __specta__fn__db_delete_quest_ref, __specta__fn__db_get_quest,
-    __specta__fn__db_get_quest_tree_for_root, __specta__fn__db_get_working_memory,
-    __specta__fn__db_list_quest_events, __specta__fn__db_list_quest_refs,
-    __specta__fn__db_list_quests_for_agent, __specta__fn__db_record_manual_quest_event,
-    __specta__fn__db_record_quest_event, __specta__fn__db_update_quest,
-    __specta__fn__db_update_quest_manual, __specta__fn__db_update_quest_ref,
+pub use objectives::{
+    __specta__fn__db_create_objective, __specta__fn__db_create_objective_ref,
+    __specta__fn__db_delete_objective_ref, __specta__fn__db_get_objective,
+    __specta__fn__db_get_objective_tree_for_root, __specta__fn__db_get_working_memory,
+    __specta__fn__db_list_objective_events, __specta__fn__db_list_objective_refs,
+    __specta__fn__db_list_objectives_for_agent, __specta__fn__db_record_manual_objective_event,
+    __specta__fn__db_record_objective_event, __specta__fn__db_update_objective,
+    __specta__fn__db_update_objective_manual, __specta__fn__db_update_objective_ref,
 };
 #[allow(non_snake_case, unused_imports)]
 pub use reports::{
-    __specta__fn__db_get_quest_report, __specta__fn__db_list_quest_reports_for_agent,
-    __specta__fn__db_save_quest_report,
+    __specta__fn__db_get_objective_report, __specta__fn__db_list_objective_reports_for_agent,
+    __specta__fn__db_save_objective_report,
 };
 #[allow(non_snake_case, unused_imports)]
 pub use sessions::{
@@ -263,7 +263,7 @@ mod tests {
     use super::*;
     use crate::db::agents::AgentRow;
     use crate::db::plans::{AddPlanItemPayload, PlanItemInput, SetPlanPayload};
-    use crate::db::reports::WriteQuestReportPayload;
+    use crate::db::reports::WriteObjectiveReportPayload;
 
     fn test_agent(id: &str) -> AgentRow {
         let now = crate::util::chrono_now();
@@ -288,16 +288,16 @@ mod tests {
         }
     }
 
-    async fn seed_agent_and_quest(db: &Database) -> (String, String) {
+    async fn seed_agent_and_objective(db: &Database) -> (String, String) {
         let agent_id = "agent-p4".to_string();
         db.ensure_agent_exists_internal(&test_agent(&agent_id))
             .await
             .expect("agent");
-        let quest_id = db
-            .create_quest_internal(&CreateQuestPayload {
+        let objective_id = db
+            .create_objective_internal(&CreateObjectivePayload {
                 id: None,
                 parent_id: None,
-                title: "Test quest".to_string(),
+                title: "Test objective".to_string(),
                 description: None,
                 status: Some("in_progress".to_string()),
                 grade: Some("C".to_string()),
@@ -306,18 +306,18 @@ mod tests {
                 created_by: Some("monarch".to_string()),
             })
             .await
-            .expect("quest");
-        (agent_id, quest_id)
+            .expect("objective");
+        (agent_id, objective_id)
     }
 
     #[tokio::test]
     async fn action_transition_sets_current_action() {
         let db = Database::new_in_memory().await.expect("db");
-        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        let (agent_id, objective_id) = seed_agent_and_objective(&db).await;
 
         db.record_action_transition_internal(
             &agent_id,
-            &quest_id,
+            &objective_id,
             "Understand the failing authentication test",
             None,
         )
@@ -331,21 +331,21 @@ mod tests {
             .expect("wm row");
         let current = wm.current_action.expect("current action");
         assert_eq!(current.intent, "Understand the failing authentication test");
-        assert_eq!(current.quest_id, quest_id);
+        assert_eq!(current.objective_id, objective_id);
         assert!(wm.recent_actions.is_empty());
     }
 
     #[tokio::test]
     async fn action_transition_closes_previous_action_with_outcome() {
         let db = Database::new_in_memory().await.expect("db");
-        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        let (agent_id, objective_id) = seed_agent_and_objective(&db).await;
 
-        db.record_action_transition_internal(&agent_id, &quest_id, "Map auth flow", None)
+        db.record_action_transition_internal(&agent_id, &objective_id, "Map auth flow", None)
             .await
             .expect("first");
         db.record_action_transition_internal(
             &agent_id,
-            &quest_id,
+            &objective_id,
             "Patch expiry handler",
             Some("Found expired sessions return 401 instead of redirecting."),
         )
@@ -373,9 +373,9 @@ mod tests {
     #[tokio::test]
     async fn complete_action_clears_current_action_and_records_outcome_child() {
         let db = Database::new_in_memory().await.expect("db");
-        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        let (agent_id, objective_id) = seed_agent_and_objective(&db).await;
 
-        db.record_action_transition_internal(&agent_id, &quest_id, "Edit session restore", None)
+        db.record_action_transition_internal(&agent_id, &objective_id, "Edit session restore", None)
             .await
             .expect("transition");
         db.complete_action_internal(&agent_id, "Session restore now follows ancestry.")
@@ -395,7 +395,7 @@ mod tests {
         );
 
         let events = db
-            .list_quest_events_internal(&quest_id)
+            .list_objective_events_internal(&objective_id)
             .await
             .expect("events");
         let action = events
@@ -412,14 +412,14 @@ mod tests {
     #[tokio::test]
     async fn tool_call_start_and_end_update_one_child_event() {
         let db = Database::new_in_memory().await.expect("db");
-        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
-        db.record_action_transition_internal(&agent_id, &quest_id, "Run focused test", None)
+        let (agent_id, objective_id) = seed_agent_and_objective(&db).await;
+        db.record_action_transition_internal(&agent_id, &objective_id, "Run focused test", None)
             .await
             .expect("transition");
 
         db.record_tool_call_start_internal(
             &agent_id,
-            &quest_id,
+            &objective_id,
             "tc-1",
             "bash",
             Some(serde_json::json!({ "cmd": "cargo test auth" })),
@@ -436,7 +436,7 @@ mod tests {
         .expect("tool end");
 
         let events = db
-            .list_quest_events_internal(&quest_id)
+            .list_objective_events_internal(&objective_id)
             .await
             .expect("events");
         let tools: Vec<_> = events
@@ -464,16 +464,16 @@ mod tests {
         }
     }
 
-    async fn seed_plan(db: &Database, quest_id: &str, titles: &[&str]) -> Vec<String> {
+    async fn seed_plan(db: &Database, objective_id: &str, titles: &[&str]) -> Vec<String> {
         let payload = SetPlanPayload {
-            quest_id: quest_id.to_string(),
+            objective_id: objective_id.to_string(),
             items: titles.iter().map(|t| plan_input(t)).collect(),
             created_by: Some("captain".to_string()),
             rationale: None,
         };
         db.set_plan_internal(&payload).await.expect("set plan");
         let items = db
-            .list_plan_items_internal(quest_id)
+            .list_plan_items_internal(objective_id)
             .await
             .expect("list items");
         items.into_iter().map(|i| i.id).collect()
@@ -482,10 +482,10 @@ mod tests {
     #[tokio::test]
     async fn set_plan_inserts_ordered_items_and_emits_plan_created() {
         let db = Database::new_in_memory().await.expect("db");
-        let (_, quest_id) = seed_agent_and_quest(&db).await;
+        let (_, objective_id) = seed_agent_and_objective(&db).await;
 
         db.set_plan_internal(&SetPlanPayload {
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             items: vec![plan_input("inspect auth flow"), plan_input("patch handler")],
             created_by: Some("captain".to_string()),
             rationale: Some("expiry redirect bug".to_string()),
@@ -493,7 +493,7 @@ mod tests {
         .await
         .expect("set plan");
 
-        let items = db.list_plan_items_internal(&quest_id).await.expect("list");
+        let items = db.list_plan_items_internal(&objective_id).await.expect("list");
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].title, "inspect auth flow");
         assert_eq!(items[0].order_index, 0);
@@ -502,7 +502,7 @@ mod tests {
         assert_eq!(items[1].order_index, 1);
 
         let events = db
-            .list_quest_events_internal(&quest_id)
+            .list_objective_events_internal(&objective_id)
             .await
             .expect("events");
         let plan_events: Vec<_> = events
@@ -515,12 +515,12 @@ mod tests {
     #[tokio::test]
     async fn set_plan_replaces_existing_items_and_emits_plan_changed() {
         let db = Database::new_in_memory().await.expect("db");
-        let (_, quest_id) = seed_agent_and_quest(&db).await;
-        let ids = seed_plan(&db, &quest_id, &["A", "B", "C"]).await;
+        let (_, objective_id) = seed_agent_and_objective(&db).await;
+        let ids = seed_plan(&db, &objective_id, &["A", "B", "C"]).await;
 
         // Keep B (by id), drop A and C, add a new D at the end.
         db.set_plan_internal(&SetPlanPayload {
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             items: vec![
                 PlanItemInput {
                     id: Some(ids[1].clone()),
@@ -537,13 +537,13 @@ mod tests {
         .await
         .expect("replace");
 
-        let items = db.list_plan_items_internal(&quest_id).await.expect("list");
+        let items = db.list_plan_items_internal(&objective_id).await.expect("list");
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, ids[1]);
         assert_eq!(items[1].title, "D");
 
         let events = db
-            .list_quest_events_internal(&quest_id)
+            .list_objective_events_internal(&objective_id)
             .await
             .expect("events");
         assert!(events.iter().any(|ev| ev.event_type == "plan_changed"));
@@ -552,11 +552,11 @@ mod tests {
     #[tokio::test]
     async fn add_plan_item_appends_at_end_when_no_after_id() {
         let db = Database::new_in_memory().await.expect("db");
-        let (_, quest_id) = seed_agent_and_quest(&db).await;
-        seed_plan(&db, &quest_id, &["A", "B"]).await;
+        let (_, objective_id) = seed_agent_and_objective(&db).await;
+        seed_plan(&db, &objective_id, &["A", "B"]).await;
 
         db.add_plan_item_internal(&AddPlanItemPayload {
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             title: "C".to_string(),
             rationale: None,
             after_item_id: None,
@@ -565,7 +565,7 @@ mod tests {
         .await
         .expect("add");
 
-        let items = db.list_plan_items_internal(&quest_id).await.expect("list");
+        let items = db.list_plan_items_internal(&objective_id).await.expect("list");
         assert_eq!(items.len(), 3);
         assert_eq!(items[2].title, "C");
         assert_eq!(items[2].order_index, 2);
@@ -574,11 +574,11 @@ mod tests {
     #[tokio::test]
     async fn add_plan_item_inserts_after_named_item_and_shifts_following() {
         let db = Database::new_in_memory().await.expect("db");
-        let (_, quest_id) = seed_agent_and_quest(&db).await;
-        let ids = seed_plan(&db, &quest_id, &["A", "B", "C"]).await;
+        let (_, objective_id) = seed_agent_and_objective(&db).await;
+        let ids = seed_plan(&db, &objective_id, &["A", "B", "C"]).await;
 
         db.add_plan_item_internal(&AddPlanItemPayload {
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             title: "Between".to_string(),
             rationale: None,
             after_item_id: Some(ids[0].clone()),
@@ -587,7 +587,7 @@ mod tests {
         .await
         .expect("insert");
 
-        let items = db.list_plan_items_internal(&quest_id).await.expect("list");
+        let items = db.list_plan_items_internal(&objective_id).await.expect("list");
         assert_eq!(
             items.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(),
             vec!["A", "Between", "B", "C"]
@@ -597,12 +597,12 @@ mod tests {
     #[tokio::test]
     async fn start_plan_item_sets_active_and_resets_prior_active() {
         let db = Database::new_in_memory().await.expect("db");
-        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
-        // Anchor L2's currentQuestId so sync_plan_l2_tx picks up the row.
-        db.record_action_transition_internal(&agent_id, &quest_id, "warm up", None)
+        let (agent_id, objective_id) = seed_agent_and_objective(&db).await;
+        // Anchor L2's currentObjectiveId so sync_plan_l2_tx picks up the row.
+        db.record_action_transition_internal(&agent_id, &objective_id, "warm up", None)
             .await
             .expect("anchor");
-        let ids = seed_plan(&db, &quest_id, &["A", "B"]).await;
+        let ids = seed_plan(&db, &objective_id, &["A", "B"]).await;
 
         db.start_plan_item_internal(&ids[0]).await.expect("start A");
         let wm_after_a = db
@@ -614,7 +614,7 @@ mod tests {
         assert_eq!(wm_after_a.next_plan_item_ids, vec![ids[1].clone()]);
 
         db.start_plan_item_internal(&ids[1]).await.expect("start B");
-        let after_b = db.list_plan_items_internal(&quest_id).await.expect("list");
+        let after_b = db.list_plan_items_internal(&objective_id).await.expect("list");
         let by_id: std::collections::HashMap<&str, &str> = after_b
             .iter()
             .map(|i| (i.id.as_str(), i.status.as_str()))
@@ -633,11 +633,11 @@ mod tests {
     #[tokio::test]
     async fn complete_plan_item_clears_active_no_auto_advance() {
         let db = Database::new_in_memory().await.expect("db");
-        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
-        db.record_action_transition_internal(&agent_id, &quest_id, "warm up", None)
+        let (agent_id, objective_id) = seed_agent_and_objective(&db).await;
+        db.record_action_transition_internal(&agent_id, &objective_id, "warm up", None)
             .await
             .expect("anchor");
-        let ids = seed_plan(&db, &quest_id, &["A", "B"]).await;
+        let ids = seed_plan(&db, &objective_id, &["A", "B"]).await;
         db.start_plan_item_internal(&ids[0]).await.expect("start");
 
         db.complete_plan_item_internal(&ids[0], Some("done"))
@@ -664,8 +664,8 @@ mod tests {
     #[tokio::test]
     async fn skip_and_block_record_status_and_emit_events() {
         let db = Database::new_in_memory().await.expect("db");
-        let (_, quest_id) = seed_agent_and_quest(&db).await;
-        let ids = seed_plan(&db, &quest_id, &["A", "B"]).await;
+        let (_, objective_id) = seed_agent_and_objective(&db).await;
+        let ids = seed_plan(&db, &objective_id, &["A", "B"]).await;
 
         db.skip_plan_item_internal(&ids[0], Some("not needed"))
             .await
@@ -674,12 +674,12 @@ mod tests {
             .await
             .expect("block");
 
-        let items = db.list_plan_items_internal(&quest_id).await.expect("list");
+        let items = db.list_plan_items_internal(&objective_id).await.expect("list");
         assert_eq!(items[0].status, "skipped");
         assert_eq!(items[1].status, "blocked");
 
         let events = db
-            .list_quest_events_internal(&quest_id)
+            .list_objective_events_internal(&objective_id)
             .await
             .expect("events");
         assert!(events.iter().any(|ev| ev.event_type == "plan_item_skipped"));
@@ -689,16 +689,16 @@ mod tests {
     #[tokio::test]
     async fn coherent_action_stamps_plan_item_id_when_item_active() {
         let db = Database::new_in_memory().await.expect("db");
-        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
-        db.record_action_transition_internal(&agent_id, &quest_id, "warm up", None)
+        let (agent_id, objective_id) = seed_agent_and_objective(&db).await;
+        db.record_action_transition_internal(&agent_id, &objective_id, "warm up", None)
             .await
             .expect("anchor");
-        let ids = seed_plan(&db, &quest_id, &["A"]).await;
+        let ids = seed_plan(&db, &objective_id, &["A"]).await;
         db.start_plan_item_internal(&ids[0]).await.expect("start");
 
         db.record_action_transition_internal(
             &agent_id,
-            &quest_id,
+            &objective_id,
             "patch handler",
             Some("warmed up"),
         )
@@ -706,7 +706,7 @@ mod tests {
         .expect("transition");
 
         let events = db
-            .list_quest_events_internal(&quest_id)
+            .list_objective_events_internal(&objective_id)
             .await
             .expect("events");
         let action = events
@@ -725,7 +725,7 @@ mod tests {
                 let id = action.id.clone();
                 move |c| -> tokio_rusqlite::Result<Option<String>> {
                     let v = c.query_row(
-                        "SELECT plan_item_id FROM quest_events WHERE id = ?1",
+                        "SELECT plan_item_id FROM objective_events WHERE id = ?1",
                         params![id],
                         |row| row.get::<_, Option<String>>(0),
                     )?;
@@ -740,16 +740,16 @@ mod tests {
     #[tokio::test]
     async fn coherent_action_skips_plan_item_id_when_no_active_item() {
         let db = Database::new_in_memory().await.expect("db");
-        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        let (agent_id, objective_id) = seed_agent_and_objective(&db).await;
         // Plan exists but nothing is active.
-        seed_plan(&db, &quest_id, &["A", "B"]).await;
+        seed_plan(&db, &objective_id, &["A", "B"]).await;
 
-        db.record_action_transition_internal(&agent_id, &quest_id, "freeform exploration", None)
+        db.record_action_transition_internal(&agent_id, &objective_id, "freeform exploration", None)
             .await
             .expect("transition");
 
         let events = db
-            .list_quest_events_internal(&quest_id)
+            .list_objective_events_internal(&objective_id)
             .await
             .expect("events");
         let action = events
@@ -762,7 +762,7 @@ mod tests {
                 let id = action.id.clone();
                 move |c| -> tokio_rusqlite::Result<Option<String>> {
                     let v = c.query_row(
-                        "SELECT plan_item_id FROM quest_events WHERE id = ?1",
+                        "SELECT plan_item_id FROM objective_events WHERE id = ?1",
                         params![id],
                         |row| row.get::<_, Option<String>>(0),
                     )?;
@@ -777,11 +777,11 @@ mod tests {
     #[tokio::test]
     async fn get_active_plan_item_for_agent_resolves_via_l2() {
         let db = Database::new_in_memory().await.expect("db");
-        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
-        db.record_action_transition_internal(&agent_id, &quest_id, "warm up", None)
+        let (agent_id, objective_id) = seed_agent_and_objective(&db).await;
+        db.record_action_transition_internal(&agent_id, &objective_id, "warm up", None)
             .await
             .expect("anchor");
-        let ids = seed_plan(&db, &quest_id, &["A"]).await;
+        let ids = seed_plan(&db, &objective_id, &["A"]).await;
         db.start_plan_item_internal(&ids[0]).await.expect("start");
 
         let resolved = db
@@ -794,13 +794,13 @@ mod tests {
     #[tokio::test]
     async fn working_memory_v1_payload_deserializes_with_default_plan_slice() {
         let db = Database::new_in_memory().await.expect("db");
-        let (agent_id, _quest_id) = seed_agent_and_quest(&db).await;
+        let (agent_id, _objective_id) = seed_agent_and_objective(&db).await;
         // Manually write a v1-shaped payload (no plan slice fields).
         let now = crate::util::chrono_now();
         let v1_payload = serde_json::json!({
             "schemaVersion": 1,
-            "currentQuestId": null,
-            "currentQuestPath": [],
+            "currentObjectiveId": null,
+            "currentObjectivePath": [],
             "currentAction": null,
             "recentActions": [],
             "updatedAt": now,
@@ -832,72 +832,191 @@ mod tests {
         assert!(wm.next_plan_item_ids.is_empty());
     }
 
-    // ---- MON-119: P6 Slice A — quest_reports ----
+    // ---- MON-119: P6 Slice A — objective_reports ----
 
     #[tokio::test]
-    async fn quest_reports_migration_is_idempotent() {
+    async fn objective_reports_migration_is_idempotent() {
         let db = Database::new_in_memory().await.expect("db");
         // new_in_memory already ran init_schema once. Running it again must
         // not panic — every CREATE TABLE / CREATE INDEX uses IF NOT EXISTS.
         db.init_schema().await.expect("re-run init_schema");
     }
 
+    // ---- P1: quest_* -> objective_* rename migration ----
+
     #[tokio::test]
-    async fn upsert_quest_report_inserts_and_fetches_round_trip() {
+    async fn quest_to_objective_rename_migration_converts_and_is_idempotent() {
+        // Build a DB carrying a pre-P1 (quest_*) schema fragment with data,
+        // WITHOUT running init_schema, then run init_schema and confirm the
+        // guarded rename converts tables/columns, preserves data, drops stale
+        // indexes, and is a no-op on a second run.
+        let conn = Connection::open_in_memory().await.expect("conn");
+        conn.call(|c| -> tokio_rusqlite::Result<()> {
+            c.execute_batch(
+                // Mirror the columns the base init indexes (session_id,
+                // agent_id, layer) so this fixture looks like a real existing
+                // DB: full base tables + the legacy quest_* columns/tables.
+                // foreign_keys=ON + a real messages->quest_nodes FK so the test
+                // proves RENAME TO rewrites cross-table FK references (the app
+                // runs with foreign_keys=ON; a dangling FK would break inserts).
+                "PRAGMA foreign_keys=ON;
+                 CREATE TABLE quest_nodes (id TEXT PRIMARY KEY, title TEXT);
+                 INSERT INTO quest_nodes (id, title) VALUES ('q1','old work');
+                 CREATE TABLE quest_reports (id TEXT PRIMARY KEY, quest_id TEXT REFERENCES quest_nodes(id));
+                 CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, quest_id TEXT REFERENCES quest_nodes(id));
+                 CREATE TABLE agents (id TEXT PRIMARY KEY, current_quest_id TEXT);
+                 CREATE TABLE memory_keeper_runs (id INTEGER PRIMARY KEY, quest_id TEXT);
+                 CREATE TABLE memories (id INTEGER PRIMARY KEY, agent_id TEXT, layer TEXT, source_quest_id TEXT);
+                 CREATE INDEX idx_quest_nodes_root ON quest_nodes(id);",
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("seed old schema");
+
+        let db = Database { conn };
+        db.init_schema().await.expect("init_schema runs rename migration");
+
+        db.conn
+            .call(|c| -> tokio_rusqlite::Result<()> {
+                let table = |name: &str| -> bool {
+                    c.query_row(
+                        &format!(
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{name}'"
+                        ),
+                        [],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .unwrap_or(0)
+                        > 0
+                };
+                let col = |t: &str, name: &str| -> bool {
+                    let mut stmt = c.prepare(&format!("PRAGMA table_info({t})")).unwrap();
+                    let cols: Vec<String> = stmt
+                        .query_map([], |r| r.get::<_, String>(1))
+                        .unwrap()
+                        .filter_map(Result::ok)
+                        .collect();
+                    cols.iter().any(|x| x == name)
+                };
+                let index = |name: &str| -> bool {
+                    c.query_row(
+                        &format!(
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='{name}'"
+                        ),
+                        [],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .unwrap_or(0)
+                        > 0
+                };
+
+                assert!(table("objective_nodes"), "table renamed");
+                assert!(!table("quest_nodes"), "old table gone");
+                let title: String = c
+                    .query_row("SELECT title FROM objective_nodes WHERE id='q1'", [], |r| {
+                        r.get(0)
+                    })
+                    .expect("seeded row preserved across rename");
+                assert_eq!(title, "old work");
+
+                assert!(col("messages", "objective_id") && !col("messages", "quest_id"));
+                assert!(
+                    col("agents", "current_objective_id") && !col("agents", "current_quest_id")
+                );
+                assert!(col("memory_keeper_runs", "objective_id"));
+                assert!(col("memories", "source_objective_id"));
+                assert!(col("objective_reports", "objective_id"));
+                assert!(!index("idx_quest_nodes_root"), "stale index dropped");
+
+                // RENAME TO must rewrite cross-table FK references so nothing
+                // dangles to the old table name under foreign_keys=ON.
+                let messages_sql: String = c
+                    .query_row("SELECT sql FROM sqlite_master WHERE name='messages'", [], |r| {
+                        r.get(0)
+                    })
+                    .expect("messages schema");
+                assert!(
+                    messages_sql.contains("objective_nodes")
+                        && !messages_sql.contains("quest_nodes"),
+                    "messages FK rewritten to objective_nodes (got: {messages_sql})"
+                );
+                // The rewritten FK is live: a valid target inserts, a bogus one
+                // is rejected (proves enforcement points at objective_nodes).
+                c.execute("INSERT INTO messages (id, objective_id) VALUES (1, 'q1')", [])
+                    .expect("insert with valid FK target");
+                assert!(
+                    c.execute("INSERT INTO messages (id, objective_id) VALUES (2, 'nope')", [])
+                        .is_err(),
+                    "FK enforced against objective_nodes"
+                );
+                Ok(())
+            })
+            .await
+            .expect("verify migrated schema");
+
+        // Second run must be a clean no-op (no quest_* left to rename).
+        db.init_schema()
+            .await
+            .expect("re-run init_schema is idempotent after migration");
+    }
+
+    #[tokio::test]
+    async fn upsert_objective_report_inserts_and_fetches_round_trip() {
         let db = Database::new_in_memory().await.expect("db");
-        let (_agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        let (_agent_id, objective_id) = seed_agent_and_objective(&db).await;
 
         let id = db
-            .upsert_quest_report_internal(&WriteQuestReportPayload {
+            .upsert_objective_report_internal(&WriteObjectiveReportPayload {
                 id: None,
-                quest_id: quest_id.clone(),
+                objective_id: objective_id.clone(),
                 payload: r#"{"summary":"shipped the auth fix"}"#.to_string(),
             })
             .await
             .expect("insert");
 
         let row = db
-            .get_quest_report_by_quest_internal(&quest_id)
+            .get_objective_report_by_objective_internal(&objective_id)
             .await
             .expect("get")
             .expect("row");
         assert_eq!(row.id, id);
-        assert_eq!(row.quest_id, quest_id);
+        assert_eq!(row.objective_id, objective_id);
         assert_eq!(row.payload, r#"{"summary":"shipped the auth fix"}"#);
         assert_eq!(row.distilled_by_keeper_run_id, None);
     }
 
     #[tokio::test]
-    async fn upsert_quest_report_replaces_payload_on_conflict() {
+    async fn upsert_objective_report_replaces_payload_on_conflict() {
         let db = Database::new_in_memory().await.expect("db");
-        let (_agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        let (_agent_id, objective_id) = seed_agent_and_objective(&db).await;
 
         let first = db
-            .upsert_quest_report_internal(&WriteQuestReportPayload {
+            .upsert_objective_report_internal(&WriteObjectiveReportPayload {
                 id: None,
-                quest_id: quest_id.clone(),
+                objective_id: objective_id.clone(),
                 payload: r#"{"summary":"draft"}"#.to_string(),
             })
             .await
             .expect("first");
 
         let second = db
-            .upsert_quest_report_internal(&WriteQuestReportPayload {
+            .upsert_objective_report_internal(&WriteObjectiveReportPayload {
                 id: None,
-                quest_id: quest_id.clone(),
+                objective_id: objective_id.clone(),
                 payload: r#"{"summary":"final"}"#.to_string(),
             })
             .await
             .expect("second");
 
-        // UNIQUE(quest_id) keeps the original row; the second call updates it.
+        // UNIQUE(objective_id) keeps the original row; the second call updates it.
         assert_eq!(
             first, second,
             "upsert keeps the original id on conflict"
         );
 
         let row = db
-            .get_quest_report_by_quest_internal(&quest_id)
+            .get_objective_report_by_objective_internal(&objective_id)
             .await
             .expect("get")
             .expect("row");
@@ -911,60 +1030,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upsert_quest_report_denormalizes_agent_id_from_quest() {
+    async fn upsert_objective_report_denormalizes_agent_id_from_objective() {
         let db = Database::new_in_memory().await.expect("db");
-        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        let (agent_id, objective_id) = seed_agent_and_objective(&db).await;
 
-        db.upsert_quest_report_internal(&WriteQuestReportPayload {
+        db.upsert_objective_report_internal(&WriteObjectiveReportPayload {
             id: None,
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             payload: r#"{"summary":"x"}"#.to_string(),
         })
         .await
         .expect("insert");
 
         let row = db
-            .get_quest_report_by_quest_internal(&quest_id)
+            .get_objective_report_by_objective_internal(&objective_id)
             .await
             .expect("get")
             .expect("row");
         assert_eq!(row.agent_id.as_deref(), Some(agent_id.as_str()));
 
         let listed = db
-            .list_quest_reports_for_agent_internal(&agent_id)
+            .list_objective_reports_for_agent_internal(&agent_id)
             .await
             .expect("list");
         assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].quest_id, quest_id);
+        assert_eq!(listed[0].objective_id, objective_id);
     }
 
     #[tokio::test]
-    async fn upsert_quest_report_rejects_unknown_quest_id() {
+    async fn upsert_objective_report_rejects_unknown_objective_id() {
         let db = Database::new_in_memory().await.expect("db");
         let result = db
-            .upsert_quest_report_internal(&WriteQuestReportPayload {
+            .upsert_objective_report_internal(&WriteObjectiveReportPayload {
                 id: None,
-                quest_id: "no-such-quest".to_string(),
+                objective_id: "no-such-objective".to_string(),
                 payload: r#"{}"#.to_string(),
             })
             .await;
         assert!(
             result.is_err(),
-            "writing a report for a non-existent quest must fail"
+            "writing a report for a non-existent objective must fail"
         );
     }
 
     #[tokio::test]
-    async fn agent_archive_nulls_quest_report_attribution() {
+    async fn agent_archive_nulls_objective_report_attribution() {
         // ON DELETE SET NULL on agents — deleting the agent leaves the
         // report row in place but clears agent_id so retrieval through the
-        // quest still works while attribution stops pointing at a ghost.
+        // objective still works while attribution stops pointing at a ghost.
         let db = Database::new_in_memory().await.expect("db");
-        let (agent_id, quest_id) = seed_agent_and_quest(&db).await;
+        let (agent_id, objective_id) = seed_agent_and_objective(&db).await;
 
-        db.upsert_quest_report_internal(&WriteQuestReportPayload {
+        db.upsert_objective_report_internal(&WriteObjectiveReportPayload {
             id: None,
-            quest_id: quest_id.clone(),
+            objective_id: objective_id.clone(),
             payload: r#"{"summary":"x"}"#.to_string(),
         })
         .await
@@ -983,14 +1102,14 @@ mod tests {
             .expect("delete agent");
 
         let row = db
-            .get_quest_report_by_quest_internal(&quest_id)
+            .get_objective_report_by_objective_internal(&objective_id)
             .await
             .expect("get")
             .expect("row still present");
         assert_eq!(row.agent_id, None, "agent_id should be NULL after delete");
 
         let listed = db
-            .list_quest_reports_for_agent_internal(&agent_id)
+            .list_objective_reports_for_agent_internal(&agent_id)
             .await
             .expect("list");
         assert!(

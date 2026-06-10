@@ -6,14 +6,14 @@ use super::{str_field, opt_str};
 
 pub(crate) fn emit_plan_notifications(
     state: &WsState,
-    notes: Vec<crate::db::QuestEventNotification>,
+    notes: Vec<crate::db::ObjectiveEventNotification>,
 ) -> Result<(), MonarchError> {
     let app = state.agent_mgr.get_app_handle()?;
     for note in notes {
         crate::agent::emit_event(
             &app,
             &state.agent_mgr.ws_broadcast,
-            &format!("quest-event-{}", note.quest_id),
+            &format!("objective-event-{}", note.objective_id),
             &serde_json::json!({ "id": note.event_id, "eventType": note.event_type }).to_string(),
         );
     }
@@ -21,8 +21,8 @@ pub(crate) fn emit_plan_notifications(
 }
 
 pub(crate) async fn db_list_plan_items(state: &WsState, args: Value) -> Result<Value, MonarchError> {
-    let quest_id = str_field(&args, "questId")?;
-    let items = state.db.list_plan_items_internal(&quest_id).await?;
+    let objective_id = str_field(&args, "objectiveId")?;
+    let items = state.db.list_plan_items_internal(&objective_id).await?;
     serde_json::to_value(items).map_err(MonarchError::from)
 }
 

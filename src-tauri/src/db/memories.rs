@@ -23,7 +23,7 @@ pub struct MemoryRow {
     pub summary: String,
     pub content: Option<String>,
     pub manual_override: bool,
-    pub source_quest_id: Option<String>,
+    pub source_objective_id: Option<String>,
     pub source_session_id: Option<String>,
     pub source_events: Option<String>,
     pub file_refs: Option<String>,
@@ -51,7 +51,7 @@ pub struct InsertMemoryPayload {
     pub title: String,
     pub summary: String,
     pub content: Option<String>,
-    pub source_quest_id: Option<String>,
+    pub source_objective_id: Option<String>,
     pub source_session_id: Option<String>,
     pub source_events: Option<String>,
     pub file_refs: Option<String>,
@@ -65,7 +65,7 @@ pub struct KeeperRunRow {
     pub id: i64,
     pub agent_id: String,
     pub trigger: String,
-    pub quest_id: Option<String>,
+    pub objective_id: Option<String>,
     pub started_at: String,
     pub completed_at: Option<String>,
     pub tokens_input: Option<i64>,
@@ -102,7 +102,7 @@ pub(super) fn map_memory(row: &Row<'_>) -> rusqlite::Result<MemoryRow> {
         summary: row.get::<_, Option<String>>(8)?.unwrap_or_default(),
         content: row.get(9)?,
         manual_override: row.get::<_, i64>(10).unwrap_or(0) != 0,
-        source_quest_id: row.get(11)?,
+        source_objective_id: row.get(11)?,
         source_session_id: row.get(12)?,
         source_events: row.get(13)?,
         file_refs: row.get(14)?,
@@ -121,7 +121,7 @@ pub(super) fn map_keeper_run(row: &Row<'_>) -> rusqlite::Result<KeeperRunRow> {
         id: row.get(0)?,
         agent_id: row.get(1)?,
         trigger: row.get(2)?,
-        quest_id: row.get(3)?,
+        objective_id: row.get(3)?,
         started_at: row.get(4)?,
         completed_at: row.get(5)?,
         tokens_input: row.get(6)?,
@@ -148,7 +148,7 @@ impl Database {
                 conn.execute(
                     "INSERT INTO memories (
                         agent_id, scope, project_id, parent_id, layer, kind,
-                        title, summary, content, source_quest_id, source_session_id,
+                        title, summary, content, source_objective_id, source_session_id,
                         source_events, file_refs, embedding, embedding_model_id,
                         supersedes_id
                     ) VALUES (
@@ -167,7 +167,7 @@ impl Database {
                         payload.title,
                         payload.summary,
                         payload.content,
-                        payload.source_quest_id,
+                        payload.source_objective_id,
                         payload.source_session_id,
                         payload.source_events,
                         payload.file_refs,
@@ -192,7 +192,7 @@ impl Database {
             .call(move |conn| {
                 let mut stmt = conn.prepare(
                     "SELECT id, agent_id, scope, project_id, parent_id, layer, kind,
-                        title, summary, content, manual_override, source_quest_id,
+                        title, summary, content, manual_override, source_objective_id,
                         source_session_id, source_events, file_refs, embedding_model_id,
                         supersedes_id, archived_at, created_at, last_accessed_at, access_count
                      FROM memories
@@ -214,7 +214,7 @@ impl Database {
             .call(move |conn| {
                 let mut stmt = conn.prepare(
                     "SELECT id, agent_id, scope, project_id, parent_id, layer, kind,
-                        title, summary, content, manual_override, source_quest_id,
+                        title, summary, content, manual_override, source_objective_id,
                         source_session_id, source_events, file_refs, embedding_model_id,
                         supersedes_id, archived_at, created_at, last_accessed_at, access_count
                      FROM memories WHERE id = ?1",
@@ -321,20 +321,20 @@ impl Database {
         &self,
         agent_id: &str,
         trigger: &str,
-        quest_id: Option<&str>,
+        objective_id: Option<&str>,
         model_id: &str,
     ) -> Result<i64, MonarchError> {
         let agent_id = agent_id.to_string();
         let trigger = trigger.to_string();
-        let quest_id = quest_id.map(|s| s.to_string());
+        let objective_id = objective_id.map(|s| s.to_string());
         let model_id = model_id.to_string();
         Ok(self
             .conn
             .call(move |conn| {
                 conn.execute(
-                    "INSERT INTO memory_keeper_runs (agent_id, trigger, quest_id, model_id, outcome)
+                    "INSERT INTO memory_keeper_runs (agent_id, trigger, objective_id, model_id, outcome)
                      VALUES (?1, ?2, ?3, ?4, 'pending')",
-                    params![agent_id, trigger, quest_id, model_id],
+                    params![agent_id, trigger, objective_id, model_id],
                 )?;
                 Ok(conn.last_insert_rowid())
             })
@@ -354,7 +354,7 @@ impl Database {
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, agent_id, trigger, quest_id, started_at, completed_at,
+                    "SELECT id, agent_id, trigger, objective_id, started_at, completed_at,
                             tokens_input, tokens_output, model_id, output_summary, outcome
                      FROM memory_keeper_runs
                      WHERE agent_id = ?1 AND outcome = 'ok' AND completed_at IS NOT NULL
@@ -371,7 +371,7 @@ impl Database {
     }
 
     /// MON-103: load one Keeper run by id so result persistence can use the
-    /// run row's trigger / quest provenance instead of whatever quest happens
+    /// run row's trigger / objective provenance instead of whatever objective happens
     /// to be current when the async model call returns.
     pub async fn get_keeper_run_internal(
         &self,
@@ -381,7 +381,7 @@ impl Database {
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, agent_id, trigger, quest_id, started_at, completed_at,
+                    "SELECT id, agent_id, trigger, objective_id, started_at, completed_at,
                             tokens_input, tokens_output, model_id, output_summary, outcome
                      FROM memory_keeper_runs
                      WHERE id = ?1",

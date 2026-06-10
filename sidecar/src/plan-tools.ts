@@ -28,12 +28,12 @@ export function createPlanTools(agentId: string, emit: EmitFn) {
 			name: "set_plan",
 			label: "Set Execution Plan",
 			description:
-				"Declare or fully replace the current quest's execution plan: an ordered list of intended next steps.",
+				"Declare or fully replace the current objective's execution plan: an ordered list of intended next steps.",
 			promptSnippet:
-				"set_plan(items, rationale?) - declare/replace the quest's intended-route plan; items[].title is the only required field per item.",
+				"set_plan(items, rationale?) - declare/replace the objective's intended-route plan; items[].title is the only required field per item.",
 			promptGuidelines: [
 				"Plan items are the *intended route*, not history. Do not record completed work as plan items after the fact.",
-				"Granularity: each item is roughly one or a few coherent actions — coarser than tool calls, finer than the quest goal.",
+				"Granularity: each item is roughly one or a few coherent actions — coarser than tool calls, finer than the objective goal.",
 				"Declare a plan early when the task is non-trivial; skip set_plan for trivial single-step tasks.",
 				"Titles are short and action-shaped, e.g. 'patch expiry handler', 'run focused tests'. Rationale is optional.",
 				"Calling set_plan again replaces the plan. Items whose id matches an existing item keep their status; missing items are dropped; new items start as pending.",
@@ -115,7 +115,7 @@ export function createPlanTools(agentId: string, emit: EmitFn) {
 				"start_plan_item(item_id) - declare which plan item you are now working on.",
 			promptGuidelines: [
 				"Call start_plan_item right before doing the work for an item. The active item gets stamped onto your subsequent coherent actions automatically.",
-				"At most one item is active per quest. Starting a new item resets the previous active one to pending.",
+				"At most one item is active per objective. Starting a new item resets the previous active one to pending.",
 				"There is no auto-advance on completion — after complete_plan_item, call start_plan_item again on the next item.",
 			],
 			parameters: Type.Object({
