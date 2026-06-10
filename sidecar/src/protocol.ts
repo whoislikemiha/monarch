@@ -134,7 +134,7 @@ export interface KeeperRunCommand {
   agentId: string;
   /** Provenance row id (`memory_keeper_runs.id`); echoed in the result. */
   runId: number;
-  /** `continuous` or `quest_close`; reserved for future model/prompt branching. */
+  /** `continuous` or `objective_close`; reserved for future model/prompt branching. */
   trigger: string;
   /** Textual rendering of recent messages + last summary + related memories. */
   slice: string;
@@ -153,7 +153,7 @@ export interface MemoryRow {
   summary: string;
   content?: string | null;
   manualOverride: boolean;
-  sourceQuestId?: string | null;
+  sourceObjectiveId?: string | null;
   sourceSessionId?: string | null;
   sourceEvents?: string | null;
   fileRefs?: string | null;

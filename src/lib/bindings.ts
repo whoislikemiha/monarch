@@ -158,7 +158,7 @@ export const commands = {
 	summary: string,
 	content: string | null,
 	manualOverride: boolean,
-	sourceQuestId: string | null,
+	sourceObjectiveId: string | null,
 	sourceSessionId: string | null,
 	sourceEvents: string | null,
 	fileRefs: string | null,
@@ -197,9 +197,9 @@ export const commands = {
 	dbGetUiState: (key: string) => typedError<string | null, ErrorDto>(__TAURI_INVOKE("db_get_ui_state", { key })),
 	dbSetUiState: (key: string, value: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_set_ui_state", { key, value })),
 	dbGetAgentStats: (agentId: string) => typedError<AgentStats, ErrorDto>(__TAURI_INVOKE("db_get_agent_stats", { agentId })),
-	dbCreateQuest: (payload: CreateQuestPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_create_quest", { payload })),
-	dbUpdateQuest: (payload: UpdateQuestPayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_quest", { payload })),
-	dbGetQuest: (questId: string) => typedError<{
+	dbCreateObjective: (payload: CreateObjectivePayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_create_objective", { payload })),
+	dbUpdateObjective: (payload: UpdateObjectivePayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_objective", { payload })),
+	dbGetObjective: (objectiveId: string) => typedError<{
 	id: string,
 	rootId: string,
 	parentId: string | null,
@@ -229,42 +229,42 @@ export const commands = {
 	estimatedDurationMs: number | null,
 	actualDurationMs: number | null,
 	summary: string | null,
-} | null, ErrorDto>(__TAURI_INVOKE("db_get_quest", { questId })),
-	dbListQuestsForAgent: (agentId: string) => typedError<QuestRow[], ErrorDto>(__TAURI_INVOKE("db_list_quests_for_agent", { agentId })),
-	dbGetQuestTreeForRoot: (rootId: string) => typedError<QuestRow[], ErrorDto>(__TAURI_INVOKE("db_get_quest_tree_for_root", { rootId })),
-	dbRecordQuestEvent: (payload: RecordQuestEventPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_record_quest_event", { payload })),
-	dbListQuestEvents: (questId: string) => typedError<QuestEventRow[], ErrorDto>(__TAURI_INVOKE("db_list_quest_events", { questId })),
-	dbUpdateQuestManual: (payload: ManualQuestUpdatePayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_quest_manual", { payload })),
-	dbRecordManualQuestEvent: (payload: ManualQuestEventPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_record_manual_quest_event", { payload })),
-	dbListQuestRefs: (questId: string) => typedError<QuestRefRow[], ErrorDto>(__TAURI_INVOKE("db_list_quest_refs", { questId })),
-	dbCreateQuestRef: (payload: CreateQuestRefPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_create_quest_ref", { payload })),
-	dbUpdateQuestRef: (payload: UpdateQuestRefPayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_quest_ref", { payload })),
-	dbDeleteQuestRef: (refId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_delete_quest_ref", { refId })),
-	dbSaveQuestReport: (payload: WriteQuestReportPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_save_quest_report", { payload })),
-	dbGetQuestReport: (questId: string) => typedError<{
+} | null, ErrorDto>(__TAURI_INVOKE("db_get_objective", { objectiveId })),
+	dbListObjectivesForAgent: (agentId: string) => typedError<ObjectiveRow[], ErrorDto>(__TAURI_INVOKE("db_list_objectives_for_agent", { agentId })),
+	dbGetObjectiveTreeForRoot: (rootId: string) => typedError<ObjectiveRow[], ErrorDto>(__TAURI_INVOKE("db_get_objective_tree_for_root", { rootId })),
+	dbRecordObjectiveEvent: (payload: RecordObjectiveEventPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_record_objective_event", { payload })),
+	dbListObjectiveEvents: (objectiveId: string) => typedError<ObjectiveEventRow[], ErrorDto>(__TAURI_INVOKE("db_list_objective_events", { objectiveId })),
+	dbUpdateObjectiveManual: (payload: ManualObjectiveUpdatePayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_objective_manual", { payload })),
+	dbRecordManualObjectiveEvent: (payload: ManualObjectiveEventPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_record_manual_objective_event", { payload })),
+	dbListObjectiveRefs: (objectiveId: string) => typedError<ObjectiveRefRow[], ErrorDto>(__TAURI_INVOKE("db_list_objective_refs", { objectiveId })),
+	dbCreateObjectiveRef: (payload: CreateObjectiveRefPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_create_objective_ref", { payload })),
+	dbUpdateObjectiveRef: (payload: UpdateObjectiveRefPayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_objective_ref", { payload })),
+	dbDeleteObjectiveRef: (refId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_delete_objective_ref", { refId })),
+	dbSaveObjectiveReport: (payload: WriteObjectiveReportPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_save_objective_report", { payload })),
+	dbGetObjectiveReport: (objectiveId: string) => typedError<{
 	id: string,
-	questId: string,
+	objectiveId: string,
 	agentId: string | null,
 	payload: string,
 	createdAt: string,
 	updatedAt: string,
 	distilledByKeeperRunId: number | null,
-} | null, ErrorDto>(__TAURI_INVOKE("db_get_quest_report", { questId })),
-	dbListQuestReportsForAgent: (agentId: string) => typedError<QuestReportRow[], ErrorDto>(__TAURI_INVOKE("db_list_quest_reports_for_agent", { agentId })),
+} | null, ErrorDto>(__TAURI_INVOKE("db_get_objective_report", { objectiveId })),
+	dbListObjectiveReportsForAgent: (agentId: string) => typedError<ObjectiveReportRow[], ErrorDto>(__TAURI_INVOKE("db_list_objective_reports_for_agent", { agentId })),
 	dbGetWorkingMemory: (agentId: string) => typedError<{
 	schemaVersion: number,
-	currentQuestId: string | null,
-	currentQuestPath: string[],
+	currentObjectiveId: string | null,
+	currentObjectivePath: string[],
 	currentAction: WorkingMemoryCurrentAction | null,
 	recentActions: WorkingMemoryRecentAction[],
 	updatedAt: string,
 	activePlanItemId?: string | null,
 	nextPlanItemIds?: string[],
 } | null, ErrorDto>(__TAURI_INVOKE("db_get_working_memory", { agentId })),
-	dbListPlanItems: (questId: string) => typedError<PlanItemRow[], ErrorDto>(__TAURI_INVOKE("db_list_plan_items", { questId })),
+	dbListPlanItems: (objectiveId: string) => typedError<PlanItemRow[], ErrorDto>(__TAURI_INVOKE("db_list_plan_items", { objectiveId })),
 	dbGetPlanItem: (itemId: string) => typedError<{
 	id: string,
-	questId: string,
+	objectiveId: string,
 	parentId: string | null,
 	title: string,
 	status: string,
@@ -323,7 +323,7 @@ export const commands = {
 
 /* Types */
 export type AddPlanItemPayload = {
-	questId: string,
+	objectiveId: string,
 	title: string,
 	rationale?: string | null,
 	/**
@@ -455,11 +455,11 @@ export type Cost = {
 };
 
 /**
- *  Payload for `db_create_quest`. `id` is optional — server generates a
+ *  Payload for `db_create_objective`. `id` is optional — server generates a
  *  UUID if omitted. Defaults: `status='pending'`, `grade='C'`,
  *  `exec_hint='in_context'`, `created_by='monarch'`.
  */
-export type CreateQuestPayload = {
+export type CreateObjectivePayload = {
 	id: string | null,
 	parentId: string | null,
 	title: string,
@@ -471,9 +471,9 @@ export type CreateQuestPayload = {
 	createdBy: string | null,
 };
 
-export type CreateQuestRefPayload = {
+export type CreateObjectiveRefPayload = {
 	id?: string | null,
-	questId: string,
+	objectiveId: string,
 	refType: string,
 	label?: string | null,
 	target: string,
@@ -576,8 +576,8 @@ export type LiveAgentState = {
 	tokensSinceLastCompaction?: number,
 };
 
-export type ManualQuestEventPayload = {
-	questId: string,
+export type ManualObjectiveEventPayload = {
+	objectiveId: string,
 	eventType: string,
 	text: string,
 	title?: string | null,
@@ -589,10 +589,10 @@ export type ManualQuestEventPayload = {
 
 /**
  *  P5 manual editor payload. This narrower path records semantic timeline
- *  events for quest-level changes; generic `db_update_quest` remains available
+ *  events for objective-level changes; generic `db_update_objective` remains available
  *  for older callers that only need a direct row patch.
  */
-export type ManualQuestUpdatePayload = {
+export type ManualObjectiveUpdatePayload = {
 	id: string,
 	status?: string | null,
 	scope?: string | null,
@@ -628,7 +628,7 @@ export type MemoryRow = {
 	summary: string,
 	content: string | null,
 	manualOverride: boolean,
-	sourceQuestId: string | null,
+	sourceObjectiveId: string | null,
 	sourceSessionId: string | null,
 	sourceEvents: string | null,
 	fileRefs: string | null,
@@ -708,66 +708,9 @@ export type ModelInfo = {
 
 export type NotificationLevel = "info" | "warning" | "error";
 
-export type PathSuggestion = {
-	/**
-	 *  Path relative to the original `cwd`, always using forward slashes so
-	 *  the inserted token looks the same on every platform.
-	 */
-	path: string,
-	// True if the entry is a directory, false if it's a file.
-	isDir: boolean,
-};
-
-/**
- *  Input row for `db_set_plan` / executor `set_plan`. `id` is optional —
- *  server generates a UUID if omitted, which is the common case for newly
- *  proposed items. Status defaults to `pending` when omitted; the only
- *  reason a caller would supply it is when the new plan inherits a
- *  previously active item without restarting it.
- */
-export type PlanItemInput = {
-	id?: string | null,
-	title: string,
-	rationale?: string | null,
-	status?: string | null,
-	parentId?: string | null,
-};
-
-export type PlanItemRow = {
+export type ObjectiveEventRow = {
 	id: string,
-	questId: string,
-	parentId: string | null,
-	title: string,
-	status: string,
-	orderIndex: number,
-	createdBy: string,
-	rationale: string | null,
-	createdAt: string,
-	updatedAt: string,
-	completedAt: string | null,
-};
-
-export type ProjectRow = {
-	id: string,
-	name: string,
-	rootPath: string,
-	instructions: string | null,
-	createdAt: string,
-	updatedAt: string,
-};
-
-export type ProviderAuthStatus = {
-	provider: string,
-	checked: boolean,
-	configured: boolean,
-	source: string | null,
-	message: string,
-	authMode: AuthMode,
-};
-
-export type QuestEventRow = {
-	id: string,
-	questId: string,
+	objectiveId: string,
 	eventType: string,
 	actor: string | null,
 	payloadJson: string | null,
@@ -779,9 +722,9 @@ export type QuestEventRow = {
 	planItemId: string | null,
 };
 
-export type QuestRefRow = {
+export type ObjectiveRefRow = {
 	id: string,
-	questId: string,
+	objectiveId: string,
 	refType: string,
 	label: string | null,
 	target: string,
@@ -791,14 +734,9 @@ export type QuestRefRow = {
 	updatedAt: string,
 };
 
-/**
- *  MON-119: one first-person quest report per quest. `agent_id` is
- *  denormalized from `quest_nodes.assignee_shadow_id` at write time and
- *  becomes NULL only when the source agent is deleted (`ON DELETE SET NULL`).
- */
-export type QuestReportRow = {
+export type ObjectiveReportRow = {
 	id: string,
-	questId: string,
+	objectiveId: string,
 	agentId: string | null,
 	payload: string,
 	createdAt: string,
@@ -806,7 +744,7 @@ export type QuestReportRow = {
 	distilledByKeeperRunId: number | null,
 };
 
-export type QuestRow = {
+export type ObjectiveRow = {
 	id: string,
 	rootId: string,
 	parentId: string | null,
@@ -838,8 +776,65 @@ export type QuestRow = {
 	summary: string | null,
 };
 
-export type RecordQuestEventPayload = {
-	questId: string,
+export type PathSuggestion = {
+	/**
+	 *  Path relative to the original `cwd`, always using forward slashes so
+	 *  the inserted token looks the same on every platform.
+	 */
+	path: string,
+	// True if the entry is a directory, false if it's a file.
+	isDir: boolean,
+};
+
+/**
+ *  Input row for `db_set_plan` / executor `set_plan`. `id` is optional —
+ *  server generates a UUID if omitted, which is the common case for newly
+ *  proposed items. Status defaults to `pending` when omitted; the only
+ *  reason a caller would supply it is when the new plan inherits a
+ *  previously active item without restarting it.
+ */
+export type PlanItemInput = {
+	id?: string | null,
+	title: string,
+	rationale?: string | null,
+	status?: string | null,
+	parentId?: string | null,
+};
+
+export type PlanItemRow = {
+	id: string,
+	objectiveId: string,
+	parentId: string | null,
+	title: string,
+	status: string,
+	orderIndex: number,
+	createdBy: string,
+	rationale: string | null,
+	createdAt: string,
+	updatedAt: string,
+	completedAt: string | null,
+};
+
+export type ProjectRow = {
+	id: string,
+	name: string,
+	rootPath: string,
+	instructions: string | null,
+	createdAt: string,
+	updatedAt: string,
+};
+
+export type ProviderAuthStatus = {
+	provider: string,
+	checked: boolean,
+	configured: boolean,
+	source: string | null,
+	message: string,
+	authMode: AuthMode,
+};
+
+export type RecordObjectiveEventPayload = {
+	objectiveId: string,
 	eventType: string,
 	actor: string | null,
 	payloadJson: string | null,
@@ -895,13 +890,13 @@ export type SessionRow = {
 };
 
 /**
- *  Bulk replace payload — `db_set_plan(quest_id, items, created_by)`.
+ *  Bulk replace payload — `db_set_plan(objective_id, items, created_by)`.
  *  `created_by` defaults to `'captain'` when called from the manual UI
  *  path; sidecar pass-through sets it to `'executor'`. The whole list is
  *  authoritative — items not present (matched by id) are deleted.
  */
 export type SetPlanPayload = {
-	questId: string,
+	objectiveId: string,
 	items: PlanItemInput[],
 	createdBy?: string | null,
 	rationale?: string | null,
@@ -1008,22 +1003,11 @@ export type ToolUsageEntry = {
 };
 
 /**
- *  Per-item edit payload. Only non-`None` fields are written. `id` is the
- *  row's primary key.
- */
-export type UpdatePlanItemPayload = {
-	id: string,
-	title?: string | null,
-	rationale?: string | null,
-	orderIndex?: number | null,
-};
-
-/**
- *  Payload for `db_update_quest`. Only non-`None` fields are written.
+ *  Payload for `db_update_objective`. Only non-`None` fields are written.
  *  Lifecycle timestamps (`started_at` / `completed_at` / `abandoned_at`)
  *  can be set explicitly by the caller; the Steward owns this in Slice 4+.
  */
-export type UpdateQuestPayload = {
+export type UpdateObjectivePayload = {
 	id: string,
 	title: string | null,
 	description: string | null,
@@ -1041,12 +1025,23 @@ export type UpdateQuestPayload = {
 	abandonedAt: string | null,
 };
 
-export type UpdateQuestRefPayload = {
+export type UpdateObjectiveRefPayload = {
 	id: string,
 	refType?: string | null,
 	label?: string | null,
 	target?: string | null,
 	metadataJson?: string | null,
+};
+
+/**
+ *  Per-item edit payload. Only non-`None` fields are written. `id` is the
+ *  row's primary key.
+ */
+export type UpdatePlanItemPayload = {
+	id: string,
+	title?: string | null,
+	rationale?: string | null,
+	orderIndex?: number | null,
 };
 
 export type UpsertCaptainIdentityRequest = {
@@ -1072,15 +1067,15 @@ export type Usage = {
 
 export type WorkingMemoryCurrentAction = {
 	eventId: string,
-	questId: string,
+	objectiveId: string,
 	intent: string,
 	startedAt: string,
 };
 
 export type WorkingMemoryPayload = {
 	schemaVersion: number,
-	currentQuestId: string | null,
-	currentQuestPath: string[],
+	currentObjectiveId: string | null,
+	currentObjectivePath: string[],
 	currentAction: WorkingMemoryCurrentAction | null,
 	recentActions: WorkingMemoryRecentAction[],
 	updatedAt: string,
@@ -1090,7 +1085,7 @@ export type WorkingMemoryPayload = {
 
 export type WorkingMemoryRecentAction = {
 	eventId: string,
-	questId: string,
+	objectiveId: string,
 	intent: string,
 	outcome: string,
 	completedAt: string,
@@ -1098,14 +1093,14 @@ export type WorkingMemoryRecentAction = {
 };
 
 /**
- *  MON-119: payload for upserting a quest report. `agent_id` is omitted —
- *  the write helper resolves it from `quest_nodes.assignee_shadow_id`.
+ *  MON-119: payload for upserting a objective report. `agent_id` is omitted —
+ *  the write helper resolves it from `objective_nodes.assignee_shadow_id`.
  *  `payload` is opaque JSON in Slice A; Slice B's sidecar tool defines the
  *  structured shape.
  */
-export type WriteQuestReportPayload = {
+export type WriteObjectiveReportPayload = {
 	id?: string | null,
-	questId: string,
+	objectiveId: string,
 	payload: string,
 };
 

@@ -22,7 +22,7 @@ pub(super) fn inner_event_tag(event: &InnerEvent) -> &'static str {
         InnerEvent::PlanItemComplete { .. } => "plan_item_complete",
         InnerEvent::PlanItemSkip { .. } => "plan_item_skip",
         InnerEvent::PlanItemBlock { .. } => "plan_item_block",
-        InnerEvent::QuestReport { .. } => "quest_report",
+        InnerEvent::ObjectiveReport { .. } => "objective_report",
         InnerEvent::CompactionStart { .. } => "compaction_start",
         InnerEvent::CompactionEnd { .. } => "compaction_end",
         InnerEvent::AutoRetryStart { .. } => "auto_retry_start",

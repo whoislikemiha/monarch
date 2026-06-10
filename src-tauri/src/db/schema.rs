@@ -6,6 +6,83 @@ impl Database {
     pub(super) async fn init_schema(&self) -> Result<(), MonarchError> {
         self.conn
             .call(|conn| {
+                // ---- P1 (campaign/objective rename): migrate existing DBs ----
+                // Rename the quest_* tables/columns to objective_* BEFORE the
+                // CREATE TABLE IF NOT EXISTS / ADD COLUMN blocks below run. On
+                // an existing DB those statements would otherwise create empty
+                // objective_* tables that shadow the real quest_* data. Each
+                // rename is gated on sqlite_master / PRAGMA table_info, so a
+                // fresh DB (no quest_*) and an already-migrated DB (no quest_*
+                // left) both skip cleanly. Names are trusted literals.
+                fn table_exists(conn: &rusqlite::Connection, name: &str) -> bool {
+                    conn.query_row(
+                        &format!(
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{name}'"
+                        ),
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap_or(0)
+                        > 0
+                }
+                fn column_exists(conn: &rusqlite::Connection, table: &str, col: &str) -> bool {
+                    let mut stmt = match conn.prepare(&format!("PRAGMA table_info({table})")) {
+                        Ok(s) => s,
+                        Err(_) => return false,
+                    };
+                    stmt.query_map([], |row| row.get::<_, String>(1))
+                        .map(|rows| rows.filter_map(Result::ok).any(|c| c == col))
+                        .unwrap_or(false)
+                }
+                for (old, new) in [
+                    ("quest_nodes", "objective_nodes"),
+                    ("quest_events", "objective_events"),
+                    ("quest_plan_items", "objective_plan_items"),
+                    ("quest_refs", "objective_refs"),
+                    ("quest_reports", "objective_reports"),
+                ] {
+                    if table_exists(conn, old) && !table_exists(conn, new) {
+                        let _ = conn.execute_batch(&format!("ALTER TABLE {old} RENAME TO {new};"));
+                    }
+                }
+                for (table, old, new) in [
+                    ("objective_events", "quest_id", "objective_id"),
+                    ("objective_plan_items", "quest_id", "objective_id"),
+                    ("objective_refs", "quest_id", "objective_id"),
+                    ("objective_reports", "quest_id", "objective_id"),
+                    ("messages", "quest_id", "objective_id"),
+                    ("agents", "current_quest_id", "current_objective_id"),
+                    ("memories", "source_quest_id", "source_objective_id"),
+                    ("memory_keeper_runs", "quest_id", "objective_id"),
+                ] {
+                    if column_exists(conn, table, old) && !column_exists(conn, table, new) {
+                        let _ = conn.execute_batch(&format!(
+                            "ALTER TABLE {table} RENAME COLUMN {old} TO {new};"
+                        ));
+                    }
+                }
+                // Drop stale quest_* index names; the CREATE INDEX IF NOT EXISTS
+                // idx_objective_* blocks below recreate them under new names.
+                for idx in [
+                    "idx_quest_nodes_root",
+                    "idx_quest_nodes_parent",
+                    "idx_quest_nodes_assignee_status",
+                    "idx_quest_nodes_created_at",
+                    "idx_quest_nodes_fork_parent",
+                    "idx_quest_events_quest",
+                    "idx_quest_events_parent",
+                    "idx_quest_events_plan_item",
+                    "idx_quest_plan_items_quest_order",
+                    "idx_quest_plan_items_quest_status",
+                    "idx_quest_refs_quest",
+                    "idx_quest_refs_type",
+                    "idx_quest_reports_agent",
+                    "idx_memories_quest",
+                    "idx_messages_quest",
+                ] {
+                    let _ = conn.execute_batch(&format!("DROP INDEX IF EXISTS {idx};"));
+                }
+
                 conn.execute_batch(
                     "
                     CREATE TABLE IF NOT EXISTS projects (
@@ -197,17 +274,17 @@ impl Database {
                     [],
                 );
 
-                // MON-83: Quest system Slice 2 — fractal unit of work.
-                // Design: plans/quests.md. Quests are orthogonal to sessions —
-                // a quest can span sessions, a session can span quests.
+                // MON-83: Objective system Slice 2 — fractal unit of work.
+                // Design: plans/objectives.md. Objectives are orthogonal to sessions —
+                // a objective can span sessions, a session can span objectives.
                 // CHECK constraints pin the finite enums (status/grade/
                 // exec_hint/created_by) at the storage layer; Rust mirrors
-                // the same values in quest::types.
+                // the same values in objective::types.
                 let _ = conn.execute_batch(
-                    "CREATE TABLE IF NOT EXISTS quest_nodes (
+                    "CREATE TABLE IF NOT EXISTS objective_nodes (
                         id TEXT PRIMARY KEY,
                         root_id TEXT NOT NULL,
-                        parent_id TEXT REFERENCES quest_nodes(id) ON DELETE CASCADE,
+                        parent_id TEXT REFERENCES objective_nodes(id) ON DELETE CASCADE,
                         title TEXT NOT NULL,
                         description TEXT,
                         status TEXT NOT NULL CHECK (status IN (
@@ -222,8 +299,8 @@ impl Database {
                         worktree_path TEXT,
                         branch_name TEXT,
                         base_branch TEXT,
-                        branched_from_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL,
-                        superseded_by_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL,
+                        branched_from_id TEXT REFERENCES objective_nodes(id) ON DELETE SET NULL,
+                        superseded_by_id TEXT REFERENCES objective_nodes(id) ON DELETE SET NULL,
                         created_by TEXT NOT NULL CHECK (created_by IN (
                             'architect','steward','orchestrator','monarch'
                         )),
@@ -237,44 +314,44 @@ impl Database {
                         actual_duration_ms INTEGER,
                         summary TEXT
                     );
-                    CREATE INDEX IF NOT EXISTS idx_quest_nodes_root ON quest_nodes(root_id);
-                    CREATE INDEX IF NOT EXISTS idx_quest_nodes_parent ON quest_nodes(parent_id);
-                    CREATE INDEX IF NOT EXISTS idx_quest_nodes_assignee_status
-                        ON quest_nodes(assignee_shadow_id, status);
-                    CREATE INDEX IF NOT EXISTS idx_quest_nodes_created_at
-                        ON quest_nodes(created_at);",
+                    CREATE INDEX IF NOT EXISTS idx_objective_nodes_root ON objective_nodes(root_id);
+                    CREATE INDEX IF NOT EXISTS idx_objective_nodes_parent ON objective_nodes(parent_id);
+                    CREATE INDEX IF NOT EXISTS idx_objective_nodes_assignee_status
+                        ON objective_nodes(assignee_shadow_id, status);
+                    CREATE INDEX IF NOT EXISTS idx_objective_nodes_created_at
+                        ON objective_nodes(created_at);",
                 );
                 let _ = conn.execute_batch(
-                    "CREATE TABLE IF NOT EXISTS quest_events (
+                    "CREATE TABLE IF NOT EXISTS objective_events (
                         id TEXT PRIMARY KEY,
-                        quest_id TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
+                        objective_id TEXT NOT NULL REFERENCES objective_nodes(id) ON DELETE CASCADE,
                         event_type TEXT NOT NULL,
                         actor TEXT,
                         payload_json TEXT,
                         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
                     );
-                    CREATE INDEX IF NOT EXISTS idx_quest_events_quest
-                        ON quest_events(quest_id, created_at);",
+                    CREATE INDEX IF NOT EXISTS idx_objective_events_objective
+                        ON objective_events(objective_id, created_at);",
                 );
                 // P4: nested execution narrative. `actor` remains the
                 // concrete writer id/name; `author` is the semantic source
                 // (executor/chat_shadow/captain/keeper/system). Existing
                 // rows keep NULLs and render through legacy fallbacks.
                 let _ = conn.execute_batch(
-                    "ALTER TABLE quest_events ADD COLUMN parent_event_id TEXT REFERENCES quest_events(id) ON DELETE CASCADE;",
+                    "ALTER TABLE objective_events ADD COLUMN parent_event_id TEXT REFERENCES objective_events(id) ON DELETE CASCADE;",
                 );
                 let _ = conn.execute_batch(
-                    "ALTER TABLE quest_events ADD COLUMN author TEXT;",
+                    "ALTER TABLE objective_events ADD COLUMN author TEXT;",
                 );
                 let _ = conn.execute_batch(
-                    "ALTER TABLE quest_events ADD COLUMN surface_override TEXT;",
+                    "ALTER TABLE objective_events ADD COLUMN surface_override TEXT;",
                 );
                 let _ = conn.execute_batch(
-                    "ALTER TABLE quest_events ADD COLUMN payload_schema_version INTEGER NOT NULL DEFAULT 1;",
+                    "ALTER TABLE objective_events ADD COLUMN payload_schema_version INTEGER NOT NULL DEFAULT 1;",
                 );
                 let _ = conn.execute_batch(
-                    "CREATE INDEX IF NOT EXISTS idx_quest_events_parent
-                        ON quest_events(parent_event_id);",
+                    "CREATE INDEX IF NOT EXISTS idx_objective_events_parent
+                        ON objective_events(parent_event_id);",
                 );
                 let _ = conn.execute_batch(
                     "CREATE TABLE IF NOT EXISTS agent_working_memory (
@@ -283,17 +360,17 @@ impl Database {
                         updated_at TEXT NOT NULL
                     );",
                 );
-                // P4b (MON-111): durable per-quest execution plan items.
+                // P4b (MON-111): durable per-objective execution plan items.
                 // Plan items are the *intended route* — distinct from the
                 // recorded coherent-action timeline. Status is a finite
                 // lifecycle pinned at the storage layer; Rust mirrors the
                 // values in `PlanItemStatus`. `parent_id` exists so future
                 // grouping is possible without migration; V0 UI is flat.
                 let _ = conn.execute_batch(
-                    "CREATE TABLE IF NOT EXISTS quest_plan_items (
+                    "CREATE TABLE IF NOT EXISTS objective_plan_items (
                         id TEXT PRIMARY KEY,
-                        quest_id TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
-                        parent_id TEXT REFERENCES quest_plan_items(id) ON DELETE CASCADE,
+                        objective_id TEXT NOT NULL REFERENCES objective_nodes(id) ON DELETE CASCADE,
+                        parent_id TEXT REFERENCES objective_plan_items(id) ON DELETE CASCADE,
                         title TEXT NOT NULL,
                         status TEXT NOT NULL CHECK (status IN (
                             'pending','active','completed','skipped','blocked'
@@ -307,41 +384,41 @@ impl Database {
                         updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                         completed_at TEXT
                     );
-                    CREATE INDEX IF NOT EXISTS idx_quest_plan_items_quest_order
-                        ON quest_plan_items(quest_id, order_index);
-                    CREATE INDEX IF NOT EXISTS idx_quest_plan_items_quest_status
-                        ON quest_plan_items(quest_id, status);",
+                    CREATE INDEX IF NOT EXISTS idx_objective_plan_items_objective_order
+                        ON objective_plan_items(objective_id, order_index);
+                    CREATE INDEX IF NOT EXISTS idx_objective_plan_items_objective_status
+                        ON objective_plan_items(objective_id, status);",
                 );
                 // P4b (MON-111): coherent_action events stamp the plan_item_id
                 // active in L2 at INSERT time so timeline rendering can group
                 // actions under their plan item without a join through L2.
                 // Nullable — actions emitted while no item is active stay NULL.
                 let _ = conn.execute_batch(
-                    "ALTER TABLE quest_events ADD COLUMN plan_item_id TEXT REFERENCES quest_plan_items(id) ON DELETE SET NULL;",
+                    "ALTER TABLE objective_events ADD COLUMN plan_item_id TEXT REFERENCES objective_plan_items(id) ON DELETE SET NULL;",
                 );
                 let _ = conn.execute_batch(
-                    "CREATE INDEX IF NOT EXISTS idx_quest_events_plan_item
-                        ON quest_events(plan_item_id);",
+                    "CREATE INDEX IF NOT EXISTS idx_objective_events_plan_item
+                        ON objective_events(plan_item_id);",
                 );
-                // P5 (MON-116): rich quest metadata. Older MON-83 columns
+                // P5 (MON-116): rich objective metadata. Older MON-83 columns
                 // already include status, grade, worktree_path, and summary;
                 // these ALTERs add only the missing what/why fields.
-                let _ = conn.execute_batch("ALTER TABLE quest_nodes ADD COLUMN scope TEXT;");
+                let _ = conn.execute_batch("ALTER TABLE objective_nodes ADD COLUMN scope TEXT;");
                 let _ = conn.execute_batch(
-                    "ALTER TABLE quest_nodes ADD COLUMN current_direction TEXT;",
+                    "ALTER TABLE objective_nodes ADD COLUMN current_direction TEXT;",
                 );
-                let _ = conn.execute_batch("ALTER TABLE quest_nodes ADD COLUMN rationale TEXT;");
+                let _ = conn.execute_batch("ALTER TABLE objective_nodes ADD COLUMN rationale TEXT;");
                 let _ = conn.execute_batch(
-                    "ALTER TABLE quest_nodes ADD COLUMN fork_parent_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL;",
-                );
-                let _ = conn.execute_batch(
-                    "CREATE INDEX IF NOT EXISTS idx_quest_nodes_fork_parent
-                        ON quest_nodes(fork_parent_id);",
+                    "ALTER TABLE objective_nodes ADD COLUMN fork_parent_id TEXT REFERENCES objective_nodes(id) ON DELETE SET NULL;",
                 );
                 let _ = conn.execute_batch(
-                    "CREATE TABLE IF NOT EXISTS quest_refs (
+                    "CREATE INDEX IF NOT EXISTS idx_objective_nodes_fork_parent
+                        ON objective_nodes(fork_parent_id);",
+                );
+                let _ = conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS objective_refs (
                         id TEXT PRIMARY KEY,
-                        quest_id TEXT NOT NULL REFERENCES quest_nodes(id) ON DELETE CASCADE,
+                        objective_id TEXT NOT NULL REFERENCES objective_nodes(id) ON DELETE CASCADE,
                         ref_type TEXT NOT NULL,
                         label TEXT,
                         target TEXT NOT NULL,
@@ -350,27 +427,27 @@ impl Database {
                         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                         updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
                     );
-                    CREATE INDEX IF NOT EXISTS idx_quest_refs_quest
-                        ON quest_refs(quest_id, created_at);
-                    CREATE INDEX IF NOT EXISTS idx_quest_refs_type
-                        ON quest_refs(ref_type);",
+                    CREATE INDEX IF NOT EXISTS idx_objective_refs_objective
+                        ON objective_refs(objective_id, created_at);
+                    CREATE INDEX IF NOT EXISTS idx_objective_refs_type
+                        ON objective_refs(ref_type);",
                 );
-                // messages.quest_id: nullable FK. Slice 2 leaves this NULL
+                // messages.objective_id: nullable FK. Slice 2 leaves this NULL
                 // everywhere; Slice 3 (Architect) is the first writer.
                 let _ = conn.execute_batch(
-                    "ALTER TABLE messages ADD COLUMN quest_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL;",
+                    "ALTER TABLE messages ADD COLUMN objective_id TEXT REFERENCES objective_nodes(id) ON DELETE SET NULL;",
                 );
                 let _ = conn.execute_batch(
-                    "CREATE INDEX IF NOT EXISTS idx_messages_quest ON messages(quest_id);",
+                    "CREATE INDEX IF NOT EXISTS idx_messages_objective ON messages(objective_id);",
                 );
-                // agents.current_quest_id: nullable pointer into the tree.
+                // agents.current_objective_id: nullable pointer into the tree.
                 // Slice 2 adds the column; Slice 3+ populate it.
                 let _ = conn.execute_batch(
-                    "ALTER TABLE agents ADD COLUMN current_quest_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL;",
+                    "ALTER TABLE agents ADD COLUMN current_objective_id TEXT REFERENCES objective_nodes(id) ON DELETE SET NULL;",
                 );
 
-                // MON-82: Quest system Slice 1 — per-turn prompt classifier.
-                // Design: plans/quests.md. Every user turn is tagged with a
+                // MON-82: Objective system Slice 1 — per-turn prompt classifier.
+                // Design: plans/objectives.md. Every user turn is tagged with a
                 // complexity label before/in-parallel-with the Pi session.
                 // `message_id` is nullable because the classifier emits before
                 // the user message row exists (MessageEnd from Pi is the
@@ -452,7 +529,7 @@ impl Database {
                     "ALTER TABLE memories ADD COLUMN title TEXT NOT NULL DEFAULT ''",
                     "ALTER TABLE memories ADD COLUMN summary TEXT NOT NULL DEFAULT ''",
                     "ALTER TABLE memories ADD COLUMN manual_override INTEGER NOT NULL DEFAULT 0",
-                    "ALTER TABLE memories ADD COLUMN source_quest_id TEXT",
+                    "ALTER TABLE memories ADD COLUMN source_objective_id TEXT",
                     "ALTER TABLE memories ADD COLUMN source_session_id TEXT",
                     "ALTER TABLE memories ADD COLUMN source_events TEXT",
                     "ALTER TABLE memories ADD COLUMN file_refs TEXT",
@@ -467,8 +544,8 @@ impl Database {
                 let _ = conn.execute_batch(
                     "CREATE INDEX IF NOT EXISTS idx_memories_agent_scope
                         ON memories(agent_id, scope, archived_at);
-                    CREATE INDEX IF NOT EXISTS idx_memories_quest
-                        ON memories(source_quest_id);
+                    CREATE INDEX IF NOT EXISTS idx_memories_objective
+                        ON memories(source_objective_id);
                     CREATE INDEX IF NOT EXISTS idx_memories_parent
                         ON memories(parent_id);",
                 );
@@ -477,7 +554,7 @@ impl Database {
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         agent_id TEXT NOT NULL,
                         trigger TEXT NOT NULL,
-                        quest_id TEXT REFERENCES quest_nodes(id) ON DELETE SET NULL,
+                        objective_id TEXT REFERENCES objective_nodes(id) ON DELETE SET NULL,
                         started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                         completed_at TEXT,
                         tokens_input INTEGER,
@@ -490,9 +567,9 @@ impl Database {
                         ON memory_keeper_runs(agent_id, started_at);",
                 );
 
-                // MON-119: P6 Slice A — first-person quest reports. One row per
-                // quest (enforced by UNIQUE(quest_id)); revisions upsert.
-                // `agent_id` is denormalized from `quest_nodes.assignee_shadow_id`
+                // MON-119: P6 Slice A — first-person objective reports. One row per
+                // objective (enforced by UNIQUE(objective_id)); revisions upsert.
+                // `agent_id` is denormalized from `objective_nodes.assignee_shadow_id`
                 // at write time so per-agent and (later) per-project listings
                 // are one table instead of a JOIN. `payload` is opaque JSON in
                 // Slice A; the structured shape (summary/outcome/decisions/
@@ -500,17 +577,17 @@ impl Database {
                 // the sidecar tool in Slice B. `distilled_by_keeper_run_id`
                 // is populated by Slice D when the Keeper consumes the report.
                 let _ = conn.execute_batch(
-                    "CREATE TABLE IF NOT EXISTS quest_reports (
+                    "CREATE TABLE IF NOT EXISTS objective_reports (
                         id TEXT PRIMARY KEY,
-                        quest_id TEXT NOT NULL UNIQUE REFERENCES quest_nodes(id) ON DELETE CASCADE,
+                        objective_id TEXT NOT NULL UNIQUE REFERENCES objective_nodes(id) ON DELETE CASCADE,
                         agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
                         payload TEXT NOT NULL,
                         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                         updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
                         distilled_by_keeper_run_id INTEGER REFERENCES memory_keeper_runs(id) ON DELETE SET NULL
                     );
-                    CREATE INDEX IF NOT EXISTS idx_quest_reports_agent
-                        ON quest_reports(agent_id, created_at);",
+                    CREATE INDEX IF NOT EXISTS idx_objective_reports_agent
+                        ON objective_reports(agent_id, created_at);",
                 );
 
                 // FTS5 virtual table — separate batch because some SQLite

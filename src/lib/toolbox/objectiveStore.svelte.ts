@@ -2,30 +2,30 @@ import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { invoke, listen, type UnlistenFn } from "$lib/api";
 import type {
   AddPlanItemPayload,
-  CreateQuestRefPayload,
-  CreateQuestPayload,
-  ManualQuestEventPayload,
-  ManualQuestUpdatePayload,
+  CreateObjectiveRefPayload,
+  CreateObjectivePayload,
+  ManualObjectiveEventPayload,
+  ManualObjectiveUpdatePayload,
   PlanItemInput,
   PlanItemRow,
-  QuestEventRow,
-  QuestRefRow,
-  QuestReportRow,
-  QuestRow,
+  ObjectiveEventRow,
+  ObjectiveRefRow,
+  ObjectiveReportRow,
+  ObjectiveRow,
   UpdatePlanItemPayload,
-  UpdateQuestRefPayload,
-  UpdateQuestPayload,
+  UpdateObjectiveRefPayload,
+  UpdateObjectivePayload,
   WorkingMemoryPayload,
 } from "../bindings";
 
 /**
- * P6 Slice C (MON-121): the parsed first-person quest report. Mirrors the
- * snake-case shape the executor's `complete_quest` tool emits and Rust stores
- * verbatim in `quest_reports.payload` (see `sidecar/src/report-tools.ts` and
- * `src-tauri/src/sidecar_protocol.rs` `QuestReport`). Read-only here — the
+ * P6 Slice C (MON-121): the parsed first-person objective report. Mirrors the
+ * snake-case shape the executor's `complete_objective` tool emits and Rust stores
+ * verbatim in `objective_reports.payload` (see `sidecar/src/report-tools.ts` and
+ * `src-tauri/src/sidecar_protocol.rs` `ObjectiveReport`). Read-only here — the
  * report is the shadow's artifact, not captain-editable.
  */
-export interface QuestReportView {
+export interface ObjectiveReportView {
   summary: string;
   outcome: string;
   decisions: { decision: string; rationale?: string | null }[];
@@ -41,8 +41,8 @@ export interface QuestReportView {
   raw?: string;
 }
 
-export function parseQuestReport(row: QuestReportRow): QuestReportView {
-  const base: QuestReportView = {
+export function parseObjectiveReport(row: ObjectiveReportRow): ObjectiveReportView {
+  const base: ObjectiveReportView = {
     summary: "",
     outcome: "",
     decisions: [],
@@ -55,7 +55,7 @@ export function parseQuestReport(row: QuestReportRow): QuestReportView {
     updatedAt: row.updatedAt,
   };
   try {
-    const p = JSON.parse(row.payload) as Partial<QuestReportView>;
+    const p = JSON.parse(row.payload) as Partial<ObjectiveReportView>;
     return {
       ...base,
       summary: typeof p.summary === "string" ? p.summary : "",
@@ -75,41 +75,41 @@ export function parseQuestReport(row: QuestReportRow): QuestReportView {
 }
 
 /**
- * MON-83: per-agent quest state. Keyed by agentId because toolbox tools
+ * MON-83: per-agent objective state. Keyed by agentId because toolbox tools
  * stay mounted across agent switches (CLAUDE.md) — we don't want one
  * tool instance stomping another's loading state.
  *
  * Tree shape is derived on demand from `tree` (flat list from the backend
- * `get_quest_tree_for_root` call). Sub-quests with a different assignee
+ * `get_objective_tree_for_root` call). Sub-objectives with a different assignee
  * still show up inside their root's tree — that's intentional so a
  * Monarch looking at a shadow sees the full context the shadow works
  * inside, not just the nodes the shadow "owns".
  */
-export interface AgentQuestState {
+export interface AgentObjectiveState {
   agentId: string;
   /** Roots where this agent is the direct assignee, newest first. */
-  roots: QuestRow[];
+  roots: ObjectiveRow[];
   /** Full tree per root_id (flat list ordered by created_at ASC). */
-  treesByRoot: SvelteMap<string, QuestRow[]>;
-  /** Events per quest_id, lazily loaded on expand. */
-  eventsByQuest: SvelteMap<string, QuestEventRow[]>;
-  /** Durable execution plan items per quest_id, lazily loaded beside events. */
-  planItemsByQuest: SvelteMap<string, PlanItemRow[]>;
-  /** External references per quest_id, lazily loaded with quest details. */
-  refsByQuest: SvelteMap<string, QuestRefRow[]>;
+  treesByRoot: SvelteMap<string, ObjectiveRow[]>;
+  /** Events per objective_id, lazily loaded on expand. */
+  eventsByObjective: SvelteMap<string, ObjectiveEventRow[]>;
+  /** Durable execution plan items per objective_id, lazily loaded beside events. */
+  planItemsByObjective: SvelteMap<string, PlanItemRow[]>;
+  /** External references per objective_id, lazily loaded with objective details. */
+  refsByObjective: SvelteMap<string, ObjectiveRefRow[]>;
   /**
-   * P6 Slice C: first-person quest report per quest_id, lazily loaded on
+   * P6 Slice C: first-person objective report per objective_id, lazily loaded on
    * expand. A present `null` value means "loaded, no report exists"; an
    * absent key means "not yet fetched".
    */
-  reportsByQuest: SvelteMap<string, QuestReportView | null>;
-  /** Quest ids currently expanded inline in the timeline view. */
-  expandedQuestIds: SvelteSet<string>;
-  /** Quest event ids expanded inside an open quest. */
+  reportsByObjective: SvelteMap<string, ObjectiveReportView | null>;
+  /** Objective ids currently expanded inline in the timeline view. */
+  expandedObjectiveIds: SvelteSet<string>;
+  /** Objective event ids expanded inside an open objective. */
   expandedEventIds: SvelteSet<string>;
   /** L2 v0: current action + recent actions for quick "what now?" UI. */
   workingMemory: WorkingMemoryPayload | null;
-  /** True while the create-quest form is visible. */
+  /** True while the create-objective form is visible. */
   creating: boolean;
   /** Optional parent id preselected when opening the create form. */
   creatingParentId: string | null;
@@ -122,25 +122,25 @@ interface AgentSubs {
   unlisten: Array<Promise<UnlistenFn>>;
 }
 
-class QuestStore {
-  readonly byAgent = new SvelteMap<string, AgentQuestState>();
+class ObjectiveStore {
+  readonly byAgent = new SvelteMap<string, AgentObjectiveState>();
   private subs = new Map<string, AgentSubs>();
   private workingMemoryUnavailable = false;
 
-  ensure(agentId: string): AgentQuestState {
+  ensure(agentId: string): AgentObjectiveState {
     const existing = this.byAgent.get(agentId);
     if (existing) return existing;
     // `$state` must sit in a variable declaration initializer; the entry
     // then lives in the SvelteMap which stays reactive on its own.
-    const entry: AgentQuestState = $state({
+    const entry: AgentObjectiveState = $state({
       agentId,
       roots: [],
       treesByRoot: new SvelteMap(),
-      eventsByQuest: new SvelteMap(),
-      planItemsByQuest: new SvelteMap(),
-      refsByQuest: new SvelteMap(),
-      reportsByQuest: new SvelteMap(),
-      expandedQuestIds: new SvelteSet(),
+      eventsByObjective: new SvelteMap(),
+      planItemsByObjective: new SvelteMap(),
+      refsByObjective: new SvelteMap(),
+      reportsByObjective: new SvelteMap(),
+      expandedObjectiveIds: new SvelteSet(),
       expandedEventIds: new SvelteSet(),
       workingMemory: null,
       creating: false,
@@ -153,8 +153,8 @@ class QuestStore {
   }
 
   /**
-   * Load (or reload) this agent's quest roots + their trees.
-   * Also subscribes to per-root `quest-updated-{rootId}` / `quest-created-*`
+   * Load (or reload) this agent's objective roots + their trees.
+   * Also subscribes to per-root `objective-updated-{rootId}` / `objective-created-*`
    * channels so another Monarch client's writes show up here.
    */
   async refresh(agentId: string): Promise<void> {
@@ -162,18 +162,18 @@ class QuestStore {
     entry.loading = true;
     entry.error = null;
     try {
-      const all = await invoke<QuestRow[]>("db_list_quests_for_agent", {
+      const all = await invoke<ObjectiveRow[]>("db_list_objectives_for_agent", {
         agentId,
       });
       // Keep only roots (parent_id null) in the timeline header list.
       const roots = all.filter((q) => q.parentId === null);
       entry.roots = roots;
 
-      // Fetch each root's tree in parallel so sub-quests are visible even
+      // Fetch each root's tree in parallel so sub-objectives are visible even
       // when the assignee differs.
       const trees = await Promise.all(
         roots.map((r) =>
-          invoke<QuestRow[]>("db_get_quest_tree_for_root", { rootId: r.id }),
+          invoke<ObjectiveRow[]>("db_get_objective_tree_for_root", { rootId: r.id }),
         ),
       );
       entry.treesByRoot.clear();
@@ -189,125 +189,125 @@ class QuestStore {
     }
   }
 
-  async createQuest(
+  async createObjective(
     agentId: string,
-    payload: CreateQuestPayload,
+    payload: CreateObjectivePayload,
   ): Promise<string> {
-    // Default the assignee to the current agent so the created quest
+    // Default the assignee to the current agent so the created objective
     // shows up in the timeline immediately.
-    const withAssignee: CreateQuestPayload = {
+    const withAssignee: CreateObjectivePayload = {
       ...payload,
       assigneeShadowId: payload.assigneeShadowId ?? agentId,
     };
-    const id = await invoke<string>("db_create_quest", {
+    const id = await invoke<string>("db_create_objective", {
       payload: withAssignee,
     });
     await this.refresh(agentId);
     return id;
   }
 
-  async updateQuest(agentId: string, payload: UpdateQuestPayload): Promise<void> {
-    await invoke("db_update_quest", { payload });
+  async updateObjective(agentId: string, payload: UpdateObjectivePayload): Promise<void> {
+    await invoke("db_update_objective", { payload });
     await this.refresh(agentId);
   }
 
-  async updateQuestManual(
+  async updateObjectiveManual(
     agentId: string,
-    payload: ManualQuestUpdatePayload,
+    payload: ManualObjectiveUpdatePayload,
   ): Promise<void> {
-    await invoke("db_update_quest_manual", { payload });
+    await invoke("db_update_objective_manual", { payload });
     await this.refresh(agentId);
-    if (this.ensure(agentId).expandedQuestIds.has(payload.id)) {
+    if (this.ensure(agentId).expandedObjectiveIds.has(payload.id)) {
       await this.loadEvents(agentId, payload.id);
     }
   }
 
-  async recordManualQuestEvent(
+  async recordManualObjectiveEvent(
     agentId: string,
-    payload: ManualQuestEventPayload,
+    payload: ManualObjectiveEventPayload,
   ): Promise<string> {
-    const id = await invoke<string>("db_record_manual_quest_event", { payload });
-    await this.loadEvents(agentId, payload.questId);
+    const id = await invoke<string>("db_record_manual_objective_event", { payload });
+    await this.loadEvents(agentId, payload.objectiveId);
     return id;
   }
 
-  async loadEvents(agentId: string, questId: string): Promise<void> {
+  async loadEvents(agentId: string, objectiveId: string): Promise<void> {
     const entry = this.ensure(agentId);
-    const events = await invoke<QuestEventRow[]>("db_list_quest_events", {
-      questId,
+    const events = await invoke<ObjectiveEventRow[]>("db_list_objective_events", {
+      objectiveId,
     });
-    entry.eventsByQuest.set(questId, events);
+    entry.eventsByObjective.set(objectiveId, events);
   }
 
-  async loadPlanItems(agentId: string, questId: string): Promise<void> {
+  async loadPlanItems(agentId: string, objectiveId: string): Promise<void> {
     const entry = this.ensure(agentId);
     const items = await invoke<PlanItemRow[]>("db_list_plan_items", {
-      questId,
+      objectiveId,
     });
-    entry.planItemsByQuest.set(questId, items);
+    entry.planItemsByObjective.set(objectiveId, items);
   }
 
-  async loadRefs(agentId: string, questId: string): Promise<void> {
+  async loadRefs(agentId: string, objectiveId: string): Promise<void> {
     const entry = this.ensure(agentId);
-    const refs = await invoke<QuestRefRow[]>("db_list_quest_refs", { questId });
-    entry.refsByQuest.set(questId, refs);
+    const refs = await invoke<ObjectiveRefRow[]>("db_list_objective_refs", { objectiveId });
+    entry.refsByObjective.set(objectiveId, refs);
   }
 
   /**
-   * P6 Slice C: load this quest's first-person report (if any). Stores `null`
+   * P6 Slice C: load this objective's first-person report (if any). Stores `null`
    * when no report exists so the UI can distinguish "loaded, empty" from
    * "not yet fetched". Backend command shipped in Slice A (MON-119).
    */
-  async loadReport(agentId: string, questId: string): Promise<void> {
+  async loadReport(agentId: string, objectiveId: string): Promise<void> {
     const entry = this.ensure(agentId);
-    const row = await invoke<QuestReportRow | null>("db_get_quest_report", {
-      questId,
+    const row = await invoke<ObjectiveReportRow | null>("db_get_objective_report", {
+      objectiveId,
     });
-    entry.reportsByQuest.set(questId, row ? parseQuestReport(row) : null);
+    entry.reportsByObjective.set(objectiveId, row ? parseObjectiveReport(row) : null);
   }
 
-  async createQuestRef(
+  async createObjectiveRef(
     agentId: string,
-    payload: CreateQuestRefPayload,
+    payload: CreateObjectiveRefPayload,
   ): Promise<string> {
-    const id = await invoke<string>("db_create_quest_ref", { payload });
-    await this.loadRefs(agentId, payload.questId);
+    const id = await invoke<string>("db_create_objective_ref", { payload });
+    await this.loadRefs(agentId, payload.objectiveId);
     return id;
   }
 
-  async updateQuestRef(
+  async updateObjectiveRef(
     agentId: string,
-    questId: string,
-    payload: UpdateQuestRefPayload,
+    objectiveId: string,
+    payload: UpdateObjectiveRefPayload,
   ): Promise<void> {
-    await invoke("db_update_quest_ref", { payload });
-    await this.loadRefs(agentId, questId);
+    await invoke("db_update_objective_ref", { payload });
+    await this.loadRefs(agentId, objectiveId);
   }
 
-  async deleteQuestRef(
+  async deleteObjectiveRef(
     agentId: string,
-    questId: string,
+    objectiveId: string,
     refId: string,
   ): Promise<void> {
-    await invoke("db_delete_quest_ref", { refId });
-    await this.loadRefs(agentId, questId);
+    await invoke("db_delete_objective_ref", { refId });
+    await this.loadRefs(agentId, objectiveId);
   }
 
-  async refreshQuestPlan(agentId: string, questId: string): Promise<void> {
+  async refreshObjectivePlan(agentId: string, objectiveId: string): Promise<void> {
     const entry = this.ensure(agentId);
-    await this.loadPlanItems(agentId, questId);
-    if (entry.expandedQuestIds.has(questId)) {
-      await this.loadEvents(agentId, questId);
+    await this.loadPlanItems(agentId, objectiveId);
+    if (entry.expandedObjectiveIds.has(objectiveId)) {
+      await this.loadEvents(agentId, objectiveId);
     } else {
-      entry.eventsByQuest.delete(questId);
+      entry.eventsByObjective.delete(objectiveId);
     }
     await this.refreshWorkingMemory(agentId);
   }
 
-  private async refreshAfterPlanMutation(agentId: string, questId: string): Promise<void> {
+  private async refreshAfterPlanMutation(agentId: string, objectiveId: string): Promise<void> {
     const entry = this.ensure(agentId);
     try {
-      await this.refreshQuestPlan(agentId, questId);
+      await this.refreshObjectivePlan(agentId, objectiveId);
     } catch (e) {
       entry.error = String(e);
     }
@@ -320,39 +320,39 @@ class QuestStore {
     const id = await invoke<string>("db_add_plan_item", {
       payload: { ...payload, createdBy: payload.createdBy ?? "captain" },
     });
-    await this.refreshAfterPlanMutation(agentId, payload.questId);
+    await this.refreshAfterPlanMutation(agentId, payload.objectiveId);
     return id;
   }
 
   async updatePlanItem(
     agentId: string,
-    questId: string,
+    objectiveId: string,
     payload: UpdatePlanItemPayload,
   ): Promise<void> {
     await invoke("db_update_plan_item", { payload });
-    await this.refreshAfterPlanMutation(agentId, questId);
+    await this.refreshAfterPlanMutation(agentId, objectiveId);
   }
 
   async deletePlanItem(
     agentId: string,
-    questId: string,
+    objectiveId: string,
     itemId: string,
   ): Promise<void> {
     await invoke("db_delete_plan_item", { itemId });
-    await this.refreshAfterPlanMutation(agentId, questId);
+    await this.refreshAfterPlanMutation(agentId, objectiveId);
   }
 
   async movePlanItem(
     agentId: string,
-    questId: string,
+    objectiveId: string,
     itemId: string,
     direction: -1 | 1,
   ): Promise<void> {
     const entry = this.ensure(agentId);
-    let items = entry.planItemsByQuest.get(questId);
+    let items = entry.planItemsByObjective.get(objectiveId);
     if (!items) {
-      await this.loadPlanItems(agentId, questId);
-      items = entry.planItemsByQuest.get(questId) ?? [];
+      await this.loadPlanItems(agentId, objectiveId);
+      items = entry.planItemsByObjective.get(objectiveId) ?? [];
     }
     const next = [...items];
     const index = next.findIndex((item) => item.id === itemId);
@@ -368,48 +368,48 @@ class QuestStore {
     }));
     await invoke("db_set_plan", {
       payload: {
-        questId,
+        objectiveId,
         items: payloadItems,
         createdBy: "captain",
         rationale: "manual reorder",
       },
     });
-    await this.refreshAfterPlanMutation(agentId, questId);
+    await this.refreshAfterPlanMutation(agentId, objectiveId);
   }
 
-  async startPlanItem(agentId: string, questId: string, itemId: string): Promise<void> {
+  async startPlanItem(agentId: string, objectiveId: string, itemId: string): Promise<void> {
     await invoke("db_start_plan_item", { itemId });
-    await this.refreshAfterPlanMutation(agentId, questId);
+    await this.refreshAfterPlanMutation(agentId, objectiveId);
   }
 
   async completePlanItem(
     agentId: string,
-    questId: string,
+    objectiveId: string,
     itemId: string,
     outcome: string | null = null,
   ): Promise<void> {
     await invoke("db_complete_plan_item", { itemId, outcome });
-    await this.refreshAfterPlanMutation(agentId, questId);
+    await this.refreshAfterPlanMutation(agentId, objectiveId);
   }
 
   async skipPlanItem(
     agentId: string,
-    questId: string,
+    objectiveId: string,
     itemId: string,
     reason: string | null = null,
   ): Promise<void> {
     await invoke("db_skip_plan_item", { itemId, reason });
-    await this.refreshAfterPlanMutation(agentId, questId);
+    await this.refreshAfterPlanMutation(agentId, objectiveId);
   }
 
   async blockPlanItem(
     agentId: string,
-    questId: string,
+    objectiveId: string,
     itemId: string,
     reason: string,
   ): Promise<void> {
     await invoke("db_block_plan_item", { itemId, reason });
-    await this.refreshAfterPlanMutation(agentId, questId);
+    await this.refreshAfterPlanMutation(agentId, objectiveId);
   }
 
   async refreshWorkingMemory(agentId: string): Promise<void> {
@@ -424,7 +424,7 @@ class QuestStore {
       if (String(e).includes("db_get_working_memory")) {
         // A frontend HMR refresh can briefly talk to an older Rust process
         // that does not have MON-109's read command yet. L2 is optional for
-        // rendering the quest tree, so keep the timeline usable and let the
+        // rendering the objective tree, so keep the timeline usable and let the
         // command appear after a full Tauri restart.
         this.workingMemoryUnavailable = true;
         entry.workingMemory = null;
@@ -434,30 +434,30 @@ class QuestStore {
     }
   }
 
-  toggleExpand(agentId: string, questId: string): void {
+  toggleExpand(agentId: string, objectiveId: string): void {
     const entry = this.ensure(agentId);
-    if (entry.expandedQuestIds.has(questId)) {
-      entry.expandedQuestIds.delete(questId);
+    if (entry.expandedObjectiveIds.has(objectiveId)) {
+      entry.expandedObjectiveIds.delete(objectiveId);
     } else {
-      entry.expandedQuestIds.add(questId);
+      entry.expandedObjectiveIds.add(objectiveId);
       // Lazy-load detail slices on first expand.
-      if (!entry.eventsByQuest.has(questId)) {
-        this.loadEvents(agentId, questId).catch((e) => {
+      if (!entry.eventsByObjective.has(objectiveId)) {
+        this.loadEvents(agentId, objectiveId).catch((e) => {
           entry.error = String(e);
         });
       }
-      if (!entry.planItemsByQuest.has(questId)) {
-        this.loadPlanItems(agentId, questId).catch((e) => {
+      if (!entry.planItemsByObjective.has(objectiveId)) {
+        this.loadPlanItems(agentId, objectiveId).catch((e) => {
           entry.error = String(e);
         });
       }
-      if (!entry.refsByQuest.has(questId)) {
-        this.loadRefs(agentId, questId).catch((e) => {
+      if (!entry.refsByObjective.has(objectiveId)) {
+        this.loadRefs(agentId, objectiveId).catch((e) => {
           entry.error = String(e);
         });
       }
-      if (!entry.reportsByQuest.has(questId)) {
-        this.loadReport(agentId, questId).catch((e) => {
+      if (!entry.reportsByObjective.has(objectiveId)) {
+        this.loadReport(agentId, objectiveId).catch((e) => {
           entry.error = String(e);
         });
       }
@@ -496,14 +496,14 @@ class QuestStore {
 
   /**
    * Rebuild the event subscription set for this agent's current roots.
-   * We listen per-root-id on `quest-updated-{rootId}` / `quest-event-{rootId}`;
-   * sub-quest updates still trigger a re-fetch on the root they belong to,
-   * which refreshes the whole tree. `quest-created-{id}` fires once per new
+   * We listen per-root-id on `objective-updated-{rootId}` / `objective-event-{rootId}`;
+   * sub-objective updates still trigger a re-fetch on the root they belong to,
+   * which refreshes the whole tree. `objective-created-{id}` fires once per new
    * node — we watch the root ids we already know about and fire a broad
    * refresh when a creation for an unknown id arrives (the root is us or a
    * sibling and a full list refresh is the simplest reconciliation).
    */
-  private wireRootSubscriptions(entry: AgentQuestState): void {
+  private wireRootSubscriptions(entry: AgentObjectiveState): void {
     // Tear down previous subs for this agent.
     const prev = this.subs.get(entry.agentId);
     if (prev) {
@@ -511,37 +511,37 @@ class QuestStore {
     }
     const subs: AgentSubs = { unlisten: [] };
     subs.unlisten.push(
-      listen<string>(`quest-created-for-agent-${entry.agentId}`, () =>
+      listen<string>(`objective-created-for-agent-${entry.agentId}`, () =>
         this.refresh(entry.agentId),
       ),
     );
-    const questIds = new Set<string>();
+    const objectiveIds = new Set<string>();
     for (const tree of entry.treesByRoot.values()) {
-      for (const quest of tree) questIds.add(quest.id);
+      for (const objective of tree) objectiveIds.add(objective.id);
     }
-    for (const root of entry.roots) questIds.add(root.id);
+    for (const root of entry.roots) objectiveIds.add(root.id);
 
     for (const root of entry.roots) {
       subs.unlisten.push(
-        listen<string>(`quest-updated-${root.id}`, () =>
+        listen<string>(`objective-updated-${root.id}`, () =>
           this.refresh(entry.agentId),
         ),
       );
     }
 
-    for (const questId of questIds) {
+    for (const objectiveId of objectiveIds) {
       subs.unlisten.push(
-        listen<string>(`quest-event-${questId}`, () => {
-          // Events on any visible quest: invalidate that quest's event cache
+        listen<string>(`objective-event-${objectiveId}`, () => {
+          // Events on any visible objective: invalidate that objective's event cache
           // and refresh L2, because current/recent action pointers are updated
           // by the same persistence path.
-          entry.eventsByQuest.delete(questId);
-          if (entry.expandedQuestIds.has(questId)) {
-            this.loadEvents(entry.agentId, questId).catch((e) => {
+          entry.eventsByObjective.delete(objectiveId);
+          if (entry.expandedObjectiveIds.has(objectiveId)) {
+            this.loadEvents(entry.agentId, objectiveId).catch((e) => {
               entry.error = String(e);
             });
           }
-          this.loadPlanItems(entry.agentId, questId).catch((e) => {
+          this.loadPlanItems(entry.agentId, objectiveId).catch((e) => {
             entry.error = String(e);
           });
           this.refreshWorkingMemory(entry.agentId).catch((e) => {
@@ -550,27 +550,27 @@ class QuestStore {
         }),
       );
       subs.unlisten.push(
-        listen<string>(`quest-refs-${questId}`, () => {
-          if (entry.expandedQuestIds.has(questId)) {
-            this.loadRefs(entry.agentId, questId).catch((e) => {
+        listen<string>(`objective-refs-${objectiveId}`, () => {
+          if (entry.expandedObjectiveIds.has(objectiveId)) {
+            this.loadRefs(entry.agentId, objectiveId).catch((e) => {
               entry.error = String(e);
             });
           } else {
-            entry.refsByQuest.delete(questId);
+            entry.refsByObjective.delete(objectiveId);
           }
         }),
       );
-      // P6 Slice C: a `complete_quest` write emits `quest-report-{questId}`.
-      // Refresh the report when the quest is open; otherwise drop the cache so
+      // P6 Slice C: a `complete_objective` write emits `objective-report-{objectiveId}`.
+      // Refresh the report when the objective is open; otherwise drop the cache so
       // the next expand re-fetches.
       subs.unlisten.push(
-        listen<string>(`quest-report-${questId}`, () => {
-          if (entry.expandedQuestIds.has(questId)) {
-            this.loadReport(entry.agentId, questId).catch((e) => {
+        listen<string>(`objective-report-${objectiveId}`, () => {
+          if (entry.expandedObjectiveIds.has(objectiveId)) {
+            this.loadReport(entry.agentId, objectiveId).catch((e) => {
               entry.error = String(e);
             });
           } else {
-            entry.reportsByQuest.delete(questId);
+            entry.reportsByObjective.delete(objectiveId);
           }
         }),
       );
@@ -579,4 +579,4 @@ class QuestStore {
   }
 }
 
-export const questStore = new QuestStore();
+export const objectiveStore = new ObjectiveStore();

@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::error::MonarchError;
 
-use super::quests::{
-    load_working_memory_tx, save_working_memory_tx, QuestEventNotification,
+use super::objectives::{
+    load_working_memory_tx, save_working_memory_tx, ObjectiveEventNotification,
 };
 use super::Database;
 
@@ -15,7 +15,7 @@ use super::Database;
 #[serde(rename_all = "camelCase")]
 pub struct PlanItemRow {
     pub id: String,
-    pub quest_id: String,
+    pub objective_id: String,
     pub parent_id: Option<String>,
     pub title: String,
     pub status: String,
@@ -46,14 +46,14 @@ pub struct PlanItemInput {
     pub parent_id: Option<String>,
 }
 
-/// Bulk replace payload — `db_set_plan(quest_id, items, created_by)`.
+/// Bulk replace payload — `db_set_plan(objective_id, items, created_by)`.
 /// `created_by` defaults to `'captain'` when called from the manual UI
 /// path; sidecar pass-through sets it to `'executor'`. The whole list is
 /// authoritative — items not present (matched by id) are deleted.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SetPlanPayload {
-    pub quest_id: String,
+    pub objective_id: String,
     pub items: Vec<PlanItemInput>,
     #[serde(default)]
     pub created_by: Option<String>,
@@ -78,7 +78,7 @@ pub struct UpdatePlanItemPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AddPlanItemPayload {
-    pub quest_id: String,
+    pub objective_id: String,
     pub title: String,
     #[serde(default)]
     pub rationale: Option<String>,
@@ -114,9 +114,9 @@ fn lookup_plan_item_tx(
 ) -> rusqlite::Result<Option<(String, String, Option<String>)>> {
     let row = tx
         .query_row(
-            "SELECT pi.quest_id, pi.status, q.assignee_shadow_id
-             FROM quest_plan_items pi
-             INNER JOIN quest_nodes q ON q.id = pi.quest_id
+            "SELECT pi.objective_id, pi.status, q.assignee_shadow_id
+             FROM objective_plan_items pi
+             INNER JOIN objective_nodes q ON q.id = pi.objective_id
              WHERE pi.id = ?1",
             params![item_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -127,7 +127,7 @@ fn lookup_plan_item_tx(
 
 fn insert_plan_event_tx(
     tx: &rusqlite::Transaction<'_>,
-    quest_id: &str,
+    objective_id: &str,
     event_type: &str,
     plan_item_id: Option<&str>,
     payload_json: &str,
@@ -135,15 +135,15 @@ fn insert_plan_event_tx(
 ) -> rusqlite::Result<String> {
     let event_id = crate::util::uuid_v4_simple();
     tx.execute(
-        "INSERT INTO quest_events (
-            id, quest_id, event_type, actor, payload_json, created_at,
+        "INSERT INTO objective_events (
+            id, objective_id, event_type, actor, payload_json, created_at,
             parent_event_id, author, surface_override, payload_schema_version,
             plan_item_id
          )
          VALUES (?1, ?2, ?3, NULL, ?4, ?5, NULL, 'executor', NULL, 1, ?6)",
         params![
             event_id,
-            quest_id,
+            objective_id,
             event_type,
             payload_json,
             now,
@@ -153,66 +153,66 @@ fn insert_plan_event_tx(
     Ok(event_id)
 }
 
-/// Recompute the plan slice for a quest: the active item id (if any) and
+/// Recompute the plan slice for a objective: the active item id (if any) and
 /// up to three pending items in order. Used by `sync_plan_l2_tx` and by
 /// the read path that surfaces the slice into Agent View.
 pub(super) fn recompute_plan_slice_tx(
     tx: &rusqlite::Transaction<'_>,
-    quest_id: &str,
+    objective_id: &str,
 ) -> rusqlite::Result<(Option<String>, Vec<String>)> {
     let active: Option<String> = tx
         .query_row(
-            "SELECT id FROM quest_plan_items
-             WHERE quest_id = ?1 AND status = 'active'
+            "SELECT id FROM objective_plan_items
+             WHERE objective_id = ?1 AND status = 'active'
              ORDER BY order_index ASC
              LIMIT 1",
-            params![quest_id],
+            params![objective_id],
             |row| row.get(0),
         )
         .ok();
     let mut next = Vec::with_capacity(3);
     let mut stmt = tx.prepare(
-        "SELECT id FROM quest_plan_items
-         WHERE quest_id = ?1 AND status = 'pending'
+        "SELECT id FROM objective_plan_items
+         WHERE objective_id = ?1 AND status = 'pending'
          ORDER BY order_index ASC
          LIMIT 3",
     )?;
-    let mut rows = stmt.query(params![quest_id])?;
+    let mut rows = stmt.query(params![objective_id])?;
     while let Some(row) = rows.next()? {
         next.push(row.get(0)?);
     }
     Ok((active, next))
 }
 
-/// If any agent's L2 currently points at this quest, recompute its plan
+/// If any agent's L2 currently points at this objective, recompute its plan
 /// slice and write it back. We filter by the L2 payload's own
-/// `currentQuestId` (not `agents.current_quest_id`) because action
+/// `currentObjectiveId` (not `agents.current_objective_id`) because action
 /// transitions update L2 directly and the column-side pointer can lag —
-/// L2 is the authoritative live state for which quest a shadow is on.
+/// L2 is the authoritative live state for which objective a shadow is on.
 fn sync_plan_l2_tx(
     tx: &rusqlite::Transaction<'_>,
-    quest_id: &str,
+    objective_id: &str,
     now: &str,
 ) -> rusqlite::Result<()> {
     let agent_ids: Vec<String> = {
         let mut stmt = tx.prepare(
             "SELECT agent_id FROM agent_working_memory
-             WHERE json_extract(payload_json, '$.currentQuestId') = ?1",
+             WHERE json_extract(payload_json, '$.currentObjectiveId') = ?1",
         )?;
         let rows = stmt
-            .query_map(params![quest_id], |row| row.get::<_, String>(0))?
+            .query_map(params![objective_id], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows
     };
     if agent_ids.is_empty() {
         return Ok(());
     }
-    let (active, next) = recompute_plan_slice_tx(tx, quest_id)?;
+    let (active, next) = recompute_plan_slice_tx(tx, objective_id)?;
     for agent_id in agent_ids {
         let Some(mut wm) = load_working_memory_tx(tx, &agent_id) else {
             continue;
         };
-        if wm.current_quest_id.as_deref() != Some(quest_id) {
+        if wm.current_objective_id.as_deref() != Some(objective_id) {
             continue;
         }
         wm.active_plan_item_id = active.clone();
@@ -226,7 +226,7 @@ fn sync_plan_l2_tx(
 fn map_plan_item(row: &Row<'_>) -> rusqlite::Result<PlanItemRow> {
     Ok(PlanItemRow {
         id: row.get(0)?,
-        quest_id: row.get(1)?,
+        objective_id: row.get(1)?,
         parent_id: row.get(2)?,
         title: row.get(3)?,
         status: row.get(4)?,
@@ -242,25 +242,25 @@ fn map_plan_item(row: &Row<'_>) -> rusqlite::Result<PlanItemRow> {
 // ---- impl Database ----
 
 impl Database {
-    /// frontend store keeps this list per quest and refreshes when
-    /// `quest-event-{quest_id}` carries a `plan_*` event type.
+    /// frontend store keeps this list per objective and refreshes when
+    /// `objective-event-{objective_id}` carries a `plan_*` event type.
     pub async fn list_plan_items_internal(
         &self,
-        quest_id: &str,
+        objective_id: &str,
     ) -> Result<Vec<PlanItemRow>, MonarchError> {
-        let quest_id = quest_id.to_string();
+        let objective_id = objective_id.to_string();
         Ok(self
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, quest_id, parent_id, title, status, order_index,
+                    "SELECT id, objective_id, parent_id, title, status, order_index,
                             created_by, rationale, created_at, updated_at, completed_at
-                     FROM quest_plan_items
-                     WHERE quest_id = ?1
+                     FROM objective_plan_items
+                     WHERE objective_id = ?1
                      ORDER BY order_index ASC",
                 )?;
                 let rows = stmt
-                    .query_map(params![quest_id], map_plan_item)?
+                    .query_map(params![objective_id], map_plan_item)?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok(rows)
             })
@@ -277,9 +277,9 @@ impl Database {
             .call(move |conn| {
                 let row = conn
                     .query_row(
-                        "SELECT id, quest_id, parent_id, title, status, order_index,
+                        "SELECT id, objective_id, parent_id, title, status, order_index,
                                 created_by, rationale, created_at, updated_at, completed_at
-                         FROM quest_plan_items WHERE id = ?1",
+                         FROM objective_plan_items WHERE id = ?1",
                         params![item_id],
                         map_plan_item,
                     )
@@ -289,23 +289,23 @@ impl Database {
             .await?)
     }
 
-    /// Bulk replace a quest's plan. Existing rows whose ids are in the
+    /// Bulk replace a objective's plan. Existing rows whose ids are in the
     /// payload are preserved (status untouched); rows missing from the
     /// payload are deleted; new rows arrive with `status='pending'`.
-    /// Emits `plan_created` when the quest had no prior plan, otherwise
+    /// Emits `plan_created` when the objective had no prior plan, otherwise
     /// `plan_changed`. The active assignee's L2 plan slice is recomputed
-    /// and saved when the agent's `current_quest_id` matches.
+    /// and saved when the agent's `current_objective_id` matches.
     pub async fn set_plan_internal(
         &self,
         payload: &SetPlanPayload,
-    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+    ) -> Result<Vec<ObjectiveEventNotification>, MonarchError> {
         let payload = payload.clone();
         Ok(self
             .conn
             .call(move |conn| {
                 let tx = conn.unchecked_transaction()?;
                 let now = crate::util::chrono_now();
-                let quest_id = payload.quest_id.clone();
+                let objective_id = payload.objective_id.clone();
                 let created_by = payload
                     .created_by
                     .clone()
@@ -314,8 +314,8 @@ impl Database {
 
                 let prior_count: i64 = tx
                     .query_row(
-                        "SELECT COUNT(*) FROM quest_plan_items WHERE quest_id = ?1",
-                        params![quest_id],
+                        "SELECT COUNT(*) FROM objective_plan_items WHERE objective_id = ?1",
+                        params![objective_id],
                         |row| row.get(0),
                     )
                     .unwrap_or(0);
@@ -334,21 +334,21 @@ impl Database {
                         .collect::<Vec<_>>()
                         .join(",");
                     let sql = format!(
-                        "DELETE FROM quest_plan_items WHERE quest_id = ? AND id NOT IN ({})",
+                        "DELETE FROM objective_plan_items WHERE objective_id = ? AND id NOT IN ({})",
                         placeholders
                     );
                     let mut stmt = tx.prepare(&sql)?;
                     let mut bound: Vec<&dyn rusqlite::ToSql> =
                         Vec::with_capacity(1 + final_ids.len());
-                    bound.push(&quest_id);
+                    bound.push(&objective_id);
                     for id in &final_ids {
                         bound.push(id);
                     }
                     stmt.execute(rusqlite::params_from_iter(bound))?;
                 } else {
                     tx.execute(
-                        "DELETE FROM quest_plan_items WHERE quest_id = ?1",
-                        params![quest_id],
+                        "DELETE FROM objective_plan_items WHERE objective_id = ?1",
+                        params![objective_id],
                     )?;
                 }
 
@@ -361,8 +361,8 @@ impl Database {
                         .unwrap_or_else(|| "pending".to_string());
                     validate_plan_status(&status)?;
                     tx.execute(
-                        "INSERT INTO quest_plan_items
-                            (id, quest_id, parent_id, title, status, order_index,
+                        "INSERT INTO objective_plan_items
+                            (id, objective_id, parent_id, title, status, order_index,
                              created_by, rationale, created_at, updated_at)
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
                          ON CONFLICT(id) DO UPDATE SET
@@ -373,7 +373,7 @@ impl Database {
                             updated_at = excluded.updated_at",
                         params![
                             id,
-                            quest_id,
+                            objective_id,
                             input.parent_id,
                             input.title.trim(),
                             status,
@@ -397,11 +397,11 @@ impl Database {
                 })
                 .to_string();
                 let event_id =
-                    insert_plan_event_tx(&tx, &quest_id, event_type, None, &payload_json, &now)?;
-                sync_plan_l2_tx(&tx, &quest_id, &now)?;
+                    insert_plan_event_tx(&tx, &objective_id, event_type, None, &payload_json, &now)?;
+                sync_plan_l2_tx(&tx, &objective_id, &now)?;
                 tx.commit()?;
-                Ok(vec![QuestEventNotification {
-                    quest_id,
+                Ok(vec![ObjectiveEventNotification {
+                    objective_id,
                     event_id,
                     event_type: event_type.to_string(),
                 }])
@@ -414,7 +414,7 @@ impl Database {
     pub async fn add_plan_item_internal(
         &self,
         payload: &AddPlanItemPayload,
-    ) -> Result<(String, Vec<QuestEventNotification>), MonarchError> {
+    ) -> Result<(String, Vec<ObjectiveEventNotification>), MonarchError> {
         let payload = payload.clone();
         Ok(self
             .conn
@@ -427,34 +427,34 @@ impl Database {
                     .clone()
                     .unwrap_or_else(|| "captain".to_string());
                 validate_plan_created_by(&created_by)?;
-                let quest_id = payload.quest_id.clone();
+                let objective_id = payload.objective_id.clone();
 
                 let order_index = if let Some(after_id) = payload.after_item_id.as_deref() {
                     let after_order: Option<i32> = tx
                         .query_row(
-                            "SELECT order_index FROM quest_plan_items
-                             WHERE id = ?1 AND quest_id = ?2",
-                            params![after_id, quest_id],
+                            "SELECT order_index FROM objective_plan_items
+                             WHERE id = ?1 AND objective_id = ?2",
+                            params![after_id, objective_id],
                             |row| row.get(0),
                         )
                         .ok();
                     match after_order {
                         Some(o) => {
                             tx.execute(
-                                "UPDATE quest_plan_items
+                                "UPDATE objective_plan_items
                                  SET order_index = order_index + 1,
                                      updated_at = ?2
-                                 WHERE quest_id = ?1 AND order_index > ?3",
-                                params![quest_id, now, o],
+                                 WHERE objective_id = ?1 AND order_index > ?3",
+                                params![objective_id, now, o],
                             )?;
                             o + 1
                         }
                         None => {
                             let max: Option<i32> = tx
                                 .query_row(
-                                    "SELECT MAX(order_index) FROM quest_plan_items
-                                     WHERE quest_id = ?1",
-                                    params![quest_id],
+                                    "SELECT MAX(order_index) FROM objective_plan_items
+                                     WHERE objective_id = ?1",
+                                    params![objective_id],
                                     |row| row.get(0),
                                 )
                                 .ok()
@@ -465,8 +465,8 @@ impl Database {
                 } else {
                     let max: Option<i32> = tx
                         .query_row(
-                            "SELECT MAX(order_index) FROM quest_plan_items WHERE quest_id = ?1",
-                            params![quest_id],
+                            "SELECT MAX(order_index) FROM objective_plan_items WHERE objective_id = ?1",
+                            params![objective_id],
                             |row| row.get(0),
                         )
                         .ok()
@@ -475,13 +475,13 @@ impl Database {
                 };
 
                 tx.execute(
-                    "INSERT INTO quest_plan_items
-                        (id, quest_id, parent_id, title, status, order_index,
+                    "INSERT INTO objective_plan_items
+                        (id, objective_id, parent_id, title, status, order_index,
                          created_by, rationale, created_at, updated_at)
                      VALUES (?1, ?2, NULL, ?3, 'pending', ?4, ?5, ?6, ?7, ?7)",
                     params![
                         id,
-                        quest_id,
+                        objective_id,
                         payload.title.trim(),
                         order_index,
                         created_by,
@@ -499,18 +499,18 @@ impl Database {
                 .to_string();
                 let event_id = insert_plan_event_tx(
                     &tx,
-                    &quest_id,
+                    &objective_id,
                     "plan_changed",
                     None,
                     &payload_json,
                     &now,
                 )?;
-                sync_plan_l2_tx(&tx, &quest_id, &now)?;
+                sync_plan_l2_tx(&tx, &objective_id, &now)?;
                 tx.commit()?;
                 Ok((
                     id,
-                    vec![QuestEventNotification {
-                        quest_id,
+                    vec![ObjectiveEventNotification {
+                        objective_id,
                         event_id,
                         event_type: "plan_changed".to_string(),
                     }],
@@ -525,35 +525,35 @@ impl Database {
     pub async fn update_plan_item_internal(
         &self,
         payload: &UpdatePlanItemPayload,
-    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+    ) -> Result<Vec<ObjectiveEventNotification>, MonarchError> {
         let payload = payload.clone();
         Ok(self
             .conn
             .call(move |conn| {
                 let tx = conn.unchecked_transaction()?;
                 let now = crate::util::chrono_now();
-                let Some((quest_id, _, _)) = lookup_plan_item_tx(&tx, &payload.id)? else {
+                let Some((objective_id, _, _)) = lookup_plan_item_tx(&tx, &payload.id)? else {
                     tx.commit()?;
                     return Ok(Vec::new());
                 };
                 let mut changed = false;
                 if let Some(title) = payload.title.as_deref() {
                     tx.execute(
-                        "UPDATE quest_plan_items SET title = ?1, updated_at = ?2 WHERE id = ?3",
+                        "UPDATE objective_plan_items SET title = ?1, updated_at = ?2 WHERE id = ?3",
                         params![title.trim(), now, payload.id],
                     )?;
                     changed = true;
                 }
                 if let Some(rationale) = &payload.rationale {
                     tx.execute(
-                        "UPDATE quest_plan_items SET rationale = ?1, updated_at = ?2 WHERE id = ?3",
+                        "UPDATE objective_plan_items SET rationale = ?1, updated_at = ?2 WHERE id = ?3",
                         params![rationale, now, payload.id],
                     )?;
                     changed = true;
                 }
                 if let Some(new_order) = payload.order_index {
                     tx.execute(
-                        "UPDATE quest_plan_items SET order_index = ?1, updated_at = ?2 WHERE id = ?3",
+                        "UPDATE objective_plan_items SET order_index = ?1, updated_at = ?2 WHERE id = ?3",
                         params![new_order, now, payload.id],
                     )?;
                     changed = true;
@@ -573,16 +573,16 @@ impl Database {
                 .to_string();
                 let event_id = insert_plan_event_tx(
                     &tx,
-                    &quest_id,
+                    &objective_id,
                     "plan_changed",
                     None,
                     &payload_json,
                     &now,
                 )?;
-                sync_plan_l2_tx(&tx, &quest_id, &now)?;
+                sync_plan_l2_tx(&tx, &objective_id, &now)?;
                 tx.commit()?;
-                Ok(vec![QuestEventNotification {
-                    quest_id,
+                Ok(vec![ObjectiveEventNotification {
+                    objective_id,
                     event_id,
                     event_type: "plan_changed".to_string(),
                 }])
@@ -593,19 +593,19 @@ impl Database {
     pub async fn delete_plan_item_internal(
         &self,
         item_id: &str,
-    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+    ) -> Result<Vec<ObjectiveEventNotification>, MonarchError> {
         let item_id = item_id.to_string();
         Ok(self
             .conn
             .call(move |conn| {
                 let tx = conn.unchecked_transaction()?;
                 let now = crate::util::chrono_now();
-                let Some((quest_id, _, _)) = lookup_plan_item_tx(&tx, &item_id)? else {
+                let Some((objective_id, _, _)) = lookup_plan_item_tx(&tx, &item_id)? else {
                     tx.commit()?;
                     return Ok(Vec::new());
                 };
                 tx.execute(
-                    "DELETE FROM quest_plan_items WHERE id = ?1",
+                    "DELETE FROM objective_plan_items WHERE id = ?1",
                     params![item_id],
                 )?;
                 let payload_json = serde_json::json!({
@@ -614,16 +614,16 @@ impl Database {
                 .to_string();
                 let event_id = insert_plan_event_tx(
                     &tx,
-                    &quest_id,
+                    &objective_id,
                     "plan_changed",
                     None,
                     &payload_json,
                     &now,
                 )?;
-                sync_plan_l2_tx(&tx, &quest_id, &now)?;
+                sync_plan_l2_tx(&tx, &objective_id, &now)?;
                 tx.commit()?;
-                Ok(vec![QuestEventNotification {
-                    quest_id,
+                Ok(vec![ObjectiveEventNotification {
+                    objective_id,
                     event_id,
                     event_type: "plan_changed".to_string(),
                 }])
@@ -631,32 +631,32 @@ impl Database {
             .await?)
     }
 
-    /// Mark a plan item active. At most one item per quest may be active —
+    /// Mark a plan item active. At most one item per objective may be active —
     /// any sibling currently in `active` is silently reset to `pending`
     /// (the caller owns explicit completion / skip / block; the reset is
     /// a defensive invariant, not a status transition the captain sees).
     pub async fn start_plan_item_internal(
         &self,
         item_id: &str,
-    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+    ) -> Result<Vec<ObjectiveEventNotification>, MonarchError> {
         let item_id = item_id.to_string();
         Ok(self
             .conn
             .call(move |conn| {
                 let tx = conn.unchecked_transaction()?;
                 let now = crate::util::chrono_now();
-                let Some((quest_id, _, _)) = lookup_plan_item_tx(&tx, &item_id)? else {
+                let Some((objective_id, _, _)) = lookup_plan_item_tx(&tx, &item_id)? else {
                     tx.commit()?;
                     return Ok(Vec::new());
                 };
                 tx.execute(
-                    "UPDATE quest_plan_items
+                    "UPDATE objective_plan_items
                      SET status = 'pending', updated_at = ?2
-                     WHERE quest_id = ?1 AND status = 'active' AND id <> ?3",
-                    params![quest_id, now, item_id],
+                     WHERE objective_id = ?1 AND status = 'active' AND id <> ?3",
+                    params![objective_id, now, item_id],
                 )?;
                 tx.execute(
-                    "UPDATE quest_plan_items
+                    "UPDATE objective_plan_items
                      SET status = 'active', updated_at = ?2, completed_at = NULL
                      WHERE id = ?1",
                     params![item_id, now],
@@ -664,16 +664,16 @@ impl Database {
                 let payload_json = serde_json::json!({ "item_id": item_id }).to_string();
                 let event_id = insert_plan_event_tx(
                     &tx,
-                    &quest_id,
+                    &objective_id,
                     "plan_item_started",
                     Some(&item_id),
                     &payload_json,
                     &now,
                 )?;
-                sync_plan_l2_tx(&tx, &quest_id, &now)?;
+                sync_plan_l2_tx(&tx, &objective_id, &now)?;
                 tx.commit()?;
-                Ok(vec![QuestEventNotification {
-                    quest_id,
+                Ok(vec![ObjectiveEventNotification {
+                    objective_id,
                     event_id,
                     event_type: "plan_item_started".to_string(),
                 }])
@@ -685,7 +685,7 @@ impl Database {
         &self,
         item_id: &str,
         outcome: Option<&str>,
-    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+    ) -> Result<Vec<ObjectiveEventNotification>, MonarchError> {
         let item_id = item_id.to_string();
         let outcome = outcome.map(str::to_string);
         Ok(self
@@ -693,12 +693,12 @@ impl Database {
             .call(move |conn| {
                 let tx = conn.unchecked_transaction()?;
                 let now = crate::util::chrono_now();
-                let Some((quest_id, _, _)) = lookup_plan_item_tx(&tx, &item_id)? else {
+                let Some((objective_id, _, _)) = lookup_plan_item_tx(&tx, &item_id)? else {
                     tx.commit()?;
                     return Ok(Vec::new());
                 };
                 tx.execute(
-                    "UPDATE quest_plan_items
+                    "UPDATE objective_plan_items
                      SET status = 'completed', updated_at = ?2, completed_at = ?2
                      WHERE id = ?1",
                     params![item_id, now],
@@ -710,16 +710,16 @@ impl Database {
                 .to_string();
                 let event_id = insert_plan_event_tx(
                     &tx,
-                    &quest_id,
+                    &objective_id,
                     "plan_item_completed",
                     Some(&item_id),
                     &payload_json,
                     &now,
                 )?;
-                sync_plan_l2_tx(&tx, &quest_id, &now)?;
+                sync_plan_l2_tx(&tx, &objective_id, &now)?;
                 tx.commit()?;
-                Ok(vec![QuestEventNotification {
-                    quest_id,
+                Ok(vec![ObjectiveEventNotification {
+                    objective_id,
                     event_id,
                     event_type: "plan_item_completed".to_string(),
                 }])
@@ -731,7 +731,7 @@ impl Database {
         &self,
         item_id: &str,
         reason: Option<&str>,
-    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+    ) -> Result<Vec<ObjectiveEventNotification>, MonarchError> {
         let item_id = item_id.to_string();
         let reason = reason.map(str::to_string);
         Ok(self
@@ -739,12 +739,12 @@ impl Database {
             .call(move |conn| {
                 let tx = conn.unchecked_transaction()?;
                 let now = crate::util::chrono_now();
-                let Some((quest_id, _, _)) = lookup_plan_item_tx(&tx, &item_id)? else {
+                let Some((objective_id, _, _)) = lookup_plan_item_tx(&tx, &item_id)? else {
                     tx.commit()?;
                     return Ok(Vec::new());
                 };
                 tx.execute(
-                    "UPDATE quest_plan_items
+                    "UPDATE objective_plan_items
                      SET status = 'skipped', updated_at = ?2, completed_at = ?2
                      WHERE id = ?1",
                     params![item_id, now],
@@ -756,16 +756,16 @@ impl Database {
                 .to_string();
                 let event_id = insert_plan_event_tx(
                     &tx,
-                    &quest_id,
+                    &objective_id,
                     "plan_item_skipped",
                     Some(&item_id),
                     &payload_json,
                     &now,
                 )?;
-                sync_plan_l2_tx(&tx, &quest_id, &now)?;
+                sync_plan_l2_tx(&tx, &objective_id, &now)?;
                 tx.commit()?;
-                Ok(vec![QuestEventNotification {
-                    quest_id,
+                Ok(vec![ObjectiveEventNotification {
+                    objective_id,
                     event_id,
                     event_type: "plan_item_skipped".to_string(),
                 }])
@@ -774,11 +774,11 @@ impl Database {
     }
 
     /// Resolve the agent's current active plan item — the row whose
-    /// `status = 'active'` on the agent's L2 `currentQuestId`. Used by the
+    /// `status = 'active'` on the agent's L2 `currentObjectiveId`. Used by the
     /// persist pipeline when a sidecar plan-lifecycle event arrives
     /// without an explicit item id (the executor tool implicitly targets
     /// the active item). Returns `None` if the agent's L2 has no current
-    /// quest, or if no item is active on it.
+    /// objective, or if no item is active on it.
     pub async fn get_active_plan_item_for_agent_internal(
         &self,
         agent_id: &str,
@@ -789,9 +789,9 @@ impl Database {
             .call(move |conn| {
                 let item: Option<String> = conn
                     .query_row(
-                        "SELECT pi.id FROM quest_plan_items pi
+                        "SELECT pi.id FROM objective_plan_items pi
                          INNER JOIN agent_working_memory w
-                            ON json_extract(w.payload_json, '$.currentQuestId') = pi.quest_id
+                            ON json_extract(w.payload_json, '$.currentObjectiveId') = pi.objective_id
                          WHERE w.agent_id = ?1 AND pi.status = 'active'
                          ORDER BY pi.order_index ASC
                          LIMIT 1",
@@ -808,7 +808,7 @@ impl Database {
         &self,
         item_id: &str,
         reason: &str,
-    ) -> Result<Vec<QuestEventNotification>, MonarchError> {
+    ) -> Result<Vec<ObjectiveEventNotification>, MonarchError> {
         let item_id = item_id.to_string();
         let reason = reason.to_string();
         Ok(self
@@ -816,12 +816,12 @@ impl Database {
             .call(move |conn| {
                 let tx = conn.unchecked_transaction()?;
                 let now = crate::util::chrono_now();
-                let Some((quest_id, _, _)) = lookup_plan_item_tx(&tx, &item_id)? else {
+                let Some((objective_id, _, _)) = lookup_plan_item_tx(&tx, &item_id)? else {
                     tx.commit()?;
                     return Ok(Vec::new());
                 };
                 tx.execute(
-                    "UPDATE quest_plan_items
+                    "UPDATE objective_plan_items
                      SET status = 'blocked', updated_at = ?2
                      WHERE id = ?1",
                     params![item_id, now],
@@ -833,16 +833,16 @@ impl Database {
                 .to_string();
                 let event_id = insert_plan_event_tx(
                     &tx,
-                    &quest_id,
+                    &objective_id,
                     "plan_item_blocked",
                     Some(&item_id),
                     &payload_json,
                     &now,
                 )?;
-                sync_plan_l2_tx(&tx, &quest_id, &now)?;
+                sync_plan_l2_tx(&tx, &objective_id, &now)?;
                 tx.commit()?;
-                Ok(vec![QuestEventNotification {
-                    quest_id,
+                Ok(vec![ObjectiveEventNotification {
+                    objective_id,
                     event_id,
                     event_type: "plan_item_blocked".to_string(),
                 }])
@@ -863,9 +863,9 @@ impl Database {
 #[specta::specta]
 pub async fn db_list_plan_items(
     db: tauri::State<'_, Arc<Database>>,
-    quest_id: String,
+    objective_id: String,
 ) -> Result<Vec<PlanItemRow>, MonarchError> {
-    db.list_plan_items_internal(&quest_id).await
+    db.list_plan_items_internal(&objective_id).await
 }
 
 #[tauri::command]
@@ -991,13 +991,13 @@ pub async fn db_block_plan_item(
 pub fn emit_plan_notifications(
     app: &tauri::AppHandle,
     ws_tx: &tokio::sync::broadcast::Sender<crate::agent::WsBroadcast>,
-    notes: Vec<QuestEventNotification>,
+    notes: Vec<ObjectiveEventNotification>,
 ) {
     for note in notes {
         crate::agent::emit_event(
             app,
             ws_tx,
-            &format!("quest-event-{}", note.quest_id),
+            &format!("objective-event-{}", note.objective_id),
             &serde_json::json!({ "id": note.event_id, "eventType": note.event_type }).to_string(),
         );
     }

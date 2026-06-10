@@ -20,7 +20,7 @@
   } from "./toolbox/liveAgentStore.svelte";
   import type { LiveAgentState } from "./toolbox/types";
   import { agentStore } from "./stores/agentStore.svelte";
-  import { questStore } from "./toolbox/questStore.svelte";
+  import { objectiveStore } from "./toolbox/objectiveStore.svelte";
 
   // Dev-only desync indicator. Opt-in via VITE_MONARCH_DEBUG_DESYNC=true.
   // Rationale: MON-14 Phase 2 is the first time the frontend can observe
@@ -89,7 +89,7 @@
   let boundSessionId: string | undefined = $state(undefined);
   let activationVersion = 0;
   let lightboxSrc = $state<string | null>(null);
-  let questBoundAgentId = "";
+  let objectiveBoundAgentId = "";
 
   // Ephemeral map of sent-with-message images, keyed by the user message's
   // 0-based index among user messages in `items`. Cleared whenever we bind a
@@ -105,13 +105,13 @@
     (boundAgentId && liveAgentStore.byAgent.get(boundAgentId)) || DETACHED_LIVE,
   );
   let classifications = $derived(classifierStore.byAgent.get(agent.id)?.ordinalMap);
-  let questState = $derived(
-    boundAgentId ? (questStore.byAgent.get(boundAgentId) ?? null) : null,
+  let objectiveState = $derived(
+    boundAgentId ? (objectiveStore.byAgent.get(boundAgentId) ?? null) : null,
   );
-  let workingMemory = $derived(questState?.workingMemory ?? null);
+  let workingMemory = $derived(objectiveState?.workingMemory ?? null);
   let currentPlanItems = $derived(
-    workingMemory?.currentQuestId
-      ? (questState?.planItemsByQuest.get(workingMemory.currentQuestId) ?? [])
+    workingMemory?.currentObjectiveId
+      ? (objectiveState?.planItemsByObjective.get(workingMemory.currentObjectiveId) ?? [])
       : [],
   );
   let activePlanItem = $derived(
@@ -131,18 +131,18 @@
   });
 
   $effect(() => {
-    if (boundAgentId && boundAgentId !== questBoundAgentId) {
-      questBoundAgentId = boundAgentId;
-      questStore.ensure(boundAgentId);
-      questStore.refresh(boundAgentId);
+    if (boundAgentId && boundAgentId !== objectiveBoundAgentId) {
+      objectiveBoundAgentId = boundAgentId;
+      objectiveStore.ensure(boundAgentId);
+      objectiveStore.refresh(boundAgentId);
     }
   });
 
   $effect(() => {
-    const questId = workingMemory?.currentQuestId;
-    if (!boundAgentId || !questId || questState?.planItemsByQuest.has(questId)) return;
-    questStore.loadPlanItems(boundAgentId, questId).catch((e) => {
-      if (questState) questState.error = String(e);
+    const objectiveId = workingMemory?.currentObjectiveId;
+    if (!boundAgentId || !objectiveId || objectiveState?.planItemsByObjective.has(objectiveId)) return;
+    objectiveStore.loadPlanItems(boundAgentId, objectiveId).catch((e) => {
+      if (objectiveState) objectiveState.error = String(e);
     });
   });
 
@@ -764,8 +764,8 @@
               <div class="now-current">
                 <span class="now-label">Now</span>
                 <span class="now-text">{workingMemory.currentAction.intent}</span>
-                {#if workingMemory.currentQuestPath.length}
-                  <span class="now-path">{workingMemory.currentQuestPath.join(" / ")}</span>
+                {#if workingMemory.currentObjectivePath.length}
+                  <span class="now-path">{workingMemory.currentObjectivePath.join(" / ")}</span>
                 {/if}
               </div>
             {/if}

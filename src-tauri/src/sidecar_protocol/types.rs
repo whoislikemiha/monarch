@@ -30,46 +30,46 @@ pub struct Message {
     pub timestamp: Option<i64>,
 }
 
-/// P6 Slice B (MON-120): one explicit decision inside a first-person quest
-/// report. Mirrors the `decisions[]` entry shape the `complete_quest` tool
+/// P6 Slice B (MON-120): one explicit decision inside a first-person objective
+/// report. Mirrors the `decisions[]` entry shape the `complete_objective` tool
 /// emits. All fields default so a malformed report can't desync the agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuestReportDecision {
+pub struct ObjectiveReportDecision {
     #[serde(default)]
     pub decision: String,
     #[serde(default)]
     pub rationale: Option<String>,
 }
 
-/// P6 Slice B (MON-120): one artifact reference inside a quest report.
+/// P6 Slice B (MON-120): one artifact reference inside a objective report.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuestReportArtifact {
+pub struct ObjectiveReportArtifact {
     #[serde(default)]
     pub file: String,
     #[serde(default)]
     pub role: String,
 }
 
-/// P6 Slice B (MON-120): the structured first-person quest report the
-/// executor emits via `complete_quest`. Serialized verbatim into the
-/// `quest_reports.payload` JSON column. Snake-case field names match the
-/// sidecar tool payload and `distillation.md` § "First-person quest report".
+/// P6 Slice B (MON-120): the structured first-person objective report the
+/// executor emits via `complete_objective`. Serialized verbatim into the
+/// `objective_reports.payload` JSON column. Snake-case field names match the
+/// sidecar tool payload and `distillation.md` § "First-person objective report".
 /// Every field defaults — a malformed report still deserializes (worst case
 /// an empty report with no terminal `outcome`) rather than desyncing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuestReport {
+pub struct ObjectiveReport {
     #[serde(default)]
     pub summary: String,
     /// `done` | `blocked` | `abandoned` | `partial`. Open-string on the wire;
-    /// only `done` / `abandoned` drive a quest-status transition.
+    /// only `done` / `abandoned` drive a objective-status transition.
     #[serde(default)]
     pub outcome: String,
     #[serde(default)]
-    pub decisions: Vec<QuestReportDecision>,
+    pub decisions: Vec<ObjectiveReportDecision>,
     #[serde(default)]
     pub learned: Vec<String>,
     #[serde(default)]
-    pub artifacts: Vec<QuestReportArtifact>,
+    pub artifacts: Vec<ObjectiveReportArtifact>,
     #[serde(default)]
     pub open_threads: Vec<String>,
     #[serde(default)]

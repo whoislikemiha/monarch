@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::error::MonarchError;
 use crate::websocket::WsState;
-use crate::websocket::handlers::{agents, memories, misc, plans, projects, quests, sessions};
+use crate::websocket::handlers::{agents, memories, misc, plans, projects, objectives, sessions};
 
 /// Dispatch a command to the appropriate internal handler.
 /// Adding a new command = adding one match arm here.
@@ -75,27 +75,27 @@ pub(crate) async fn dispatch_command(
         "toolbox_list_tools" => misc::toolbox_list_tools(state, args).await,
         "toolbox_placeholder_ping" => misc::toolbox_placeholder_ping(state, args).await,
 
-        // ---- DB: Quests (MON-83) ----
-        // Write commands emit the matching `quest-*-{id}` channel via the
+        // ---- DB: Objectives (MON-83) ----
+        // Write commands emit the matching `objective-*-{id}` channel via the
         // shared broadcast pipeline so WS subscribers stay in sync without
         // a manual refetch.
-        "db_create_quest" => quests::db_create_quest(state, args).await,
-        "db_update_quest" => quests::db_update_quest(state, args).await,
-        "db_get_quest" => quests::db_get_quest(state, args).await,
-        "db_list_quests_for_agent" => quests::db_list_quests_for_agent(state, args).await,
-        "db_get_quest_tree_for_root" => quests::db_get_quest_tree_for_root(state, args).await,
-        "db_record_quest_event" => quests::db_record_quest_event(state, args).await,
-        "db_list_quest_events" => quests::db_list_quest_events(state, args).await,
-        "db_update_quest_manual" => quests::db_update_quest_manual(state, args).await,
-        "db_record_manual_quest_event" => quests::db_record_manual_quest_event(state, args).await,
-        "db_list_quest_refs" => quests::db_list_quest_refs(state, args).await,
-        "db_create_quest_ref" => quests::db_create_quest_ref(state, args).await,
-        "db_update_quest_ref" => quests::db_update_quest_ref(state, args).await,
-        "db_delete_quest_ref" => quests::db_delete_quest_ref(state, args).await,
-        "db_save_quest_report" => quests::db_save_quest_report(state, args).await,
-        "db_get_quest_report" => quests::db_get_quest_report(state, args).await,
-        "db_list_quest_reports_for_agent" => quests::db_list_quest_reports_for_agent(state, args).await,
-        "db_get_working_memory" => quests::db_get_working_memory(state, args).await,
+        "db_create_objective" => objectives::db_create_objective(state, args).await,
+        "db_update_objective" => objectives::db_update_objective(state, args).await,
+        "db_get_objective" => objectives::db_get_objective(state, args).await,
+        "db_list_objectives_for_agent" => objectives::db_list_objectives_for_agent(state, args).await,
+        "db_get_objective_tree_for_root" => objectives::db_get_objective_tree_for_root(state, args).await,
+        "db_record_objective_event" => objectives::db_record_objective_event(state, args).await,
+        "db_list_objective_events" => objectives::db_list_objective_events(state, args).await,
+        "db_update_objective_manual" => objectives::db_update_objective_manual(state, args).await,
+        "db_record_manual_objective_event" => objectives::db_record_manual_objective_event(state, args).await,
+        "db_list_objective_refs" => objectives::db_list_objective_refs(state, args).await,
+        "db_create_objective_ref" => objectives::db_create_objective_ref(state, args).await,
+        "db_update_objective_ref" => objectives::db_update_objective_ref(state, args).await,
+        "db_delete_objective_ref" => objectives::db_delete_objective_ref(state, args).await,
+        "db_save_objective_report" => objectives::db_save_objective_report(state, args).await,
+        "db_get_objective_report" => objectives::db_get_objective_report(state, args).await,
+        "db_list_objective_reports_for_agent" => objectives::db_list_objective_reports_for_agent(state, args).await,
+        "db_get_working_memory" => objectives::db_get_working_memory(state, args).await,
         "db_list_plan_items" => plans::db_list_plan_items(state, args).await,
         "db_get_plan_item" => plans::db_get_plan_item(state, args).await,
         "db_set_plan" => plans::db_set_plan(state, args).await,
@@ -108,8 +108,8 @@ pub(crate) async fn dispatch_command(
         "db_block_plan_item" => plans::db_block_plan_item(state, args).await,
 
         // MON-82: Classifications (read-only over WS).
-        "db_list_classifications_for_agent" => quests::db_list_classifications_for_agent(state, args).await,
-        "db_get_classification_for_message" => quests::db_get_classification_for_message(state, args).await,
+        "db_list_classifications_for_agent" => objectives::db_list_classifications_for_agent(state, args).await,
+        "db_get_classification_for_message" => objectives::db_get_classification_for_message(state, args).await,
 
         // ---- MON-98: Captain / shadow identity ----
         "get_captain_identity" => agents::get_captain_identity(state, args).await,

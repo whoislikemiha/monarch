@@ -162,7 +162,7 @@
           bind:checked={keeperEnabled}
           disabled={!embedderReady || saving}
         />
-        <span>Enable memory formation at quest-close</span>
+        <span>Enable memory formation at objective-close</span>
       </label>
       <div class="row">
         <span class="label">Provider</span>
@@ -187,7 +187,7 @@
       {#if !keeperEnabled}
         <p class="hint">
           Without a Keeper model, the agent loop runs unchanged and no
-          memories form at quest-close.
+          memories form at objective-close.
         </p>
       {/if}
       <div class="row">

@@ -247,7 +247,7 @@ impl AgentManager {
         // MON-37: captures `persist_tx` instead of `db_clone` — the reader
         // enqueues PersistCommands rather than running blocking SQL inline.
         // MON-100: also clones `dispatch_tx` (for trigger enqueue) and `db`
-        // (for the `keeper_result` arm's `current_quest_id` lookup).
+        // (for the `keeper_result` arm's `current_objective_id` lookup).
         let app_clone = app.clone();
         let inner_clone = self.inner.clone();
         let live_states_clone = self.live_states.clone();

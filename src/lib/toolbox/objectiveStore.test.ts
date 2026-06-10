@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseQuestReport, type QuestReportView } from "./questStore.svelte";
-import type { QuestReportRow } from "../bindings";
+import { parseObjectiveReport, type ObjectiveReportView } from "./objectiveStore.svelte";
+import type { ObjectiveReportRow } from "../bindings";
 
 /**
  * P6 Slice C (MON-121): the parser is the load-bearing piece — if a payload
@@ -9,9 +9,9 @@ import type { QuestReportRow } from "../bindings";
  * must survive (malformed JSON, missing fields).
  */
 
-const baseRow = (payload: string): QuestReportRow => ({
+const baseRow = (payload: string): ObjectiveReportRow => ({
   id: "r1",
-  questId: "q1",
+  objectiveId: "q1",
   agentId: "a1",
   payload,
   createdAt: "2026-05-22T00:00:00Z",
@@ -19,7 +19,7 @@ const baseRow = (payload: string): QuestReportRow => ({
   distilledByKeeperRunId: null,
 });
 
-describe("parseQuestReport", () => {
+describe("parseObjectiveReport", () => {
   it("returns the structured payload verbatim", () => {
     const payload = {
       summary: "shipped the auth fix",
@@ -31,7 +31,7 @@ describe("parseQuestReport", () => {
       reflection: "tight loop today",
       grade: "A",
     };
-    const r = parseQuestReport(baseRow(JSON.stringify(payload)));
+    const r = parseObjectiveReport(baseRow(JSON.stringify(payload)));
     expect(r.summary).toBe(payload.summary);
     expect(r.outcome).toBe("done");
     expect(r.decisions).toEqual(payload.decisions);
@@ -44,7 +44,7 @@ describe("parseQuestReport", () => {
   });
 
   it("supplies empty defaults when fields are absent", () => {
-    const r = parseQuestReport(baseRow(JSON.stringify({ summary: "only this" })));
+    const r = parseObjectiveReport(baseRow(JSON.stringify({ summary: "only this" })));
     expect(r.summary).toBe("only this");
     expect(r.outcome).toBe("");
     expect(r.decisions).toEqual([]);
@@ -58,9 +58,9 @@ describe("parseQuestReport", () => {
 
   it("falls back to raw payload on malformed JSON without throwing", () => {
     const row = baseRow("not json");
-    let r!: QuestReportView;
+    let r!: ObjectiveReportView;
     expect(() => {
-      r = parseQuestReport(row);
+      r = parseObjectiveReport(row);
     }).not.toThrow();
     expect(r.raw).toBe("not json");
     // Defaults still populated so the renderer can branch on raw cleanly.
@@ -72,7 +72,7 @@ describe("parseQuestReport", () => {
     const row = baseRow(
       JSON.stringify({ decisions: "oops", learned: null, artifacts: 5 }),
     );
-    const r = parseQuestReport(row);
+    const r = parseObjectiveReport(row);
     expect(r.decisions).toEqual([]);
     expect(r.learned).toEqual([]);
     expect(r.artifacts).toEqual([]);
@@ -85,7 +85,7 @@ describe("parseQuestReport", () => {
       distilledByKeeperRunId: 42,
       updatedAt: "2026-05-22T01:00:00Z",
     };
-    const r = parseQuestReport(row);
+    const r = parseObjectiveReport(row);
     expect(r.distilledByKeeperRunId).toBe(42);
     expect(r.updatedAt).toBe("2026-05-22T01:00:00Z");
   });

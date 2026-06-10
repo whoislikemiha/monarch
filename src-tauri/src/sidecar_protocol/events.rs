@@ -6,7 +6,7 @@ use crate::agent::state::{
     ToolStatus,
 };
 
-use super::types::{Message, QuestReport};
+use super::types::{Message, ObjectiveReport};
 
 // ========================================================================
 // Inbound: SidecarEvent + InnerEvent
@@ -72,7 +72,7 @@ pub enum InnerEvent {
         rationale: Option<String>,
     },
     /// P4b: mark a plan item active. The previously active item on the
-    /// same quest (if any) is silently reset to pending.
+    /// same objective (if any) is silently reset to pending.
     PlanItemStart {
         item_id: String,
     },
@@ -94,11 +94,11 @@ pub enum InnerEvent {
         item_id: Option<String>,
         reason: String,
     },
-    /// P6 Slice B (MON-120): executor-authored first-person quest report.
-    /// Persisted to `quest_reports`; a `done` / `abandoned` outcome also
-    /// closes the quest.
-    QuestReport {
-        report: QuestReport,
+    /// P6 Slice B (MON-120): executor-authored first-person objective report.
+    /// Persisted to `objective_reports`; a `done` / `abandoned` outcome also
+    /// closes the objective.
+    ObjectiveReport {
+        report: ObjectiveReport,
     },
     CompactionStart {
         reason: Option<String>,
@@ -200,8 +200,8 @@ enum KnownInnerEvent {
         item_id: Option<String>,
         reason: String,
     },
-    QuestReport {
-        report: QuestReport,
+    ObjectiveReport {
+        report: ObjectiveReport,
     },
     CompactionStart {
         #[serde(default)]
@@ -288,7 +288,7 @@ impl From<KnownInnerEvent> for InnerEvent {
             KnownInnerEvent::PlanItemBlock { item_id, reason } => {
                 Self::PlanItemBlock { item_id, reason }
             }
-            KnownInnerEvent::QuestReport { report } => Self::QuestReport { report },
+            KnownInnerEvent::ObjectiveReport { report } => Self::ObjectiveReport { report },
             KnownInnerEvent::CompactionStart { reason } => Self::CompactionStart { reason },
             KnownInnerEvent::CompactionEnd { aborted } => Self::CompactionEnd { aborted },
             KnownInnerEvent::AutoRetryStart { attempt } => Self::AutoRetryStart { attempt },
@@ -323,7 +323,7 @@ const KNOWN_INNER_TAGS: &[&str] = &[
     "plan_item_complete",
     "plan_item_skip",
     "plan_item_block",
-    "quest_report",
+    "objective_report",
     "compaction_start",
     "compaction_end",
     "auto_retry_start",
@@ -891,16 +891,16 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
         InnerEvent::ActionComplete { .. } => ApplyOutcome::NoOp,
         InnerEvent::ExecutorDecision { .. } => ApplyOutcome::NoOp,
         // P4b: plan-lifecycle events affect persistence + L2 slice but
-        // don't mutate the chat-side LiveAgentState. The Quest store
-        // wakes via `quest-event-{id}` instead.
+        // don't mutate the chat-side LiveAgentState. The Objective store
+        // wakes via `objective-event-{id}` instead.
         InnerEvent::PlanSet { .. } => ApplyOutcome::NoOp,
         InnerEvent::PlanItemStart { .. } => ApplyOutcome::NoOp,
         InnerEvent::PlanItemComplete { .. } => ApplyOutcome::NoOp,
         InnerEvent::PlanItemSkip { .. } => ApplyOutcome::NoOp,
         InnerEvent::PlanItemBlock { .. } => ApplyOutcome::NoOp,
-        // P6 Slice B: the quest report drives persistence + a quest-status
+        // P6 Slice B: the objective report drives persistence + a objective-status
         // transition but does not mutate the chat-side LiveAgentState.
-        InnerEvent::QuestReport { .. } => ApplyOutcome::NoOp,
+        InnerEvent::ObjectiveReport { .. } => ApplyOutcome::NoOp,
         // MON-39 item 9: unknown events return NoOp so `state_version`
         // does not bump per event. The reader-side path in
         // `handle_sidecar_event` is the canonical entry that flips

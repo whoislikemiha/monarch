@@ -24,7 +24,7 @@ pub use config::{
     LoadSessionMessage, ShadowConfig,
 };
 pub use events::{apply_event, AtomicClaim, InnerEvent, SidecarEvent};
-pub use types::QuestReport;
+pub use types::ObjectiveReport;
 
 #[cfg(test)]
 mod tests {
@@ -785,12 +785,12 @@ mod tests {
         assert!(s.state_version > 0);
     }
 
-    // ---- P6 Slice B (MON-120): quest_report event -------------------------
+    // ---- P6 Slice B (MON-120): objective_report event -------------------------
 
     #[test]
-    fn quest_report_event_deserializes_with_nested_fields() {
+    fn objective_report_event_deserializes_with_nested_fields() {
         let raw = json!({
-            "type": "quest_report",
+            "type": "objective_report",
             "report": {
                 "summary": "shipped the auth fix",
                 "outcome": "done",
@@ -806,7 +806,7 @@ mod tests {
         });
         let event: InnerEvent = serde_json::from_value(raw).expect("deserialize");
         match event {
-            InnerEvent::QuestReport { report } => {
+            InnerEvent::ObjectiveReport { report } => {
                 assert_eq!(report.summary, "shipped the auth fix");
                 assert_eq!(report.outcome, "done");
                 assert_eq!(report.decisions.len(), 1);
@@ -820,33 +820,33 @@ mod tests {
                 assert_eq!(report.open_threads.len(), 1);
                 assert_eq!(report.grade, "A");
             }
-            other => panic!("expected QuestReport, got {:?}", other),
+            other => panic!("expected ObjectiveReport, got {:?}", other),
         }
     }
 
     #[test]
-    fn quest_report_event_tolerates_missing_fields() {
+    fn objective_report_event_tolerates_missing_fields() {
         // A sparse report must still deserialize — every field defaults — so
         // a malformed report can never fail the line and desync the agent.
-        let raw = json!({ "type": "quest_report", "report": { "outcome": "blocked" } });
+        let raw = json!({ "type": "objective_report", "report": { "outcome": "blocked" } });
         let event: InnerEvent = serde_json::from_value(raw).expect("deserialize");
         match event {
-            InnerEvent::QuestReport { report } => {
+            InnerEvent::ObjectiveReport { report } => {
                 assert_eq!(report.outcome, "blocked");
                 assert!(report.summary.is_empty());
                 assert!(report.decisions.is_empty());
                 assert!(report.learned.is_empty());
             }
-            other => panic!("expected QuestReport, got {:?}", other),
+            other => panic!("expected ObjectiveReport, got {:?}", other),
         }
     }
 
     #[test]
-    fn quest_report_apply_event_is_noop() {
+    fn objective_report_apply_event_is_noop() {
         let mut s = fresh_state();
         let before_version = s.state_version;
-        let event = InnerEvent::QuestReport {
-            report: QuestReport {
+        let event = InnerEvent::ObjectiveReport {
+            report: ObjectiveReport {
                 summary: "done".to_string(),
                 outcome: "done".to_string(),
                 decisions: vec![],

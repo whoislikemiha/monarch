@@ -44,9 +44,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         // 2 can `import type { LiveAgentState } from '$lib/bindings'` rather
         // than duplicating the inline shape from the getAgentState signature.
         .typ::<agent::state::LiveAgentState>()
-        // MON-83: force QuestRow so `db_get_quest` (Option<QuestRow>) emits
+        // MON-83: force ObjectiveRow so `db_get_objective` (Option<ObjectiveRow>) emits
         // a named type reference rather than an anonymous inline shape.
-        .typ::<db::QuestRow>()
+        .typ::<db::ObjectiveRow>()
         // MON-82: same reason for ClassificationRow
         // (db_get_classification_for_message).
         .typ::<db::ClassificationRow>()
@@ -111,24 +111,24 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             db::db_set_ui_state,
             // Agent stats
             db::db_get_agent_stats,
-            // Quests (MON-83)
-            db::db_create_quest,
-            db::db_update_quest,
-            db::db_get_quest,
-            db::db_list_quests_for_agent,
-            db::db_get_quest_tree_for_root,
-            db::db_record_quest_event,
-            db::db_list_quest_events,
-            db::db_update_quest_manual,
-            db::db_record_manual_quest_event,
-            db::db_list_quest_refs,
-            db::db_create_quest_ref,
-            db::db_update_quest_ref,
-            db::db_delete_quest_ref,
-            // P6 quest reports (MON-119)
-            db::db_save_quest_report,
-            db::db_get_quest_report,
-            db::db_list_quest_reports_for_agent,
+            // Objectives (MON-83)
+            db::db_create_objective,
+            db::db_update_objective,
+            db::db_get_objective,
+            db::db_list_objectives_for_agent,
+            db::db_get_objective_tree_for_root,
+            db::db_record_objective_event,
+            db::db_list_objective_events,
+            db::db_update_objective_manual,
+            db::db_record_manual_objective_event,
+            db::db_list_objective_refs,
+            db::db_create_objective_ref,
+            db::db_update_objective_ref,
+            db::db_delete_objective_ref,
+            // P6 objective reports (MON-119)
+            db::db_save_objective_report,
+            db::db_get_objective_report,
+            db::db_list_objective_reports_for_agent,
             db::db_get_working_memory,
             // P4b plan items (MON-111)
             db::db_list_plan_items,
@@ -308,22 +308,22 @@ pub fn run() {
             db::db_get_ui_state,
             db::db_set_ui_state,
             db::db_get_agent_stats,
-            db::db_create_quest,
-            db::db_update_quest,
-            db::db_get_quest,
-            db::db_list_quests_for_agent,
-            db::db_get_quest_tree_for_root,
-            db::db_record_quest_event,
-            db::db_list_quest_events,
-            db::db_update_quest_manual,
-            db::db_record_manual_quest_event,
-            db::db_list_quest_refs,
-            db::db_create_quest_ref,
-            db::db_update_quest_ref,
-            db::db_delete_quest_ref,
-            db::db_save_quest_report,
-            db::db_get_quest_report,
-            db::db_list_quest_reports_for_agent,
+            db::db_create_objective,
+            db::db_update_objective,
+            db::db_get_objective,
+            db::db_list_objectives_for_agent,
+            db::db_get_objective_tree_for_root,
+            db::db_record_objective_event,
+            db::db_list_objective_events,
+            db::db_update_objective_manual,
+            db::db_record_manual_objective_event,
+            db::db_list_objective_refs,
+            db::db_create_objective_ref,
+            db::db_update_objective_ref,
+            db::db_delete_objective_ref,
+            db::db_save_objective_report,
+            db::db_get_objective_report,
+            db::db_list_objective_reports_for_agent,
             db::db_get_working_memory,
             db::db_list_plan_items,
             db::db_get_plan_item,

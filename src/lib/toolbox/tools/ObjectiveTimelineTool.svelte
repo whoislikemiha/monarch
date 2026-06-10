@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ToolProps } from "../types";
-  import type { PlanItemRow, QuestEventRow, QuestRefRow, QuestRow } from "../../bindings";
-  import { questStore } from "../questStore.svelte";
+  import type { PlanItemRow, ObjectiveEventRow, ObjectiveRefRow, ObjectiveRow } from "../../bindings";
+  import { objectiveStore } from "../objectiveStore.svelte";
   import ShadowAvatar from "../../avatar/ShadowAvatar.svelte";
   import { agentStore } from "../../stores/agentStore.svelte";
 
@@ -14,30 +14,30 @@
    * stay mounted across agent switches — a fresh agent needs its own
    * slice, not someone else's stale one.
    */
-  let questState = $derived(
-    agentContext ? (questStore.byAgent.get(agentId) ?? null) : null,
+  let objectiveState = $derived(
+    agentContext ? (objectiveStore.byAgent.get(agentId) ?? null) : null,
   );
-  let activeQuestId = $derived(questState?.workingMemory?.currentQuestId ?? null);
-  let activeQuest = $derived.by(() => {
-    if (!activeQuestId || !questState) return null;
-    for (const tree of questState.treesByRoot.values()) {
-      const found = tree.find((quest) => quest.id === activeQuestId);
+  let activeObjectiveId = $derived(objectiveState?.workingMemory?.currentObjectiveId ?? null);
+  let activeObjective = $derived.by(() => {
+    if (!activeObjectiveId || !objectiveState) return null;
+    for (const tree of objectiveState.treesByRoot.values()) {
+      const found = tree.find((objective) => objective.id === activeObjectiveId);
       if (found) return found;
     }
-    return questState.roots.find((quest) => quest.id === activeQuestId) ?? null;
+    return objectiveState.roots.find((objective) => objective.id === activeObjectiveId) ?? null;
   });
 
   $effect(() => {
     if (agentContext) {
-      questStore.ensure(agentId);
-      questStore.refresh(agentId);
+      objectiveStore.ensure(agentId);
+      objectiveStore.refresh(agentId);
     }
   });
 
   $effect(() => {
-    if (!agentContext || !activeQuestId || questState?.planItemsByQuest.has(activeQuestId)) return;
-    questStore.loadPlanItems(agentId, activeQuestId).catch((e) => {
-      if (questState) questState.error = String(e);
+    if (!agentContext || !activeObjectiveId || objectiveState?.planItemsByObjective.has(activeObjectiveId)) return;
+    objectiveStore.loadPlanItems(agentId, activeObjectiveId).catch((e) => {
+      if (objectiveState) objectiveState.error = String(e);
     });
   });
 
@@ -47,12 +47,12 @@
   // render it depth-first without recursion.
 
   interface TreeNode {
-    quest: QuestRow;
+    objective: ObjectiveRow;
     depth: number;
   }
 
-  function flattenTree(tree: QuestRow[]): TreeNode[] {
-    const byParent = new Map<string | null, QuestRow[]>();
+  function flattenTree(tree: ObjectiveRow[]): TreeNode[] {
+    const byParent = new Map<string | null, ObjectiveRow[]>();
     for (const q of tree) {
       const key = q.parentId ?? null;
       const list = byParent.get(key) ?? [];
@@ -63,7 +63,7 @@
     function walk(parentId: string | null, depth: number) {
       const children = byParent.get(parentId) ?? [];
       for (const q of children) {
-        out.push({ quest: q, depth });
+        out.push({ objective: q, depth });
         walk(q.id, depth + 1);
       }
     }
@@ -119,7 +119,7 @@
     return agent.shadow?.shadowTitle ? `${name}, ${agent.shadow.shadowTitle}` : name;
   }
 
-  // --- New-quest form ------------------------------------------------------
+  // --- New-objective form ------------------------------------------------------
 
   let formTitle = $state("");
   let formDescription = $state("");
@@ -128,15 +128,15 @@
   let formParentId = $state<string>("");
   let formSubmitting = $state(false);
   let markingDoneId = $state<string | null>(null);
-  let savingQuestId = $state<string | null>(null);
+  let savingObjectiveId = $state<string | null>(null);
   let savingEventId = $state<string | null>(null);
   let savingRefId = $state<string | null>(null);
-  let addingPlanQuestId = $state<string | null>(null);
+  let addingPlanObjectiveId = $state<string | null>(null);
   let planBusyKey = $state<string | null>(null);
   let planDraftTitles = $state(new Map<string, string>());
   let newPlanTitles = $state(new Map<string, string>());
 
-  type QuestEditDraft = {
+  type ObjectiveEditDraft = {
     status: string;
     grade: "E" | "D" | "C" | "B" | "A" | "S";
     scope: string;
@@ -145,69 +145,69 @@
     summary: string;
     changeRationale: string;
   };
-  type QuestEventDraft = {
+  type ObjectiveEventDraft = {
     eventType: "note" | "blocker" | "blocker_resolved" | "question" | "answer";
     title: string;
     text: string;
   };
-  type QuestRefDraft = {
+  type ObjectiveRefDraft = {
     refType: string;
     label: string;
     target: string;
   };
 
-  let questDrafts = $state<Record<string, QuestEditDraft>>({});
-  let eventDrafts = $state<Record<string, QuestEventDraft>>({});
-  let refDrafts = $state<Record<string, QuestRefDraft>>({});
+  let objectiveDrafts = $state<Record<string, ObjectiveEditDraft>>({});
+  let eventDrafts = $state<Record<string, ObjectiveEventDraft>>({});
+  let refDrafts = $state<Record<string, ObjectiveRefDraft>>({});
 
-  function ensureQuestDraft(quest: QuestRow): QuestEditDraft {
-    const existing = questDrafts[quest.id];
+  function ensureObjectiveDraft(objective: ObjectiveRow): ObjectiveEditDraft {
+    const existing = objectiveDrafts[objective.id];
     if (existing) return existing;
-    questDrafts[quest.id] = {
-      status: quest.status,
-      grade: (quest.grade ?? "C") as QuestEditDraft["grade"],
-      scope: quest.scope ?? "",
-      currentDirection: quest.currentDirection ?? "",
-      rationale: quest.rationale ?? "",
-      summary: quest.summary ?? "",
+    objectiveDrafts[objective.id] = {
+      status: objective.status,
+      grade: (objective.grade ?? "C") as ObjectiveEditDraft["grade"],
+      scope: objective.scope ?? "",
+      currentDirection: objective.currentDirection ?? "",
+      rationale: objective.rationale ?? "",
+      summary: objective.summary ?? "",
       changeRationale: "",
     };
-    return questDrafts[quest.id];
+    return objectiveDrafts[objective.id];
   }
 
-  function resetQuestDraft(quest: QuestRow) {
-    questDrafts[quest.id] = {
-      status: quest.status,
-      grade: (quest.grade ?? "C") as QuestEditDraft["grade"],
-      scope: quest.scope ?? "",
-      currentDirection: quest.currentDirection ?? "",
-      rationale: quest.rationale ?? "",
-      summary: quest.summary ?? "",
+  function resetObjectiveDraft(objective: ObjectiveRow) {
+    objectiveDrafts[objective.id] = {
+      status: objective.status,
+      grade: (objective.grade ?? "C") as ObjectiveEditDraft["grade"],
+      scope: objective.scope ?? "",
+      currentDirection: objective.currentDirection ?? "",
+      rationale: objective.rationale ?? "",
+      summary: objective.summary ?? "",
       changeRationale: "",
     };
   }
 
-  function ensureEventDraft(questId: string): QuestEventDraft {
-    const existing = eventDrafts[questId];
+  function ensureEventDraft(objectiveId: string): ObjectiveEventDraft {
+    const existing = eventDrafts[objectiveId];
     if (existing) return existing;
-    eventDrafts[questId] = { eventType: "note", title: "", text: "" };
-    return eventDrafts[questId];
+    eventDrafts[objectiveId] = { eventType: "note", title: "", text: "" };
+    return eventDrafts[objectiveId];
   }
 
-  function ensureRefDraft(questId: string): QuestRefDraft {
-    const existing = refDrafts[questId];
+  function ensureRefDraft(objectiveId: string): ObjectiveRefDraft {
+    const existing = refDrafts[objectiveId];
     if (existing) return existing;
-    refDrafts[questId] = { refType: "url", label: "", target: "" };
-    return refDrafts[questId];
+    refDrafts[objectiveId] = { refType: "url", label: "", target: "" };
+    return refDrafts[objectiveId];
   }
 
-  async function saveQuestDraft(quest: QuestRow) {
-    if (!agentContext || !questState) return;
-    const draft = ensureQuestDraft(quest);
-    savingQuestId = quest.id;
+  async function saveObjectiveDraft(objective: ObjectiveRow) {
+    if (!agentContext || !objectiveState) return;
+    const draft = ensureObjectiveDraft(objective);
+    savingObjectiveId = objective.id;
     try {
-      await questStore.updateQuestManual(agentContext.agentId, {
-        id: quest.id,
+      await objectiveStore.updateObjectiveManual(agentContext.agentId, {
+        id: objective.id,
         status: draft.status,
         scope: draft.scope.trim() || null,
         currentDirection: draft.currentDirection.trim() || null,
@@ -220,20 +220,20 @@
       });
       draft.changeRationale = "";
     } catch (e) {
-      questState.error = String(e);
+      objectiveState.error = String(e);
     } finally {
-      savingQuestId = null;
+      savingObjectiveId = null;
     }
   }
 
-  async function submitManualEvent(questId: string) {
-    if (!agentContext || !questState) return;
-    const draft = ensureEventDraft(questId);
+  async function submitManualEvent(objectiveId: string) {
+    if (!agentContext || !objectiveState) return;
+    const draft = ensureEventDraft(objectiveId);
     if (!draft.text.trim()) return;
-    savingEventId = questId;
+    savingEventId = objectiveId;
     try {
-      await questStore.recordManualQuestEvent(agentContext.agentId, {
-        questId,
+      await objectiveStore.recordManualObjectiveEvent(agentContext.agentId, {
+        objectiveId,
         eventType: draft.eventType,
         title: draft.title.trim() || null,
         text: draft.text.trim(),
@@ -242,44 +242,44 @@
         author: "captain",
         surfaceOverride: null,
       });
-      eventDrafts[questId] = { eventType: draft.eventType, title: "", text: "" };
+      eventDrafts[objectiveId] = { eventType: draft.eventType, title: "", text: "" };
     } catch (e) {
-      questState.error = String(e);
+      objectiveState.error = String(e);
     } finally {
       savingEventId = null;
     }
   }
 
-  async function submitQuestRef(questId: string) {
-    if (!agentContext || !questState) return;
-    const draft = ensureRefDraft(questId);
+  async function submitObjectiveRef(objectiveId: string) {
+    if (!agentContext || !objectiveState) return;
+    const draft = ensureRefDraft(objectiveId);
     if (!draft.target.trim()) return;
-    savingRefId = questId;
+    savingRefId = objectiveId;
     try {
-      await questStore.createQuestRef(agentContext.agentId, {
+      await objectiveStore.createObjectiveRef(agentContext.agentId, {
         id: null,
-        questId,
+        objectiveId,
         refType: draft.refType.trim() || "url",
         label: draft.label.trim() || null,
         target: draft.target.trim(),
         metadataJson: null,
         createdBy: "captain",
       });
-      refDrafts[questId] = { refType: draft.refType, label: "", target: "" };
+      refDrafts[objectiveId] = { refType: draft.refType, label: "", target: "" };
     } catch (e) {
-      questState.error = String(e);
+      objectiveState.error = String(e);
     } finally {
       savingRefId = null;
     }
   }
 
-  async function deleteQuestRef(questId: string, ref: QuestRefRow) {
-    if (!agentContext || !questState) return;
+  async function deleteObjectiveRef(objectiveId: string, ref: ObjectiveRefRow) {
+    if (!agentContext || !objectiveState) return;
     savingRefId = ref.id;
     try {
-      await questStore.deleteQuestRef(agentContext.agentId, questId, ref.id);
+      await objectiveStore.deleteObjectiveRef(agentContext.agentId, objectiveId, ref.id);
     } catch (e) {
-      questState.error = String(e);
+      objectiveState.error = String(e);
     } finally {
       savingRefId = null;
     }
@@ -287,20 +287,20 @@
 
   $effect(() => {
     // When the create form opens, reset fields and preselect parent.
-    if (questState?.creating) {
+    if (objectiveState?.creating) {
       formTitle = "";
       formDescription = "";
       formGrade = "C";
       formExecHint = "in_context";
-      formParentId = questState.creatingParentId ?? "";
+      formParentId = objectiveState.creatingParentId ?? "";
     }
   });
 
   async function submitCreate() {
-    if (!agentContext || !questState || !formTitle.trim()) return;
+    if (!agentContext || !objectiveState || !formTitle.trim()) return;
     formSubmitting = true;
     try {
-      await questStore.createQuest(agentId, {
+      await objectiveStore.createObjective(agentId, {
         id: null,
         parentId: formParentId || null,
         title: formTitle.trim(),
@@ -311,9 +311,9 @@
         assigneeShadowId: agentId,
         createdBy: "monarch",
       });
-      questStore.cancelCreate(agentId);
+      objectiveStore.cancelCreate(agentId);
     } catch (e) {
-      questState.error = String(e);
+      objectiveState.error = String(e);
     } finally {
       formSubmitting = false;
     }
@@ -323,12 +323,12 @@
     return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   }
 
-  async function markDone(quest: QuestRow) {
-    if (!agentContext || !questState || quest.status === "done") return;
-    markingDoneId = quest.id;
+  async function markDone(objective: ObjectiveRow) {
+    if (!agentContext || !objectiveState || objective.status === "done") return;
+    markingDoneId = objective.id;
     try {
-      await questStore.updateQuest(agentId, {
-        id: quest.id,
+      await objectiveStore.updateObjective(agentId, {
+        id: objective.id,
         title: null,
         description: null,
         scope: null,
@@ -341,22 +341,22 @@
         assigneeShadowId: null,
         summary: null,
         startedAt: null,
-        completedAt: quest.completedAt ?? nowIsoSeconds(),
+        completedAt: objective.completedAt ?? nowIsoSeconds(),
         abandonedAt: null,
       });
     } catch (e) {
-      questState.error = String(e);
+      objectiveState.error = String(e);
     } finally {
       markingDoneId = null;
     }
   }
 
-  // Pool of parent options: every quest already loaded for this agent
+  // Pool of parent options: every objective already loaded for this agent
   // (across all roots). Keeps the form simple without a second fetch.
   let parentOptions = $derived.by(() => {
-    if (!questState) return [] as QuestRow[];
-    const all: QuestRow[] = [];
-    for (const tree of questState.treesByRoot.values()) {
+    if (!objectiveState) return [] as ObjectiveRow[];
+    const all: ObjectiveRow[] = [];
+    for (const tree of objectiveState.treesByRoot.values()) {
       for (const q of tree) all.push(q);
     }
     return all;
@@ -412,13 +412,13 @@
   }
 
   function keeperLabel(trigger: string): string {
-    if (trigger === "quest_close") return "Keeper quest close";
+    if (trigger === "objective_close") return "Keeper objective close";
     if (trigger === "continuous") return "Keeper checkpoint";
     return "Keeper note";
   }
 
   function keeperHint(trigger: string): string {
-    if (trigger === "quest_close") return "Summary produced when the quest was marked done.";
+    if (trigger === "objective_close") return "Summary produced when the objective was marked done.";
     if (trigger === "continuous") return "Background memory checkpoint from context compaction.";
     return "Keeper memory summary.";
   }
@@ -445,8 +445,8 @@
     rationale: string;
   }
   interface EventNode {
-    event: QuestEventRow;
-    children: QuestEventRow[];
+    event: ObjectiveEventRow;
+    children: ObjectiveEventRow[];
   }
 
   function parsePayload(raw: string | null): Record<string, unknown> {
@@ -459,11 +459,11 @@
     }
   }
 
-  function eventTree(events: QuestEventRow[]): EventNode[] {
-    const childrenByParent = new Map<string, QuestEventRow[]>();
-    const roots: QuestEventRow[] = [];
+  function eventTree(events: ObjectiveEventRow[]): EventNode[] {
+    const childrenByParent = new Map<string, ObjectiveEventRow[]>();
+    const roots: ObjectiveEventRow[] = [];
     for (const ev of events) {
-      // Status is already visible in the quest metadata; the auto-created
+      // Status is already visible in the objective metadata; the auto-created
       // and mark-done rows add noise to the execution narrative.
       if (ev.eventType === "status_change") continue;
       if (ev.parentEventId) {
@@ -520,8 +520,8 @@
   function manualEventLabel(kind: string): string {
     if (kind === "scope_change") return "scope changed";
     if (kind === "direction_change") return "direction changed";
-    if (kind === "quest_rationale_change") return "rationale changed";
-    if (kind === "quest_summary_change") return "summary changed";
+    if (kind === "objective_rationale_change") return "rationale changed";
+    if (kind === "objective_summary_change") return "summary changed";
     if (kind === "grade_change") return "grade changed";
     if (kind === "blocker_resolved") return "blocker resolved";
     return kind.replaceAll("_", " ");
@@ -547,17 +547,17 @@
     return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
   }
 
-  function planItemsFor(questId: string): PlanItemRow[] {
-    return questState?.planItemsByQuest.get(questId) ?? [];
+  function planItemsFor(objectiveId: string): PlanItemRow[] {
+    return objectiveState?.planItemsByObjective.get(objectiveId) ?? [];
   }
 
-  function planItemById(questId: string, itemId: string | null | undefined): PlanItemRow | null {
+  function planItemById(objectiveId: string, itemId: string | null | undefined): PlanItemRow | null {
     if (!itemId) return null;
-    return planItemsFor(questId).find((item) => item.id === itemId) ?? null;
+    return planItemsFor(objectiveId).find((item) => item.id === itemId) ?? null;
   }
 
-  function planTitle(questId: string, itemId: string | null | undefined): string {
-    return planItemById(questId, itemId)?.title ?? "plan item";
+  function planTitle(objectiveId: string, itemId: string | null | undefined): string {
+    return planItemById(objectiveId, itemId)?.title ?? "plan item";
   }
 
   function draftTitle(item: PlanItemRow): string {
@@ -570,52 +570,52 @@
     planDraftTitles = next;
   }
 
-  function newPlanTitle(questId: string): string {
-    return newPlanTitles.get(questId) ?? "";
+  function newPlanTitle(objectiveId: string): string {
+    return newPlanTitles.get(objectiveId) ?? "";
   }
 
-  function setNewPlanTitle(questId: string, value: string) {
+  function setNewPlanTitle(objectiveId: string, value: string) {
     const next = new Map(newPlanTitles);
-    next.set(questId, value);
+    next.set(objectiveId, value);
     newPlanTitles = next;
   }
 
   async function runPlanMutation(key: string, fn: () => Promise<void>) {
-    if (!agentContext || !questState) return;
+    if (!agentContext || !objectiveState) return;
     planBusyKey = key;
     try {
       await fn();
     } catch (e) {
-      questState.error = String(e);
+      objectiveState.error = String(e);
     } finally {
       planBusyKey = null;
     }
   }
 
-  async function submitAddPlanItem(questId: string) {
+  async function submitAddPlanItem(objectiveId: string) {
     if (!agentContext) return;
-    const title = newPlanTitle(questId).trim();
+    const title = newPlanTitle(objectiveId).trim();
     if (!title) return;
-    const items = planItemsFor(questId);
+    const items = planItemsFor(objectiveId);
     const afterItemId = items.at(-1)?.id ?? null;
-    await runPlanMutation(`add:${questId}`, async () => {
-      await questStore.addPlanItem(agentId, {
-        questId,
+    await runPlanMutation(`add:${objectiveId}`, async () => {
+      await objectiveStore.addPlanItem(agentId, {
+        objectiveId,
         title,
         afterItemId,
         createdBy: "captain",
       });
-      setNewPlanTitle(questId, "");
-      addingPlanQuestId = null;
+      setNewPlanTitle(objectiveId, "");
+      addingPlanObjectiveId = null;
     });
   }
 
-  async function commitPlanTitle(questId: string, item: PlanItemRow) {
+  async function commitPlanTitle(objectiveId: string, item: PlanItemRow) {
     if (!agentContext) return;
     const title = draftTitle(item).trim();
     if (!title || title === item.title) return;
     await runPlanMutation(`edit:${item.id}`, () =>
-      questStore.updatePlanItem(agentId, questId, {
+      objectiveStore.updatePlanItem(agentId, objectiveId, {
         id: item.id,
         title,
         rationale: null,
@@ -682,54 +682,54 @@
   }
 </script>
 
-{#snippet planPanel(panelQuest: QuestRow, planItems: PlanItemRow[], agentId: string)}
+{#snippet planPanel(panelObjective: ObjectiveRow, planItems: PlanItemRow[], agentId: string)}
   <div class="plan-panel">
     <div class="plan-header">
       <div>
         <div class="log-title">Active plan</div>
-        <div class="plan-quest-title">{panelQuest.title}</div>
+        <div class="plan-objective-title">{panelObjective.title}</div>
       </div>
-      {#if addingPlanQuestId !== panelQuest.id}
+      {#if addingPlanObjectiveId !== panelObjective.id}
         <button
           type="button"
           class="mini-btn"
           onclick={() => {
-            addingPlanQuestId = panelQuest.id;
-            setNewPlanTitle(panelQuest.id, "");
+            addingPlanObjectiveId = panelObjective.id;
+            setNewPlanTitle(panelObjective.id, "");
           }}
         >
           + Item
         </button>
       {/if}
     </div>
-    {#if addingPlanQuestId === panelQuest.id}
+    {#if addingPlanObjectiveId === panelObjective.id}
       <form
         class="plan-add-form"
         onsubmit={(e) => {
           e.preventDefault();
-          submitAddPlanItem(panelQuest.id);
+          submitAddPlanItem(panelObjective.id);
         }}
       >
         <input
           class="input plan-title-input"
           type="text"
-          value={newPlanTitle(panelQuest.id)}
-          oninput={(e) => setNewPlanTitle(panelQuest.id, e.currentTarget.value)}
+          value={newPlanTitle(panelObjective.id)}
+          oninput={(e) => setNewPlanTitle(panelObjective.id, e.currentTarget.value)}
           placeholder="Next step"
-          disabled={planBusyKey === `add:${panelQuest.id}`}
+          disabled={planBusyKey === `add:${panelObjective.id}`}
         />
         <button
           type="submit"
           class="primary-btn compact"
-          disabled={!newPlanTitle(panelQuest.id).trim() || planBusyKey === `add:${panelQuest.id}`}
+          disabled={!newPlanTitle(panelObjective.id).trim() || planBusyKey === `add:${panelObjective.id}`}
         >
           Add
         </button>
         <button
           type="button"
           class="ghost-btn compact"
-          onclick={() => (addingPlanQuestId = null)}
-          disabled={planBusyKey === `add:${panelQuest.id}`}
+          onclick={() => (addingPlanObjectiveId = null)}
+          disabled={planBusyKey === `add:${panelObjective.id}`}
         >
           Cancel
         </button>
@@ -747,11 +747,11 @@
                 class="plan-title-input"
                 value={draftTitle(item)}
                 oninput={(e) => setDraftTitle(item.id, e.currentTarget.value)}
-                onchange={() => commitPlanTitle(panelQuest.id, item)}
+                onchange={() => commitPlanTitle(panelObjective.id, item)}
                 onkeydown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    commitPlanTitle(panelQuest.id, item);
+                    commitPlanTitle(panelObjective.id, item);
                   }
                 }}
                 disabled={planBusyKey === `edit:${item.id}`}
@@ -769,7 +769,7 @@
                 disabled={index === 0 || planBusyKey !== null}
                 onclick={() =>
                   runPlanMutation(`move:${item.id}`, () =>
-                    questStore.movePlanItem(agentId, panelQuest.id, item.id, -1),
+                    objectiveStore.movePlanItem(agentId, panelObjective.id, item.id, -1),
                   )}
               >
                 ↑
@@ -781,7 +781,7 @@
                 disabled={index === planItems.length - 1 || planBusyKey !== null}
                 onclick={() =>
                   runPlanMutation(`move:${item.id}`, () =>
-                    questStore.movePlanItem(agentId, panelQuest.id, item.id, 1),
+                    objectiveStore.movePlanItem(agentId, panelObjective.id, item.id, 1),
                   )}
               >
                 ↓
@@ -792,7 +792,7 @@
                 disabled={item.status === "active" || planBusyKey !== null}
                 onclick={() =>
                   runPlanMutation(`start:${item.id}`, () =>
-                    questStore.startPlanItem(agentId, panelQuest.id, item.id),
+                    objectiveStore.startPlanItem(agentId, panelObjective.id, item.id),
                   )}
               >
                 Start
@@ -804,7 +804,7 @@
                 onclick={() => {
                   const outcome = promptText("Outcome");
                   runPlanMutation(`complete:${item.id}`, () =>
-                    questStore.completePlanItem(agentId, panelQuest.id, item.id, outcome),
+                    objectiveStore.completePlanItem(agentId, panelObjective.id, item.id, outcome),
                   );
                 }}
               >
@@ -817,7 +817,7 @@
                 onclick={() => {
                   const reason = promptText("Skip reason");
                   runPlanMutation(`skip:${item.id}`, () =>
-                    questStore.skipPlanItem(agentId, panelQuest.id, item.id, reason),
+                    objectiveStore.skipPlanItem(agentId, panelObjective.id, item.id, reason),
                   );
                 }}
               >
@@ -831,7 +831,7 @@
                   const reason = promptText("Block reason");
                   if (!reason) return;
                   runPlanMutation(`block:${item.id}`, () =>
-                    questStore.blockPlanItem(agentId, panelQuest.id, item.id, reason),
+                    objectiveStore.blockPlanItem(agentId, panelObjective.id, item.id, reason),
                   );
                 }}
               >
@@ -844,7 +844,7 @@
                 disabled={planBusyKey !== null}
                 onclick={() =>
                   runPlanMutation(`delete:${item.id}`, () =>
-                    questStore.deletePlanItem(agentId, panelQuest.id, item.id),
+                    objectiveStore.deletePlanItem(agentId, panelObjective.id, item.id),
                   )}
               >
                 ×
@@ -857,32 +857,32 @@
   </div>
 {/snippet}
 
-<div class="quest-tool">
-  {#if !agentContext || !questState}
+<div class="objective-tool">
+  {#if !agentContext || !objectiveState}
     <p class="empty">No agent selected.</p>
   {:else}
     <!-- Header: create button + status -->
     <div class="header">
-      {#if !questState.creating}
+      {#if !objectiveState.creating}
         <button
           class="new-btn"
           type="button"
-          onclick={() => questStore.startCreate(agentId)}
+          onclick={() => objectiveStore.startCreate(agentId)}
         >
-          + New quest
+          + New objective
         </button>
       {:else}
-        <span class="header-title">New quest</span>
+        <span class="header-title">New objective</span>
       {/if}
-      {#if questState.loading}<span class="muted">Loading…</span>{/if}
+      {#if objectiveState.loading}<span class="muted">Loading…</span>{/if}
     </div>
 
-    {#if questState.error}
-      <p class="error-msg">{questState.error}</p>
+    {#if objectiveState.error}
+      <p class="error-msg">{objectiveState.error}</p>
     {/if}
 
     <!-- Create form -->
-    {#if questState.creating}
+    {#if objectiveState.creating}
       <form class="create-form" onsubmit={(e) => { e.preventDefault(); submitCreate(); }}>
         <label class="field">
           <span class="label">Title</span>
@@ -927,7 +927,7 @@
         <label class="field">
           <span class="label">Parent</span>
           <select class="input" bind:value={formParentId}>
-            <option value="">— none (root quest)</option>
+            <option value="">— none (root objective)</option>
             {#each parentOptions as opt (opt.id)}
               <option value={opt.id}>{opt.title}</option>
             {/each}
@@ -940,7 +940,7 @@
           <button
             type="button"
             class="ghost-btn"
-            onclick={() => questStore.cancelCreate(agentId)}
+            onclick={() => objectiveStore.cancelCreate(agentId)}
             disabled={formSubmitting}
           >
             Cancel
@@ -949,25 +949,25 @@
       </form>
     {/if}
 
-    {#if activeQuest}
-      {@const activePlanItems = planItemsFor(activeQuest.id)}
-      {@render planPanel(activeQuest, activePlanItems, agentId)}
+    {#if activeObjective}
+      {@const activePlanItems = planItemsFor(activeObjective.id)}
+      {@render planPanel(activeObjective, activePlanItems, agentId)}
     {/if}
 
     <!-- Timeline -->
-    {#if questState.roots.length === 0 && !questState.loading}
-      <p class="empty">No quests yet for this shadow.</p>
+    {#if objectiveState.roots.length === 0 && !objectiveState.loading}
+      <p class="empty">No objectives yet for this shadow.</p>
     {:else}
       <div class="timeline">
-        {#each questState.roots as root (root.id)}
-          {@const tree = questState.treesByRoot.get(root.id) ?? [root]}
+        {#each objectiveState.roots as root (root.id)}
+          {@const tree = objectiveState.treesByRoot.get(root.id) ?? [root]}
           {@const flat = flattenTree(tree)}
           <div class="root">
-            {#each flat as { quest, depth } (quest.id)}
-              {@const expanded = questState.expandedQuestIds.has(quest.id)}
-              {@const events = questState.eventsByQuest.get(quest.id) ?? []}
-              {@const refs = questState.refsByQuest.get(quest.id) ?? []}
-              {@const report = questState.reportsByQuest.get(quest.id) ?? null}
+            {#each flat as { objective, depth } (objective.id)}
+              {@const expanded = objectiveState.expandedObjectiveIds.has(objective.id)}
+              {@const events = objectiveState.eventsByObjective.get(objective.id) ?? []}
+              {@const refs = objectiveState.refsByObjective.get(objective.id) ?? []}
+              {@const report = objectiveState.reportsByObjective.get(objective.id) ?? null}
               <div
                 class="node"
                 class:expanded
@@ -976,88 +976,88 @@
                 <button
                   type="button"
                   class="node-row"
-                  onclick={() => questStore.toggleExpand(agentId, quest.id)}
+                  onclick={() => objectiveStore.toggleExpand(agentId, objective.id)}
                   aria-expanded={expanded}
                 >
                   <span class="disclosure">{expanded ? "▾" : "▸"}</span>
-                  {#if quest.assigneeShadowId}
+                  {#if objective.assigneeShadowId}
                     <span class="avatar">
                       <ShadowAvatar
-                        agentId={quest.assigneeShadowId}
+                        agentId={objective.assigneeShadowId}
                         size={18}
                       />
                     </span>
                   {/if}
                   <span
                     class="status-dot"
-                    style="background:{STATUS_COLOR[quest.status] ?? 'var(--text-muted)'}"
-                    title={quest.status}
+                    style="background:{STATUS_COLOR[objective.status] ?? 'var(--text-muted)'}"
+                    title={objective.status}
                   ></span>
-                  {#if quest.grade}
-                    <span class="grade">{quest.grade}</span>
+                  {#if objective.grade}
+                    <span class="grade">{objective.grade}</span>
                   {/if}
-                  <span class="title">{quest.title}</span>
-                  <span class="ts muted">{formatRelative(quest.createdAt)}</span>
+                  <span class="title">{objective.title}</span>
+                  <span class="ts muted">{formatRelative(objective.createdAt)}</span>
                 </button>
                 {#if expanded}
-                  {@const draft = ensureQuestDraft(quest)}
-                  {@const eventDraft = ensureEventDraft(quest.id)}
-                  {@const refDraft = ensureRefDraft(quest.id)}
+                  {@const draft = ensureObjectiveDraft(objective)}
+                  {@const eventDraft = ensureEventDraft(objective.id)}
+                  {@const refDraft = ensureRefDraft(objective.id)}
                   <div class="detail">
-                    <div class="quest-info">
-                      <div class="quest-title-full">{quest.title}</div>
+                    <div class="objective-info">
+                      <div class="objective-title-full">{objective.title}</div>
                       <div class="detail-meta">
                         <span class="meta-row">
                           <span class="meta-label">Status</span>
-                          <span class="meta-value">{quest.status}</span>
+                          <span class="meta-value">{objective.status}</span>
                         </span>
-                        {#if quest.grade}
+                        {#if objective.grade}
                           <span class="meta-row">
                             <span class="meta-label">Grade</span>
-                            <span class="meta-value">{quest.grade}</span>
+                            <span class="meta-value">{objective.grade}</span>
                           </span>
                         {/if}
-                        {#if quest.execHint}
+                        {#if objective.execHint}
                           <span class="meta-row">
                             <span class="meta-label">Exec</span>
-                            <span class="meta-value">{quest.execHint}</span>
+                            <span class="meta-value">{objective.execHint}</span>
                           </span>
                         {/if}
                         <span class="meta-row">
                           <span class="meta-label">Created by</span>
-                          <span class="meta-value">{quest.createdBy}</span>
+                          <span class="meta-value">{objective.createdBy}</span>
                         </span>
-                        {#if quest.assigneeShadowId}
+                        {#if objective.assigneeShadowId}
                           <span class="meta-row">
                             <span class="meta-label">Assignee</span>
-                            <span class="meta-value" title={quest.assigneeShadowId}>
-                              {assigneeLabel(quest.assigneeShadowId)}
+                            <span class="meta-value" title={objective.assigneeShadowId}>
+                              {assigneeLabel(objective.assigneeShadowId)}
                             </span>
                           </span>
                         {/if}
                         <span class="meta-row">
                           <span class="meta-label">Created</span>
-                          <span class="meta-value">{formatDateTime(quest.createdAt)}</span>
+                          <span class="meta-value">{formatDateTime(objective.createdAt)}</span>
                         </span>
-                        {#if quest.startedAt}
+                        {#if objective.startedAt}
                           <span class="meta-row">
                             <span class="meta-label">Started</span>
-                            <span class="meta-value">{formatDateTime(quest.startedAt)}</span>
+                            <span class="meta-value">{formatDateTime(objective.startedAt)}</span>
                           </span>
                         {/if}
-                        {#if quest.completedAt}
+                        {#if objective.completedAt}
                           <span class="meta-row">
                             <span class="meta-label">Completed</span>
-                            <span class="meta-value">{formatDateTime(quest.completedAt)}</span>
+                            <span class="meta-value">{formatDateTime(objective.completedAt)}</span>
                           </span>
                         {/if}
                       </div>
-                      {#if quest.description}
-                        <p class="description">{quest.description}</p>
+                      {#if objective.description}
+                        <p class="description">{objective.description}</p>
                       {/if}
                     </div>
 
-                    <form class="quest-editor" onsubmit={(e) => { e.preventDefault(); saveQuestDraft(quest); }}>
+                    <form class="objective-editor" onsubmit={(e) => { e.preventDefault(); saveObjectiveDraft(objective); }}>
                       <div class="section-title">Brief</div>
                       <div class="field-row">
                         <label class="field">
@@ -1107,10 +1107,10 @@
                         <input class="input" type="text" bind:value={draft.changeRationale} />
                       </label>
                       <div class="form-actions">
-                        <button type="submit" class="primary-btn" disabled={savingQuestId === quest.id}>
-                          {savingQuestId === quest.id ? "Saving..." : "Save brief"}
+                        <button type="submit" class="primary-btn" disabled={savingObjectiveId === objective.id}>
+                          {savingObjectiveId === objective.id ? "Saving..." : "Save brief"}
                         </button>
-                        <button type="button" class="ghost-btn" onclick={() => resetQuestDraft(quest)}>
+                        <button type="button" class="ghost-btn" onclick={() => resetObjectiveDraft(objective)}>
                           Reset
                         </button>
                       </div>
@@ -1129,7 +1129,7 @@
                               <button
                                 type="button"
                                 class="icon-btn"
-                                onclick={() => deleteQuestRef(quest.id, ref)}
+                                onclick={() => deleteObjectiveRef(objective.id, ref)}
                                 disabled={savingRefId === ref.id}
                                 title="Delete reference"
                               >
@@ -1139,7 +1139,7 @@
                           {/each}
                         </div>
                       {/if}
-                      <form class="inline-form" onsubmit={(e) => { e.preventDefault(); submitQuestRef(quest.id); }}>
+                      <form class="inline-form" onsubmit={(e) => { e.preventDefault(); submitObjectiveRef(objective.id); }}>
                         <select class="input compact-input" bind:value={refDraft.refType}>
                           <option value="url">url</option>
                           <option value="linear">linear</option>
@@ -1153,7 +1153,7 @@
                         <button
                           type="submit"
                           class="ghost-btn"
-                          disabled={savingRefId === quest.id || !refDraft.target.trim()}
+                          disabled={savingRefId === objective.id || !refDraft.target.trim()}
                         >
                           Add
                         </button>
@@ -1163,7 +1163,7 @@
                     {#if report}
                       <div class="report-panel">
                         <div class="section-title">
-                          Quest Report
+                          Objective Report
                           {#if report.outcome}
                             <span class="report-outcome outcome-{report.outcome}">{report.outcome}</span>
                           {/if}
@@ -1236,7 +1236,7 @@
                       </div>
                     {/if}
 
-                    <form class="manual-event-form" onsubmit={(e) => { e.preventDefault(); submitManualEvent(quest.id); }}>
+                    <form class="manual-event-form" onsubmit={(e) => { e.preventDefault(); submitManualEvent(objective.id); }}>
                       <div class="section-title">Add event</div>
                       <div class="inline-form">
                         <select class="input compact-input" bind:value={eventDraft.eventType}>
@@ -1253,9 +1253,9 @@
                         <button
                           type="submit"
                           class="ghost-btn"
-                          disabled={savingEventId === quest.id || !eventDraft.text.trim()}
+                          disabled={savingEventId === objective.id || !eventDraft.text.trim()}
                         >
-                          {savingEventId === quest.id ? "Adding..." : "Add event"}
+                          {savingEventId === objective.id ? "Adding..." : "Add event"}
                         </button>
                       </div>
                     </form>
@@ -1268,11 +1268,11 @@
                           {@const ev = node.event}
                           {#if ev.eventType === "coherent_action"}
                             {@const action = actionPayload(ev.payloadJson)}
-                            {@const actionOpen = questState.expandedEventIds.has(ev.id)}
+                            {@const actionOpen = objectiveState.expandedEventIds.has(ev.id)}
                             <button
                               type="button"
                               class="event-row event-toggle action-row"
-                              onclick={() => questStore.toggleEventExpand(agentId, ev.id)}
+                              onclick={() => objectiveStore.toggleEventExpand(agentId, ev.id)}
                               aria-expanded={actionOpen}
                             >
                               <span class="event-disclosure">{actionOpen ? "▾" : "▸"}</span>
@@ -1284,9 +1284,9 @@
                               {#if ev.planItemId}
                                 <span
                                   class="plan-chip"
-                                  title={planTitle(ev.questId, ev.planItemId)}
+                                  title={planTitle(ev.objectiveId, ev.planItemId)}
                                 >
-                                  {planTitle(ev.questId, ev.planItemId)}
+                                  {planTitle(ev.objectiveId, ev.planItemId)}
                                 </span>
                               {/if}
                               {#if node.children.length}
@@ -1302,12 +1302,12 @@
                                 {#each node.children as child (child.id)}
                                   {#if child.eventType === "tool_call"}
                                     {@const tool = toolCallPayload(child.payloadJson)}
-                                    {@const toolOpen = questState.expandedEventIds.has(child.id)}
+                                    {@const toolOpen = objectiveState.expandedEventIds.has(child.id)}
                                     <button
                                       type="button"
                                       class="event-row event-toggle child-row tool-row"
                                       class:error={tool.isError}
-                                      onclick={() => questStore.toggleEventExpand(agentId, child.id)}
+                                      onclick={() => objectiveStore.toggleEventExpand(agentId, child.id)}
                                       aria-expanded={toolOpen}
                                     >
                                       <span class="event-disclosure">{toolOpen ? "▾" : "▸"}</span>
@@ -1367,7 +1367,7 @@
                               <span class="plan-event-icon" title="Plan lifecycle">◇</span>
                               <span class="event-type plan-event-type">{planEventLabel(ev.eventType)}</span>
                               {#if planEvent.itemId}
-                                <span class="plan-chip">{planTitle(ev.questId, planEvent.itemId)}</span>
+                                <span class="plan-chip">{planTitle(ev.objectiveId, planEvent.itemId)}</span>
                               {:else if planEvent.deletedItemId}
                                 <span class="plan-chip muted">deleted item</span>
                               {:else if planEvent.itemIds.length}
@@ -1384,11 +1384,11 @@
                             </div>
                           {:else if ev.eventType === "compaction_tick"}
                             {@const cp = parseCompactionPayload(ev.payloadJson)}
-                            {@const keeperOpen = questState.expandedEventIds.has(ev.id)}
+                            {@const keeperOpen = objectiveState.expandedEventIds.has(ev.id)}
                             <button
                               type="button"
                               class="event-row event-toggle compaction-row"
-                              onclick={() => questStore.toggleEventExpand(agentId, ev.id)}
+                              onclick={() => objectiveStore.toggleEventExpand(agentId, ev.id)}
                               aria-expanded={keeperOpen}
                               title={cp ? keeperHint(cp.trigger) : "Keeper memory summary"}
                             >
@@ -1437,20 +1437,20 @@
                             {:else if ev.payloadJson}
                               <pre class="event-payload">{ev.payloadJson}</pre>
                             {/if}
-                          {:else if ["scope_change", "direction_change", "quest_rationale_change", "quest_summary_change", "grade_change", "note", "blocker", "blocker_resolved", "question", "answer"].includes(ev.eventType)}
+                          {:else if ["scope_change", "direction_change", "objective_rationale_change", "objective_summary_change", "grade_change", "note", "blocker", "blocker_resolved", "question", "answer"].includes(ev.eventType)}
                             {@const text = eventText(ev.payloadJson)}
                             {@const rationale = eventRationale(ev.payloadJson)}
-                            <div class="event-row quest-change-row">
-                              <span class="quest-change-icon">●</span>
-                              <span class="event-type quest-change-type">{manualEventLabel(ev.eventType)}</span>
+                            <div class="event-row objective-change-row">
+                              <span class="objective-change-icon">●</span>
+                              <span class="event-type objective-change-type">{manualEventLabel(ev.eventType)}</span>
                               <span class="muted small">{ev.actor ?? "—"}</span>
                               <span class="muted small">{formatRelative(ev.createdAt)}</span>
                             </div>
                             {#if text}
-                              <div class="quest-change-summary">{text}</div>
+                              <div class="objective-change-summary">{text}</div>
                             {/if}
                             {#if rationale}
-                              <div class="quest-change-rationale">{rationale}</div>
+                              <div class="objective-change-rationale">{rationale}</div>
                             {/if}
                           {:else}
                             <div class="event-row">
@@ -1466,17 +1466,17 @@
                       {/if}
                     </div>
                     <div class="detail-actions">
-                      {#if quest.status !== "done"}
+                      {#if objective.status !== "done"}
                         <button
                           type="button"
                           class="done-btn"
                           onclick={(e) => {
                             e.stopPropagation();
-                            markDone(quest);
+                            markDone(objective);
                           }}
-                          disabled={markingDoneId === quest.id}
+                          disabled={markingDoneId === objective.id}
                         >
-                          {markingDoneId === quest.id ? "Closing..." : "Mark done"}
+                          {markingDoneId === objective.id ? "Closing..." : "Mark done"}
                         </button>
                       {/if}
                       <button
@@ -1484,10 +1484,10 @@
                         class="ghost-btn"
                         onclick={(e) => {
                           e.stopPropagation();
-                          questStore.startCreate(agentId, quest.id);
+                          objectiveStore.startCreate(agentId, objective.id);
                         }}
                       >
-                        + Sub-quest
+                        + Sub-objective
                       </button>
                     </div>
                   </div>
@@ -1502,7 +1502,7 @@
 </div>
 
 <style>
-  .quest-tool {
+  .objective-tool {
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -1740,12 +1740,12 @@
     flex-direction: column;
     gap: 10px;
   }
-  .quest-info {
+  .objective-info {
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
-  .quest-title-full {
+  .objective-title-full {
     color: var(--text-primary);
     font-size: 12px;
     font-weight: 600;
@@ -1795,7 +1795,7 @@
     justify-content: space-between;
     gap: 8px;
   }
-  .plan-quest-title {
+  .plan-objective-title {
     margin-top: 2px;
     color: var(--text-primary);
     font-size: 11px;
@@ -1919,7 +1919,7 @@
     padding-top: 10px;
     border-top: 1px solid var(--border-subtle);
   }
-  .quest-editor,
+  .objective-editor,
   .refs-panel,
   .manual-event-form,
   .report-panel {
@@ -2253,7 +2253,7 @@
   }
 
   /* MON-100: compaction_tick visual treatment. Subtle accent border +
-     dedicated icon set this kind of event apart from quest-status events
+     dedicated icon set this kind of event apart from objective-status events
      without making it loud. */
   .compaction-row {
     padding: 3px 0;
@@ -2331,19 +2331,19 @@
     white-space: pre-wrap;
   }
 
-  .quest-change-row {
+  .objective-change-row {
     padding: 3px 0;
   }
-  .quest-change-icon {
+  .objective-change-icon {
     color: var(--accent);
     font-size: 8px;
   }
-  .quest-change-type {
+  .objective-change-type {
     color: var(--text-primary);
     font-weight: 600;
   }
-  .quest-change-summary,
-  .quest-change-rationale {
+  .objective-change-summary,
+  .objective-change-rationale {
     margin-left: 18px;
     padding: 3px 6px;
     border-radius: 3px;
@@ -2354,7 +2354,7 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
-  .quest-change-rationale {
+  .objective-change-rationale {
     color: var(--text-muted);
     font-style: italic;
   }
