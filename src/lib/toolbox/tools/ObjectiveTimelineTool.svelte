@@ -292,7 +292,10 @@
       formDescription = "";
       formGrade = "C";
       formExecHint = "in_context";
-      formParentId = objectiveState.creatingParentId ?? "";
+      // P1: default new objectives under the campaign root so captured work
+      // lands as a pending branch in the tree, not a detached root.
+      formParentId =
+        objectiveState.creatingParentId ?? objectiveState.campaignRootId ?? "";
     }
   });
 
@@ -1467,7 +1470,7 @@
                       {/if}
                     </div>
                     <div class="detail-actions">
-                      {#if objective.status !== "done"}
+                      {#if objective.status !== "done" && objective.kind !== "campaign"}
                         <button
                           type="button"
                           class="done-btn"

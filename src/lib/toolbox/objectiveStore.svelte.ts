@@ -87,8 +87,14 @@ export function parseObjectiveReport(row: ObjectiveReportRow): ObjectiveReportVi
  */
 export interface AgentObjectiveState {
   agentId: string;
-  /** Roots where this agent is the direct assignee, newest first. */
+  /**
+   * Tree roots to render. Post-P1 these are the campaign root(s) the agent's
+   * objectives branch under (objectives are no longer roots themselves);
+   * legacy per-turn roots still appear as their own trees.
+   */
   roots: ObjectiveRow[];
+  /** The agent's project campaign root id (kind='campaign'), for capture/placement. */
+  campaignRootId: string | null;
   /** Full tree per root_id (flat list ordered by created_at ASC). */
   treesByRoot: SvelteMap<string, ObjectiveRow[]>;
   /** Events per objective_id, lazily loaded on expand. */
@@ -135,6 +141,7 @@ class ObjectiveStore {
     const entry: AgentObjectiveState = $state({
       agentId,
       roots: [],
+      campaignRootId: null,
       treesByRoot: new SvelteMap(),
       eventsByObjective: new SvelteMap(),
       planItemsByObjective: new SvelteMap(),
@@ -165,19 +172,40 @@ class ObjectiveStore {
       const all = await invoke<ObjectiveRow[]>("db_list_objectives_for_agent", {
         agentId,
       });
-      // Keep only roots (parent_id null) in the timeline header list.
-      const roots = all.filter((q) => q.parentId === null);
-      entry.roots = roots;
+      // P1: objectives branch under a campaign root, so group by root_id and
+      // render the campaign tree(s) rather than treating each objective as a
+      // root. When the shadow has no assigned work yet, fall back to the
+      // project's campaign root so the (empty) campaign still shows and capture
+      // has a placement target.
+      let rootIds = [...new Set(all.map((q) => q.rootId))];
+      let campaignRoot: ObjectiveRow | null = null;
+      if (rootIds.length === 0) {
+        campaignRoot = await invoke<ObjectiveRow | null>(
+          "db_get_campaign_root_for_agent",
+          { agentId },
+        );
+        if (campaignRoot) rootIds = [campaignRoot.id];
+      }
 
-      // Fetch each root's tree in parallel so sub-objectives are visible even
-      // when the assignee differs.
       const trees = await Promise.all(
-        roots.map((r) =>
-          invoke<ObjectiveRow[]>("db_get_objective_tree_for_root", { rootId: r.id }),
+        rootIds.map((rid) =>
+          invoke<ObjectiveRow[]>("db_get_objective_tree_for_root", { rootId: rid }),
         ),
       );
       entry.treesByRoot.clear();
-      roots.forEach((r, i) => entry.treesByRoot.set(r.id, trees[i]));
+      const roots: ObjectiveRow[] = [];
+      rootIds.forEach((rid, i) => {
+        const tree = trees[i]?.length ? trees[i] : campaignRoot ? [campaignRoot] : [];
+        entry.treesByRoot.set(rid, tree);
+        const rootNode =
+          tree.find((n) => n.id === rid) ?? tree.find((n) => n.parentId === null);
+        if (rootNode) roots.push(rootNode);
+      });
+      entry.roots = roots;
+      // The campaign root is the kind='campaign' node; legacy trees may not
+      // have one, so fall back to the first root.
+      entry.campaignRootId =
+        roots.find((r) => r.kind === "campaign")?.id ?? roots[0]?.id ?? null;
       await this.refreshWorkingMemory(agentId);
 
       // Resubscribe event listeners for the current set of roots.

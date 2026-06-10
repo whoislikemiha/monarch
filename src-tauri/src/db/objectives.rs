@@ -619,6 +619,31 @@ impl Database {
             .await?)
     }
 
+    /// P1: the campaign root for an agent's project, if any. Lets the capture
+    /// flow place new objectives under the campaign even before the agent has
+    /// any assigned work loaded. `None` when the agent has no project or no
+    /// campaign root yet.
+    pub async fn get_campaign_root_for_agent_internal(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<ObjectiveRow>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let sql = format!(
+                    "{OBJECTIVE_BASE_SELECT} WHERE id = (
+                        SELECT p.root_objective_id FROM agents a
+                        JOIN projects p ON p.id = a.project_id
+                        WHERE a.id = ?1
+                    )"
+                );
+                conn.query_row(&sql, params![agent_id], map_objective)
+                    .optional()
+            })
+            .await?)
+    }
+
     /// Partial update — only `Some` fields are written. Status / timestamp
     /// changes that carry semantic weight (e.g. status→done) should ALSO
     /// record a `objective_events` row via `record_objective_event_internal`; this
@@ -1697,6 +1722,15 @@ pub async fn db_get_objective_tree_for_root(
     root_id: String,
 ) -> Result<Vec<ObjectiveRow>, MonarchError> {
     db.get_objective_tree_for_root_internal(&root_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_get_campaign_root_for_agent(
+    db: tauri::State<'_, Arc<Database>>,
+    agent_id: String,
+) -> Result<Option<ObjectiveRow>, MonarchError> {
+    db.get_campaign_root_for_agent_internal(&agent_id).await
 }
 
 #[tauri::command]
