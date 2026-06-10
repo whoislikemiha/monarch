@@ -82,8 +82,15 @@ pub async fn resolve_project(
             instructions: file_instructions.clone(),
             created_at: now.clone(),
             updated_at: now,
+            root_objective_id: None,
         })
         .await?;
+
+    // P1: every project has exactly one campaign root. Idempotent — creates it
+    // on first detect, returns the existing one thereafter.
+    if let Err(e) = db.ensure_campaign_root_internal(&project_id).await {
+        eprintln!("[monarch] failed to ensure campaign root for {project_id}: {e:?}");
+    }
 
     let db_project = db.get_project_by_path_internal(&root_str).await?;
     let instructions = db_project

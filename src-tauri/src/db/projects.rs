@@ -17,6 +17,9 @@ pub struct ProjectRow {
     pub instructions: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// P1: the project's single campaign root (an `objective_nodes` row with
+    /// `kind='campaign'`). `None` until `ensure_campaign_root_internal` runs.
+    pub root_objective_id: Option<String>,
 }
 
 // ---- Row mappers ----
@@ -29,6 +32,7 @@ pub(super) fn map_project(row: &Row<'_>) -> rusqlite::Result<ProjectRow> {
         instructions: row.get(3)?,
         created_at: row.get(4)?,
         updated_at: row.get(5)?,
+        root_objective_id: row.get(6)?,
     })
 }
 
@@ -70,7 +74,7 @@ impl Database {
             .conn
             .call(move |conn| {
                 let result = conn.query_row(
-                    "SELECT id, name, root_path, instructions, created_at, updated_at FROM projects WHERE root_path = ?1",
+                    "SELECT id, name, root_path, instructions, created_at, updated_at, root_objective_id FROM projects WHERE root_path = ?1",
                     params![root_path],
                     map_project,
                 );
@@ -119,7 +123,7 @@ impl Database {
             .conn
             .call(|conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, name, root_path, instructions, created_at, updated_at FROM projects ORDER BY updated_at DESC",
+                    "SELECT id, name, root_path, instructions, created_at, updated_at, root_objective_id FROM projects ORDER BY updated_at DESC",
                 )?;
                 let rows = stmt.query_map([], map_project)?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()
