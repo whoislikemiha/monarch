@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::{Database, MemoryRow};
 use crate::error::MonarchError;
-use crate::memory_index::MemoryIndex;
+use crate::memory::index::MemoryIndex;
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -32,7 +32,7 @@ pub async fn search_memories_for_agent_internal(
         return Ok(vec![]);
     }
 
-    let cfg = crate::memory_config::resolved().await;
+    let cfg = crate::memory::config::resolved().await;
     let limit = top_k.unwrap_or(cfg.top_k).max(1).min(20) as usize;
 
     let fts_query = fts_match_query(query);

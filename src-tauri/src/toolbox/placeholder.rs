@@ -1,6 +1,6 @@
 //! Placeholder tool — proves end-to-end wiring of the toolbox registry.
 //! Future tools follow the same shape: inner impl + #[tauri::command] wrapper
-//! + ws_* wrapper consumed by `ws::dispatch_command`.
+//! + ws_* wrapper consumed by `websocket::dispatch_command`.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

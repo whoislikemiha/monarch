@@ -112,6 +112,16 @@ export interface Theme {
 
   // ── Unsaved badge ─────────────────────────────────────────
   unsavedBadgeBg: string;
+
+  // ── Grade ramp (visual-language) — rarity ladder E low → S apex ──
+  // The only foundation tokens with no legacy equivalent; every other
+  // visual-language token is aliased in global.css onto an existing token.
+  gradeE: string;
+  gradeD: string;
+  gradeC: string;
+  gradeB: string;
+  gradeA: string;
+  gradeS: string;
 }
 
 /** Registry key — the value stored in ui_state */

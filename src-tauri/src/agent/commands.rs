@@ -10,7 +10,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use tauri::AppHandle;
 
-use crate::agent_state::LiveAgentState;
+use crate::agent::state::LiveAgentState;
 use crate::db::{CaptainIdentityRow, Database, ShadowIdentityRow};
 use crate::error::MonarchError;
 

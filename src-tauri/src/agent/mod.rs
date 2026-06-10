@@ -6,6 +6,8 @@
 //! - `event_handler`  — inbound sidecar event dispatch and snapshot emission.
 //! - `persist`        — single-consumer persistence pipeline (MON-37).
 //! - `commands`       — Tauri command wrappers + request DTOs.
+//! - `keeper`         — `render_keeper_slice`, `maybe_trigger_keeper`, `handle_keeper_result`.
+//! - `quest_prompt`   — quest-prompt heuristics and content helpers.
 //!
 //! Cross-cutting types (`WsBroadcast`, `TaskHandle`) and the
 //! `DEBOUNCE_MILLIS` constant live here so every submodule can reach them
@@ -14,9 +16,12 @@
 use serde::Serialize;
 
 pub mod commands;
+pub mod state;
 mod event_handler;
+mod keeper;
 mod manager;
 mod persist;
+mod quest_prompt;
 mod sidecar;
 
 // DTOs re-exported at the module root so `crate::agent::SpawnAgentRequest`

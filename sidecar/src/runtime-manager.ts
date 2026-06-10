@@ -6,14 +6,13 @@
 import {
 	createAgentSession,
 	DefaultResourceLoader,
-	defineTool,
 	SessionManager,
 	type AgentSession,
 	type AgentSessionEventListener,
 } from "@mariozechner/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-import { Type, type Api, type ImageContent, type Model, type TextContent } from "@mariozechner/pi-ai";
+import { type ImageContent } from "@mariozechner/pi-ai";
 import { buildSystemPrompt } from "./shadow-oath.js";
 import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
 import { createNarrationTools } from "./narration-tools.js";
@@ -29,6 +28,9 @@ import type {
 } from "./protocol.js";
 import { classify } from "./classifier.js";
 import { runKeeper } from "./keeper.js";
+import { ensureLmStudioProviderRegistered, isValidThinkingLevel, resolveModel } from "./model-resolver.js";
+import { extractPromptText, normalizeStoredAssistantContent, normalizeStoredUserContent } from "./stored-content.js";
+import { createSuggestMemoryTool, formatRelevantMemories } from "./memory-tools.js";
 
 interface MemorySearchResolver {
 	agentId: string;
@@ -51,9 +53,6 @@ interface ManagedSession {
 	promptRef: { current: string };
 }
 
-const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const LMSTUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1";
-const LMSTUDIO_DEFAULT_CONTEXT_WINDOW = 32000;
 const EMPTY_USAGE = {
 	input: 0,
 	output: 0,
@@ -68,226 +67,6 @@ const EMPTY_USAGE = {
 		total: 0,
 	},
 } as const;
-
-function createSuggestMemoryTool(agentId: string, emit: EmitFn) {
-	return defineTool({
-		name: "suggest_memory",
-		label: "Suggest Memory",
-		description:
-			"Suggest a noteworthy fact, decision, preference, or convention for the Keeper to consider later.",
-		promptSnippet:
-			"suggest_memory(title, summary, content) - flag a durable fact, decision, preference, or convention for later Keeper review.",
-		promptGuidelines: [
-			"Use suggest_memory only for durable information that should likely survive this quest.",
-			"The tool records a suggestion only; the Keeper decides whether it becomes memory.",
-		],
-		parameters: Type.Object({
-			title: Type.String({
-				description: "Short title for the suggested memory.",
-			}),
-			summary: Type.String({
-				description: "One-sentence summary of what should be remembered.",
-			}),
-			content: Type.String({
-				description: "Supporting detail, evidence, or context for the Keeper.",
-			}),
-		}),
-		async execute(_toolCallId, params) {
-			const title = params.title.trim();
-			const summary = params.summary.trim();
-			const content = params.content.trim();
-			emit({
-				type: "event",
-				agentId,
-				event: {
-					type: "memory_suggestion",
-					title,
-					summary,
-					content,
-				},
-			});
-			return {
-				content: [
-					{
-						type: "text",
-						text: "Memory suggestion queued for Keeper review if an active quest is available.",
-					},
-				],
-				details: { title, summary, content },
-			};
-		},
-	});
-}
-
-function tryParseStoredContent(content: string): unknown {
-	const trimmed = content.trim();
-	if (!trimmed) return content;
-
-	const looksSerialized =
-		trimmed.startsWith("[") ||
-		trimmed.startsWith("{") ||
-		trimmed.startsWith("\"");
-	if (!looksSerialized) return content;
-
-	try {
-		return JSON.parse(content);
-	} catch {
-		return content;
-	}
-}
-
-function normalizeStoredUserContent(content: string): string | Array<Record<string, unknown>> {
-	const parsed = tryParseStoredContent(content);
-	if (typeof parsed === "string" || Array.isArray(parsed)) {
-		return parsed as string | Array<Record<string, unknown>>;
-	}
-	return String(parsed ?? "");
-}
-
-function normalizeStoredAssistantContent(content: string): Array<Record<string, unknown>> {
-	const parsed = tryParseStoredContent(content);
-	if (Array.isArray(parsed)) {
-		return parsed as Array<Record<string, unknown>>;
-	}
-	if (typeof parsed === "string") {
-		return [{ type: "text", text: parsed }];
-	}
-	return [{ type: "text", text: JSON.stringify(parsed) }];
-}
-
-function buildDynamicModel(
-	provider: string,
-	modelId: string,
-	contextWindowOverride?: number | null,
-): Model<Api> | undefined {
-	if (provider === "openrouter") {
-		return {
-			id: modelId,
-			name: modelId,
-			api: "openai-completions",
-			provider,
-			baseUrl: OPENROUTER_BASE_URL,
-			reasoning: false,
-			input: ["text"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
-			contextWindow: 128000,
-			maxTokens: 16384,
-		};
-	}
-
-	if (provider === "lmstudio") {
-		const contextWindow =
-			contextWindowOverride != null && contextWindowOverride > 0
-				? contextWindowOverride
-				: LMSTUDIO_DEFAULT_CONTEXT_WINDOW;
-		return {
-			id: modelId,
-			name: modelId,
-			api: "openai-completions",
-			provider,
-			baseUrl: lmstudioBaseUrl(),
-			reasoning: false,
-			input: ["text"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
-			contextWindow,
-			maxTokens: 4096,
-		};
-	}
-
-	return undefined;
-}
-
-function lmstudioBaseUrl(): string {
-	return process.env.LMSTUDIO_BASE_URL || LMSTUDIO_DEFAULT_BASE_URL;
-}
-
-const VALID_THINKING_LEVELS: ReadonlySet<string> = new Set([
-	"off",
-	"minimal",
-	"low",
-	"medium",
-	"high",
-	"xhigh",
-]);
-
-function isValidThinkingLevel(level: string): level is ThinkingLevel {
-	return VALID_THINKING_LEVELS.has(level);
-}
-
-/**
- * LM Studio's OpenAI-compatible server ignores the API key, but pi-ai's
- * openai-completions adapter requires one to be non-empty. Register the
- * provider with a dummy key so authentication resolution succeeds.
- */
-function ensureLmStudioProviderRegistered(session: AgentSession): void {
-	try {
-		session.modelRegistry.registerProvider("lmstudio", {
-			baseUrl: lmstudioBaseUrl(),
-			apiKey: "lm-studio",
-			api: "openai-completions",
-		} as Parameters<typeof session.modelRegistry.registerProvider>[1]);
-	} catch {
-		// Already registered or validation noop — safe to ignore.
-	}
-}
-
-function resolveModel(
-	session: AgentSession,
-	provider: string,
-	modelId: string,
-	contextWindowOverride?: number | null,
-): Model<Api> | undefined {
-	// For lmstudio, always build a dynamic model so a user-supplied context window
-	// takes effect even if a registry entry exists.
-	if (provider === "lmstudio") {
-		return buildDynamicModel(provider, modelId, contextWindowOverride);
-	}
-	return (
-		session.modelRegistry.find(provider, modelId) ??
-		buildDynamicModel(provider, modelId, contextWindowOverride)
-	);
-}
-
-function extractPromptText(message: string | PromptContentPart[]): string {
-	if (typeof message === "string") return message;
-	return message
-		.filter((p): p is { type: "text"; text: string } => p.type === "text")
-		.map((p) => p.text)
-		.join("\n");
-}
-
-function formatRelevantMemories(results: MemorySearchResult[]): string {
-	const lines = results
-		.slice(0, 8)
-		.map((result) => {
-			const memory = result.memory;
-			const title = oneLine(memory.title || `Memory #${memory.id}`, 90);
-			const summary = oneLine(memory.summary, 260);
-			const content = memory.content
-				? ` ${oneLine(memory.content, 220)}`
-				: "";
-			return `- ${title}: ${summary}${content}`;
-		})
-		.filter(Boolean);
-	if (lines.length === 0) return "";
-	return `## Relevant Memories\n${lines.join("\n")}`;
-}
-
-function oneLine(value: string, max: number): string {
-	const compact = value.replace(/\s+/g, " ").trim();
-	if (compact.length <= max) return compact;
-	return `${compact.slice(0, Math.max(0, max - 3)).trimEnd()}...`;
-}
 
 export class RuntimeManager {
 	private sessions = new Map<string, ManagedSession>();

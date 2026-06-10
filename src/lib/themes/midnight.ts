@@ -110,4 +110,12 @@ export const midnight: Theme = {
 
   // Unsaved badge
   unsavedBadgeBg: "rgba(240, 208, 96, 0.15)",
+
+  // Grade ramp — fixed rarity ladder, shared across dark themes
+  gradeE: "#8a76a2",
+  gradeD: "#42be65",
+  gradeC: "#33b1ff",
+  gradeB: "#be95ff",
+  gradeA: "#ffc24d",
+  gradeS: "#ee5396",
 };

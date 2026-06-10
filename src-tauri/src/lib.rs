@@ -1,28 +1,22 @@
 mod agent;
-mod agent_state;
-mod classifier_config;
+mod config;
 mod db;
 mod error;
-mod memory_config;
-mod memory_index;
-mod memory_search;
-mod memory_smoke;
-mod mention;
+mod memory;
 mod models;
 mod persistence;
 mod project;
 mod sidecar_protocol;
-mod thinking_config;
 mod toolbox;
+mod ui;
 mod util;
-mod ws;
-mod zoom;
+mod websocket;
 
 pub use error::MonarchError;
 
 use agent::AgentManager;
 use db::Database;
-use memory_index::MemoryIndex;
+use memory::index::MemoryIndex;
 use models::ModelCache;
 use std::sync::Arc;
 use std::time::Duration;
@@ -49,7 +43,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         // Force LiveAgentState to be emitted as a named type export so Phase
         // 2 can `import type { LiveAgentState } from '$lib/bindings'` rather
         // than duplicating the inline shape from the getAgentState signature.
-        .typ::<agent_state::LiveAgentState>()
+        .typ::<agent::state::LiveAgentState>()
         // MON-83: force QuestRow so `db_get_quest` (Option<QuestRow>) emits
         // a named type reference rather than an anonymous inline shape.
         .typ::<db::QuestRow>()
@@ -111,7 +105,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             project::commands::detect_project,
             project::commands::read_project_instructions,
             // Mention autocomplete (MON-76)
-            mention::list_paths,
+            ui::mention::list_paths,
             // UI state
             db::db_get_ui_state,
             db::db_set_ui_state,
@@ -154,21 +148,21 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             toolbox::toolbox_list_tools,
             toolbox::placeholder::toolbox_placeholder_ping,
             // Zoom
-            zoom::set_zoom,
+            ui::zoom::set_zoom,
             // Thinking defaults (MON-78)
-            thinking_config::get_thinking_default,
-            thinking_config::get_thinking_config_path,
-            classifier_config::classifier_get_config,
-            classifier_config::classifier_set_config,
-            classifier_config::classifier_get_config_path,
+            config::thinking::get_thinking_default,
+            config::thinking::get_thinking_config_path,
+            config::classifier::classifier_get_config,
+            config::classifier::classifier_set_config,
+            config::classifier::classifier_get_config_path,
             // Memory config + embedding index (MON-99)
-            memory_config::memory_get_config,
-            memory_config::memory_set_config,
-            memory_config::memory_get_config_path,
-            memory_index::memory_index_status,
-            memory_index::memory_download_and_init,
-            memory_search::memory_search_for_agent,
-            memory_smoke::memory_smoke_insert,
+            memory::config::memory_get_config,
+            memory::config::memory_set_config,
+            memory::config::memory_get_config_path,
+            memory::index::memory_index_status,
+            memory::index::memory_download_and_init,
+            memory::search::memory_search_for_agent,
+            memory::smoke::memory_smoke_insert,
         ])
 }
 
@@ -234,7 +228,7 @@ pub fn run() {
         tauri::async_runtime::block_on(Database::new()).expect("Failed to initialize database"),
     );
     let memory_index = Arc::new({
-        let cfg = tauri::async_runtime::block_on(memory_config::resolved());
+        let cfg = tauri::async_runtime::block_on(memory::config::resolved());
         MemoryIndex::new(cfg.models_dir)
     });
     let agent_mgr = Arc::new(AgentManager::new(database.clone(), memory_index.clone()));
@@ -310,7 +304,7 @@ pub fn run() {
             db::db_delete_project,
             project::commands::detect_project,
             project::commands::read_project_instructions,
-            mention::list_paths,
+            ui::mention::list_paths,
             db::db_get_ui_state,
             db::db_set_ui_state,
             db::db_get_agent_stats,
@@ -343,26 +337,26 @@ pub fn run() {
             db::db_block_plan_item,
             db::db_list_classifications_for_agent,
             db::db_get_classification_for_message,
-            classifier_config::classifier_get_config,
-            classifier_config::classifier_set_config,
-            classifier_config::classifier_get_config_path,
-            memory_config::memory_get_config,
-            memory_config::memory_set_config,
-            memory_config::memory_get_config_path,
-            memory_index::memory_index_status,
-            memory_index::memory_download_and_init,
-            memory_search::memory_search_for_agent,
-            memory_smoke::memory_smoke_insert,
+            config::classifier::classifier_get_config,
+            config::classifier::classifier_set_config,
+            config::classifier::classifier_get_config_path,
+            memory::config::memory_get_config,
+            memory::config::memory_set_config,
+            memory::config::memory_get_config_path,
+            memory::index::memory_index_status,
+            memory::index::memory_download_and_init,
+            memory::search::memory_search_for_agent,
+            memory::smoke::memory_smoke_insert,
             toolbox::toolbox_list_tools,
             toolbox::placeholder::toolbox_placeholder_ping,
-            zoom::set_zoom,
+            ui::zoom::set_zoom,
         ])
         .setup(move |app| {
             // Store AppHandle so WS-initiated commands can access the sidecar
             ws_agent_mgr.set_app_handle(app.handle().clone());
 
             // Start the WebSocket bridge server
-            let ws_state = Arc::new(ws::WsState {
+            let ws_state = Arc::new(websocket::WsState {
                 db: ws_db,
                 agent_mgr: ws_agent_mgr,
                 model_cache: ws_model_cache,
@@ -374,7 +368,7 @@ pub fn run() {
                     .enable_all()
                     .build()
                     .expect("Failed to create WS tokio runtime")
-                    .block_on(ws::start_ws_server(ws_state));
+                    .block_on(websocket::start_ws_server(ws_state));
             });
 
             Ok(())

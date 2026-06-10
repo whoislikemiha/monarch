@@ -20,7 +20,7 @@ export const purple: Theme = {
   // Text
   textPrimary: "#f2f4f8",
   textSecondary: "#dde1e6",
-  textMuted: "#8f7aa8",
+  textMuted: "#9f8cb8", // visual-language AA nudge (was #8f7aa8): clears 4.5:1 on raised/overlay @10–11px
   textOnAccent: "#140d22",
 
   // Accent
@@ -110,4 +110,12 @@ export const purple: Theme = {
 
   // Unsaved badge
   unsavedBadgeBg: "rgba(255, 176, 32, 0.15)",
+
+  // Grade ramp — gray → green → blue → violet → amber → magenta
+  gradeE: "#8a76a2",
+  gradeD: "#42be65",
+  gradeC: "#33b1ff",
+  gradeB: "#be95ff",
+  gradeA: "#ffc24d",
+  gradeS: "#ee5396",
 };

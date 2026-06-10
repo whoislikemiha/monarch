@@ -14,11 +14,12 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{broadcast, mpsc};
 
-use crate::agent_state::{ApplyOutcome, DisplayItem, LiveAgentState};
-use crate::db::{Database, InsertMemoryPayload, RecordQuestEventPayload};
-use crate::memory_index::MemoryIndex;
-use crate::sidecar_protocol::{apply_event, AtomicClaim, InnerEvent, SidecarCommand, SidecarEvent};
+use crate::agent::state::{ApplyOutcome, DisplayItem, LiveAgentState};
+use crate::db::Database;
+use crate::memory::index::MemoryIndex;
+use crate::sidecar_protocol::{apply_event, InnerEvent, SidecarCommand, SidecarEvent};
 
+use super::keeper::{handle_keeper_result, maybe_trigger_keeper};
 use super::manager::{AgentManagerInner, AgentStateEntry, InternalDispatch};
 use super::persist::{build_persist_commands, EventDurations, PersistCommand};
 use super::{WsBroadcast, DEBOUNCE_MILLIS};
@@ -352,7 +353,7 @@ pub(super) async fn handle_sidecar_event(
             query,
             top_k,
         } => {
-            let (results, error) = match crate::memory_search::search_memories_for_agent_internal(
+            let (results, error) = match crate::memory::search::search_memories_for_agent_internal(
                 db,
                 memory_index,
                 &agent_id,
@@ -402,7 +403,7 @@ pub(super) async fn handle_sidecar_event(
 /// MON-100: append a `DisplayItem::Status` to the agent's live state and
 /// emit a snapshot. Used by Keeper observability events so the captain sees
 /// "Memories distilled" / "Context compacted" rows land in the chat thread.
-async fn push_status_for_agent(
+pub(super) async fn push_status_for_agent(
     app: &AppHandle,
     ws_tx: &broadcast::Sender<WsBroadcast>,
     live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
@@ -486,265 +487,6 @@ async fn current_quest_for_event(
         InnerEvent::ActionComplete { .. } => None,
         _ => None,
     }
-}
-
-/// MON-100: enqueue a Keeper run when the running token sum crosses a
-/// threshold at the right boundary. Soft threshold fires at `TurnEnd` (next
-/// natural breakpoint after crossing); hard threshold fires at `MessageEnd`
-/// regardless. Reads thresholds from `memory.toml` per call — the file is
-/// tiny (microseconds) and the call rate is at most a couple per turn.
-async fn maybe_trigger_keeper(
-    dispatch_tx: &mpsc::Sender<InternalDispatch>,
-    live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
-    agent_id: &str,
-    event: &InnerEvent,
-) {
-    let (is_soft_boundary, is_hard_boundary) = match event {
-        InnerEvent::TurnEnd => (true, false),
-        // Hard trigger only on assistant `message_end` — that's where the
-        // usage delta lands and that's the only role for which the executor
-        // is producing live tokens.
-        InnerEvent::MessageEnd { message, .. } if message.role == "assistant" => (true, true),
-        _ => return,
-    };
-
-    let cfg = crate::memory_config::resolved().await;
-    if !cfg.enabled {
-        return;
-    }
-
-    let entry = match live_states.get(agent_id) {
-        Some(e) => e.clone(),
-        None => return,
-    };
-    let tokens = {
-        let g = entry.inner.read().await;
-        if g.state.keeper_in_flight {
-            return;
-        }
-        g.state.tokens_since_last_compaction
-    };
-
-    let crossed_hard = is_hard_boundary && tokens >= cfg.hard_threshold_tokens as i64;
-    let crossed_soft = is_soft_boundary && tokens >= cfg.soft_threshold_tokens as i64;
-    if !(crossed_hard || crossed_soft) {
-        return;
-    }
-
-    if let Err(e) = dispatch_tx.try_send(InternalDispatch::KeeperRun {
-        agent_id: agent_id.to_string(),
-        trigger: crate::agent::KeeperRunTrigger::Continuous,
-    }) {
-        // try_send avoids stalling the reader; the channel is bounded but
-        // 32 is plenty for the worst-case rate (≤1 per turn). Failure
-        // means the dispatcher is saturated or shutting down — log and
-        // wait for the next boundary.
-        eprintln!(
-            "[monarch] keeper dispatch enqueue failed for {}: {:?}",
-            agent_id, e
-        );
-    }
-}
-
-/// MON-100: handle one `keeper_result` from the sidecar.
-///
-/// On error: log + mark the run as 'error' in the DB; clear `keeper_in_flight`
-/// so the next threshold crossing can retry; leave the token counter alone
-/// (we want to retry from the same anchor).
-///
-/// On success: clear `keeper_in_flight` + reset `tokens_since_last_compaction`
-/// in the live state, then enqueue persist commands FIFO: N × InsertMemory →
-/// CompleteKeeperRun → RecordQuestEvent (when a current quest is set) →
-/// RebuildHnsw. The sidecar already rewrote Pi's `state.messages` in-place.
-#[allow(clippy::too_many_arguments)]
-async fn handle_keeper_result(
-    app: &AppHandle,
-    persist_tx: &mpsc::Sender<PersistCommand>,
-    live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
-    ws_tx: &broadcast::Sender<WsBroadcast>,
-    inner: &Arc<PlMutex<AgentManagerInner>>,
-    db: &Arc<Database>,
-    agent_id: &str,
-    run_id: i64,
-    claims: Option<Vec<AtomicClaim>>,
-    compaction_summary: Option<String>,
-    tokens_in: Option<i64>,
-    tokens_out: Option<i64>,
-    error: Option<String>,
-) {
-    // Reset live-state flags before enqueueing persistence work so the very
-    // next event for this agent sees a clean window.
-    if let Some(entry) = live_states.get(agent_id).map(|e| e.clone()) {
-        let mut g = entry.inner.write().await;
-        g.state.keeper_in_flight = false;
-        if error.is_none() {
-            g.state.tokens_since_last_compaction = 0;
-        }
-        g.state.state_version = g.state.state_version.saturating_add(1);
-        let snap = g.state.clone();
-        drop(g);
-        emit_state_event(app, ws_tx, &entry.topic, &snap);
-    }
-
-    // Failure path: just close out the run row; do not write memories.
-    if let Some(err_msg) = error.as_ref() {
-        eprintln!(
-            "[monarch] keeper run {} for {} failed: {}",
-            run_id, agent_id, err_msg
-        );
-        let _ = persist_tx
-            .send(PersistCommand::CompleteKeeperRun {
-                run_id,
-                outcome: "error".to_string(),
-                output_summary: Some(err_msg.clone()),
-                tokens_in,
-                tokens_out,
-            })
-            .await;
-        return;
-    }
-
-    let claims = claims.unwrap_or_default();
-    let summary = compaction_summary.unwrap_or_default();
-    let session_id = inner.lock().session_map.get(agent_id).cloned();
-
-    // Resolve the Keeper run provenance once. Quest-close runs must attach
-    // memories/events to the quest that closed, even if the agent has moved
-    // on and auto-created a new current quest before the model returns.
-    let run_row = db.get_keeper_run_internal(run_id).await.ok().flatten();
-    let trigger = run_row
-        .as_ref()
-        .map(|r| r.trigger.clone())
-        .unwrap_or_else(|| "continuous".to_string());
-    let provenance_quest_id = run_row.as_ref().and_then(|r| r.quest_id.clone());
-    let current_quest_id = if provenance_quest_id.is_some() {
-        provenance_quest_id
-    } else {
-        db.get_agent_current_quest_id_internal(agent_id)
-            .await
-            .ok()
-            .flatten()
-    };
-
-    // Provenance: `source_events` carries the message ids that fed the
-    // slice. P2 ships an empty array here — the substrate already records
-    // raw events in `events` and the slice rendering is deterministic from
-    // `last_keeper_run.completed_at`, so this is informational. P3+
-    // populates it once we want fine-grained replay.
-    for c in claims.iter() {
-        let payload = InsertMemoryPayload {
-            agent_id: Some(agent_id.to_string()),
-            scope: "self".to_string(),
-            project_id: None,
-            parent_id: None,
-            layer: "leaf".to_string(),
-            kind: c.kind.clone(),
-            title: c.title.clone(),
-            summary: c.summary.clone(),
-            content: Some(c.content.clone()),
-            source_quest_id: current_quest_id.clone(),
-            source_session_id: session_id.clone(),
-            source_events: None,
-            file_refs: None,
-            supersedes_id: None,
-        };
-        if persist_tx
-            .send(PersistCommand::InsertMemory {
-                agent_id: agent_id.to_string(),
-                payload,
-            })
-            .await
-            .is_err()
-        {
-            eprintln!("[monarch] persist consumer closed, dropping InsertMemory");
-            return;
-        }
-    }
-
-    // Mark the run as ok with the produced summary + token counts.
-    if persist_tx
-        .send(PersistCommand::CompleteKeeperRun {
-            run_id,
-            outcome: "ok".to_string(),
-            output_summary: Some(summary.clone()),
-            tokens_in,
-            tokens_out,
-        })
-        .await
-        .is_err()
-    {
-        return;
-    }
-
-    // P6 Slice D (MON-122): attribute the closing quest's first-person report
-    // to this Keeper run. Quest-close runs only; other triggers leave the
-    // report attribution alone. No-op when no report row exists for the quest
-    // — logged inside the apply path so dispatch here can stay declarative.
-    if trigger == "quest_close" {
-        if let Some(qid) = run_row.as_ref().and_then(|r| r.quest_id.clone()) {
-            if persist_tx
-                .send(PersistCommand::AttributeQuestReport {
-                    agent_id: agent_id.to_string(),
-                    quest_id: qid,
-                    run_id,
-                })
-                .await
-                .is_err()
-            {
-                return;
-            }
-        }
-    }
-
-    // Compaction tick on the quest timeline — only when an agent has a
-    // current quest. Plan: when no quest is set, the run is visible only
-    // via `memory_keeper_runs` and the new memories themselves.
-    if let Some(qid) = current_quest_id {
-        let payload_json = serde_json::json!({
-            "keeper_run_id": run_id,
-            "trigger": trigger,
-            "claims_count": claims.len(),
-            "summary": summary,
-        })
-        .to_string();
-        let _ = persist_tx
-            .send(PersistCommand::RecordQuestEvent {
-                payload: RecordQuestEventPayload {
-                    quest_id: qid,
-                    event_type: "compaction_tick".to_string(),
-                    actor: Some("keeper".to_string()),
-                    payload_json: Some(payload_json),
-                    author: Some("keeper".to_string()),
-                    ..Default::default()
-                },
-            })
-            .await;
-    }
-
-    // HNSW rebuild last so the index is consistent before any subsequent
-    // retrieval reads.
-    let _ = persist_tx
-        .send(PersistCommand::RebuildHnsw {
-            agent_id: agent_id.to_string(),
-        })
-        .await;
-
-    // MON-123: visible signal in the chat thread. The Keeper no longer
-    // rewrites live context (Pi's native compaction owns the window now); this
-    // status row confirms the Keeper succeeded and N memories landed in L3.
-    let memories_label = if claims.len() == 1 {
-        "1 memory".to_string()
-    } else {
-        format!("{} memories", claims.len())
-    };
-    push_status_for_agent(
-        app,
-        ws_tx,
-        live_states,
-        agent_id,
-        format!("◈ Keeper distilled {} (run #{})", memories_label, run_id),
-    )
-    .await;
 }
 
 /// MON-30: body of the debounce task, factored out so it can be unit-tested
