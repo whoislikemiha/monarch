@@ -399,17 +399,21 @@ pub(super) fn objective_path_tx(tx: &rusqlite::Transaction<'_>, objective_id: &s
     let mut path = Vec::new();
     let mut current = Some(objective_id.to_string());
     while let Some(id) = current {
-        let row: Option<(String, Option<String>)> = tx
+        let row: Option<(String, String, Option<String>)> = tx
             .query_row(
-                "SELECT title, parent_id FROM objective_nodes WHERE id = ?1",
+                "SELECT title, kind, parent_id FROM objective_nodes WHERE id = ?1",
                 params![id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .ok();
-        let Some((title, parent_id)) = row else {
+        let Some((title, kind, parent_id)) = row else {
             break;
         };
-        path.push(title);
+        // P1: the campaign root is a container, not a work step — keep it out
+        // of the breadcrumb path (still walk through it for deeper trees).
+        if kind != "campaign" {
+            path.push(title);
+        }
         current = parent_id;
     }
     path.reverse();
@@ -604,50 +608,13 @@ impl Database {
         project_id: &str,
     ) -> Result<String, MonarchError> {
         let project_id = project_id.to_string();
-        let new_id = crate::util::uuid_v4_simple();
-        let now = crate::util::chrono_now();
         Ok(self
             .conn
             .call(move |conn| {
                 let tx = conn.unchecked_transaction()?;
-                // Existing campaign root that still exists → no-op. The JOIN
-                // guards against a dangling root_objective_id pointer.
-                let existing: Option<String> = tx
-                    .query_row(
-                        "SELECT o.id FROM projects p
-                         JOIN objective_nodes o ON o.id = p.root_objective_id
-                         WHERE p.id = ?1",
-                        params![project_id],
-                        |row| row.get::<_, String>(0),
-                    )
-                    .optional()?;
-                if let Some(id) = existing {
-                    tx.commit()?;
-                    return Ok(id);
-                }
-                let name: String = tx
-                    .query_row(
-                        "SELECT name FROM projects WHERE id = ?1",
-                        params![project_id],
-                        |row| row.get(0),
-                    )
-                    .optional()?
-                    .unwrap_or_else(|| "Project".to_string());
-                let title = format!("{name} campaign");
-                tx.execute(
-                    "INSERT INTO objective_nodes (
-                        id, root_id, parent_id, title, status,
-                        created_by, created_at, kind
-                    ) VALUES (?1, ?1, NULL, ?2, 'in_progress', 'monarch', ?3, 'campaign')",
-                    params![new_id, title, now],
-                )?;
-                tx.execute(
-                    "UPDATE projects SET root_objective_id = ?1,
-                       updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?2",
-                    params![new_id, project_id],
-                )?;
+                let id = ensure_campaign_root_tx(&tx, &project_id)?;
                 tx.commit()?;
-                Ok(new_id)
+                Ok(id)
             })
             .await?)
     }
@@ -1410,9 +1377,14 @@ impl Database {
             .await?)
     }
 
-    /// MON-105: create a root objective for a meaningful user turn and set it as
-    /// the agent's current objective, but only if there is no active current
-    /// objective. Returns `Some(new_id)` when a objective was created.
+    /// MON-105 / P1: on a meaningful user turn, create an objective as a BRANCH
+    /// under the agent's project campaign root and set it as the agent's current
+    /// objective — but only if there is no active current objective. Returns
+    /// `Some(new_id)` when one was created.
+    ///
+    /// Project-less agents stay ephemeral: no project → no campaign → `Ok(None)`
+    /// (the seam where a future per-captain scratch campaign would hook in —
+    /// roadmap-v2 P1 defers it).
     pub async fn auto_create_current_objective_internal(
         &self,
         agent_id: &str,
@@ -1426,42 +1398,56 @@ impl Database {
             .conn
             .call(move |conn| {
                 let tx = conn.unchecked_transaction()?;
-                let existing: Option<(String, Option<String>)> = tx
+                // Current objective + project, in one query. `None` row = no
+                // such agent.
+                let row: Option<(Option<String>, Option<String>, Option<String>)> = tx
                     .query_row(
-                        "SELECT q.id, q.status
+                        "SELECT a.current_objective_id, o.status, a.project_id
                          FROM agents a
-                         LEFT JOIN objective_nodes q ON q.id = a.current_objective_id
+                         LEFT JOIN objective_nodes o ON o.id = a.current_objective_id
                          WHERE a.id = ?1",
                         params![agent_id],
-                        |row| {
-                            Ok((
-                                row.get::<_, Option<String>>(0)?.unwrap_or_default(),
-                                row.get::<_, Option<String>>(1)?,
-                            ))
-                        },
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                     )
-                    .ok();
-                if let Some((id, status)) = existing {
-                    let terminal = matches!(
-                        status.as_deref(),
-                        Some("done" | "verified" | "abandoned" | "superseded")
-                    );
-                    if !id.is_empty() && !terminal {
+                    .optional()?;
+                let (current_id, status, project_id) = match row {
+                    Some(t) => t,
+                    None => {
+                        tx.commit()?;
+                        return Ok(None);
+                    }
+                };
+                // A live (non-terminal) current objective → keep it.
+                if let (Some(_), Some(st)) = (&current_id, &status) {
+                    let terminal =
+                        matches!(st.as_str(), "done" | "verified" | "abandoned" | "superseded");
+                    if !terminal {
                         tx.commit()?;
                         return Ok(None);
                     }
                 }
+                // Project-less agents stay ephemeral (no auto-objective).
+                let project_id = match project_id {
+                    Some(p) => p,
+                    None => {
+                        tx.commit()?;
+                        return Ok(None);
+                    }
+                };
 
+                let campaign_root = ensure_campaign_root_tx(&tx, &project_id)?;
                 let id = crate::util::uuid_v4_simple();
                 let event_id = crate::util::uuid_v4_simple();
                 let now = crate::util::chrono_now();
+                // Branch UNDER the campaign root: root_id = parent_id = campaign
+                // (so get_objective_tree_for_root(campaign) returns the whole tree).
                 tx.execute(
                     "INSERT INTO objective_nodes (
                         id, root_id, parent_id, title, description,
                         status, grade, exec_hint, assignee_shadow_id,
-                        created_by, created_at, started_at
-                    ) VALUES (?1, ?1, NULL, ?2, ?3, 'in_progress', 'C', 'in_context', ?4, 'monarch', ?5, ?5)",
-                    params![id, title, description, agent_id, now],
+                        created_by, created_at, started_at, kind
+                    ) VALUES (?1, ?2, ?2, ?3, ?4, 'in_progress', 'C', 'in_context', ?5, 'monarch', ?6, ?6, 'objective')",
+                    params![id, campaign_root, title, description, agent_id, now],
                 )?;
                 let event_payload = serde_json::json!({
                     "from": null,
@@ -1483,6 +1469,54 @@ impl Database {
             })
             .await?)
     }
+}
+
+/// P1: get-or-create a project's campaign root within an existing transaction.
+/// The campaign root is an `objective_nodes` row with `kind='campaign'`,
+/// `parent_id=NULL`, `root_id=self`; never closed/graded/reported. Returns the
+/// existing root when `projects.root_objective_id` points at a live node (the
+/// JOIN guards a dangling pointer), otherwise creates one and links it. Shared
+/// by `ensure_campaign_root_internal` and `auto_create_current_objective_internal`
+/// so both stay atomic with their surrounding work.
+fn ensure_campaign_root_tx(
+    tx: &rusqlite::Transaction<'_>,
+    project_id: &str,
+) -> rusqlite::Result<String> {
+    if let Some(id) = tx
+        .query_row(
+            "SELECT o.id FROM projects p
+             JOIN objective_nodes o ON o.id = p.root_objective_id
+             WHERE p.id = ?1",
+            params![project_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+    {
+        return Ok(id);
+    }
+    let name: String = tx
+        .query_row(
+            "SELECT name FROM projects WHERE id = ?1",
+            params![project_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or_else(|| "Project".to_string());
+    let new_id = crate::util::uuid_v4_simple();
+    let title = format!("{name} campaign");
+    tx.execute(
+        "INSERT INTO objective_nodes (
+            id, root_id, parent_id, title, status, created_by, created_at, kind
+        ) VALUES (?1, ?1, NULL, ?2, 'in_progress', 'monarch',
+            strftime('%Y-%m-%dT%H:%M:%SZ','now'), 'campaign')",
+        params![new_id, title],
+    )?;
+    tx.execute(
+        "UPDATE projects SET root_objective_id = ?1,
+           updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?2",
+        params![new_id, project_id],
+    )?;
+    Ok(new_id)
 }
 
 fn preview_value(value: Option<&Value>) -> String {
