@@ -182,6 +182,11 @@ export const commands = {
 	instructions: string | null,
 	createdAt: string,
 	updatedAt: string,
+	/**
+	 *  P1: the project's single campaign root (an `objective_nodes` row with
+	 *  `kind='campaign'`). `None` until `ensure_campaign_root_internal` runs.
+	 */
+	rootObjectiveId: string | null,
 } | null, ErrorDto>(__TAURI_INVOKE("db_get_project_by_path", { rootPath })),
 	dbRenameProject: (projectId: string, name: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_rename_project", { projectId, name })),
 	dbUpdateProjectInstructions: (projectId: string, instructions: string | null) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_project_instructions", { projectId, instructions })),
@@ -229,6 +234,11 @@ export const commands = {
 	estimatedDurationMs: number | null,
 	actualDurationMs: number | null,
 	summary: string | null,
+	/**
+	 *  P1: `'campaign'` for the single per-project root container, `'objective'`
+	 *  for all real work. The campaign root is never closed/graded/reported.
+	 */
+	kind: string,
 } | null, ErrorDto>(__TAURI_INVOKE("db_get_objective", { objectiveId })),
 	dbListObjectivesForAgent: (agentId: string) => typedError<ObjectiveRow[], ErrorDto>(__TAURI_INVOKE("db_list_objectives_for_agent", { agentId })),
 	dbGetObjectiveTreeForRoot: (rootId: string) => typedError<ObjectiveRow[], ErrorDto>(__TAURI_INVOKE("db_get_objective_tree_for_root", { rootId })),
@@ -469,6 +479,8 @@ export type CreateObjectivePayload = {
 	execHint: string | null,
 	assigneeShadowId: string | null,
 	createdBy: string | null,
+	// P1: defaults to `'objective'`. Set `'campaign'` only for a project root.
+	kind: string | null,
 };
 
 export type CreateObjectiveRefPayload = {
@@ -774,6 +786,11 @@ export type ObjectiveRow = {
 	estimatedDurationMs: number | null,
 	actualDurationMs: number | null,
 	summary: string | null,
+	/**
+	 *  P1: `'campaign'` for the single per-project root container, `'objective'`
+	 *  for all real work. The campaign root is never closed/graded/reported.
+	 */
+	kind: string,
 };
 
 export type PathSuggestion = {
@@ -822,6 +839,11 @@ export type ProjectRow = {
 	instructions: string | null,
 	createdAt: string,
 	updatedAt: string,
+	/**
+	 *  P1: the project's single campaign root (an `objective_nodes` row with
+	 *  `kind='campaign'`). `None` until `ensure_campaign_root_internal` runs.
+	 */
+	rootObjectiveId: string | null,
 };
 
 export type ProviderAuthStatus = {

@@ -1,4 +1,4 @@
-use rusqlite::{params, Row};
+use rusqlite::{params, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -44,6 +44,9 @@ pub struct ObjectiveRow {
     pub estimated_duration_ms: Option<i64>,
     pub actual_duration_ms: Option<i64>,
     pub summary: Option<String>,
+    /// P1: `'campaign'` for the single per-project root container, `'objective'`
+    /// for all real work. The campaign root is never closed/graded/reported.
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -77,6 +80,8 @@ pub struct CreateObjectivePayload {
     pub exec_hint: Option<String>,
     pub assignee_shadow_id: Option<String>,
     pub created_by: Option<String>,
+    /// P1: defaults to `'objective'`. Set `'campaign'` only for a project root.
+    pub kind: Option<String>,
 }
 
 /// Payload for `db_update_objective`. Only non-`None` fields are written.
@@ -254,24 +259,24 @@ pub struct WorkingMemoryPayload {
     pub next_plan_item_ids: Vec<String>,
 }
 
-// Shared column list for objective_nodes SELECTs. `QUEST_SELECT_SQL` is the
-// single-row lookup by id; `QUEST_BASE_SELECT` is the prefix for filtered
+// Shared column list for objective_nodes SELECTs. `OBJECTIVE_SELECT_SQL` is the
+// single-row lookup by id; `OBJECTIVE_BASE_SELECT` is the prefix for filtered
 // list queries (no WHERE clause).
-pub(super) const QUEST_BASE_SELECT: &str = "SELECT \
+pub(super) const OBJECTIVE_BASE_SELECT: &str = "SELECT \
     id, root_id, parent_id, title, description, scope, current_direction, \
     rationale, status, grade, exec_hint, explore_fork_count, assignee_shadow_id, \
     fork_parent_id, worktree_path, branch_name, \
     base_branch, branched_from_id, superseded_by_id, created_by, created_at, \
     started_at, completed_at, abandoned_at, estimated_tokens, actual_tokens, \
-    estimated_duration_ms, actual_duration_ms, summary FROM objective_nodes";
+    estimated_duration_ms, actual_duration_ms, summary, kind FROM objective_nodes";
 
-pub(super) const QUEST_SELECT_SQL: &str = "SELECT \
+pub(super) const OBJECTIVE_SELECT_SQL: &str = "SELECT \
     id, root_id, parent_id, title, description, scope, current_direction, \
     rationale, status, grade, exec_hint, explore_fork_count, assignee_shadow_id, \
     fork_parent_id, worktree_path, branch_name, \
     base_branch, branched_from_id, superseded_by_id, created_by, created_at, \
     started_at, completed_at, abandoned_at, estimated_tokens, actual_tokens, \
-    estimated_duration_ms, actual_duration_ms, summary \
+    estimated_duration_ms, actual_duration_ms, summary, kind \
     FROM objective_nodes WHERE id = ?1";
 
 // ---- Row mappers ----
@@ -307,6 +312,7 @@ pub(super) fn map_objective(row: &Row<'_>) -> rusqlite::Result<ObjectiveRow> {
         estimated_duration_ms: row.get(26)?,
         actual_duration_ms: row.get(27)?,
         summary: row.get(28)?,
+        kind: row.get(29)?,
     })
 }
 
@@ -528,6 +534,10 @@ impl Database {
             .created_by
             .clone()
             .unwrap_or_else(|| "monarch".to_string());
+        let kind = payload
+            .kind
+            .clone()
+            .unwrap_or_else(|| "objective".to_string());
         let now = crate::util::chrono_now();
         let event_id = crate::util::uuid_v4_simple();
 
@@ -549,8 +559,8 @@ impl Database {
                     "INSERT INTO objective_nodes (
                         id, root_id, parent_id, title, description,
                         status, grade, exec_hint, assignee_shadow_id,
-                        created_by, created_at
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                        created_by, created_at, kind
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     params![
                         id,
                         root_id,
@@ -563,6 +573,7 @@ impl Database {
                         payload.assignee_shadow_id,
                         created_by,
                         now,
+                        kind,
                     ],
                 )?;
                 // Seed the creation event so the event log is never empty.
@@ -581,6 +592,64 @@ impl Database {
             })
             .await?;
         Ok(id_for_return)
+    }
+
+    /// P1: get-or-create a project's single campaign root. The campaign root is
+    /// an `objective_nodes` row with `kind='campaign'`, `parent_id=NULL`,
+    /// `root_id=self`; it is never closed/graded/reported. Idempotent — returns
+    /// the existing root when `projects.root_objective_id` already points at a
+    /// live node, otherwise creates one and links it. Atomic via a transaction.
+    pub async fn ensure_campaign_root_internal(
+        &self,
+        project_id: &str,
+    ) -> Result<String, MonarchError> {
+        let project_id = project_id.to_string();
+        let new_id = crate::util::uuid_v4_simple();
+        let now = crate::util::chrono_now();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let tx = conn.unchecked_transaction()?;
+                // Existing campaign root that still exists → no-op. The JOIN
+                // guards against a dangling root_objective_id pointer.
+                let existing: Option<String> = tx
+                    .query_row(
+                        "SELECT o.id FROM projects p
+                         JOIN objective_nodes o ON o.id = p.root_objective_id
+                         WHERE p.id = ?1",
+                        params![project_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?;
+                if let Some(id) = existing {
+                    tx.commit()?;
+                    return Ok(id);
+                }
+                let name: String = tx
+                    .query_row(
+                        "SELECT name FROM projects WHERE id = ?1",
+                        params![project_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .unwrap_or_else(|| "Project".to_string());
+                let title = format!("{name} campaign");
+                tx.execute(
+                    "INSERT INTO objective_nodes (
+                        id, root_id, parent_id, title, status,
+                        created_by, created_at, kind
+                    ) VALUES (?1, ?1, NULL, ?2, 'in_progress', 'monarch', ?3, 'campaign')",
+                    params![new_id, title, now],
+                )?;
+                tx.execute(
+                    "UPDATE projects SET root_objective_id = ?1,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?2",
+                    params![new_id, project_id],
+                )?;
+                tx.commit()?;
+                Ok(new_id)
+            })
+            .await?)
     }
 
     /// Partial update — only `Some` fields are written. Status / timestamp
@@ -644,7 +713,7 @@ impl Database {
         Ok(self
             .conn
             .call(move |conn| {
-                let mut stmt = conn.prepare(QUEST_SELECT_SQL)?;
+                let mut stmt = conn.prepare(OBJECTIVE_SELECT_SQL)?;
                 let mut rows = stmt.query(params![objective_id])?;
                 if let Some(row) = rows.next()? {
                     Ok(Some(map_objective(row)?))
@@ -668,7 +737,7 @@ impl Database {
             .call(move |conn| {
                 let mut stmt = conn.prepare(&format!(
                     "{} WHERE assignee_shadow_id = ?1 ORDER BY created_at DESC",
-                    QUEST_BASE_SELECT
+                    OBJECTIVE_BASE_SELECT
                 ))?;
                 let rows = stmt
                     .query_map(params![agent_id], map_objective)?
@@ -691,7 +760,7 @@ impl Database {
             .call(move |conn| {
                 let mut stmt = conn.prepare(&format!(
                     "{} WHERE root_id = ?1 ORDER BY created_at ASC",
-                    QUEST_BASE_SELECT
+                    OBJECTIVE_BASE_SELECT
                 ))?;
                 let rows = stmt
                     .query_map(params![root_id], map_objective)?
@@ -766,7 +835,7 @@ impl Database {
         self.conn
             .call(move |conn| {
                 let tx = conn.unchecked_transaction()?;
-                let mut stmt = tx.prepare(QUEST_SELECT_SQL)?;
+                let mut stmt = tx.prepare(OBJECTIVE_SELECT_SQL)?;
                 let before = stmt.query_row(params![payload.id], map_objective)?;
                 drop(stmt);
 
@@ -794,7 +863,7 @@ impl Database {
                     tx.execute(&sql, params_slice.as_slice())?;
                 }
 
-                let mut stmt = tx.prepare(QUEST_SELECT_SQL)?;
+                let mut stmt = tx.prepare(OBJECTIVE_SELECT_SQL)?;
                 let after = stmt.query_row(params![payload.id], map_objective)?;
                 drop(stmt);
 

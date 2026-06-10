@@ -310,6 +310,7 @@
         execHint: formExecHint,
         assigneeShadowId: agentId,
         createdBy: "monarch",
+        kind: null,
       });
       objectiveStore.cancelCreate(agentId);
     } catch (e) {

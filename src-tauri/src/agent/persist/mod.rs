@@ -536,6 +536,7 @@ mod tests {
             exec_hint: Some("in_context".to_string()),
             assignee_shadow_id: None,
             created_by: Some("monarch".to_string()),
+            kind: None,
         })
         .await
         .expect("create objective")

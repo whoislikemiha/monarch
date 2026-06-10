@@ -46,7 +46,7 @@ pub(super) fn render_keeper_slice(
     if let Some(report) = objective_report {
         let trimmed = report.trim();
         if !trimmed.is_empty() {
-            s.push_str("## QUEST REPORT (first-person from the executor)\n\n");
+            s.push_str("## OBJECTIVE REPORT (first-person from the executor)\n\n");
             s.push_str(trimmed);
             s.push_str("\n\n");
         }
