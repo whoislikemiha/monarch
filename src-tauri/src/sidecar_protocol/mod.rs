@@ -173,24 +173,30 @@ mod tests {
     // ---- AgentStart / AgentEnd --------------------------------------------
 
     #[test]
-    fn agent_start_sets_activity_and_pushes_status() {
+    fn agent_start_sets_activity_no_status_line() {
         let mut s = fresh_state();
         let outcome = apply_event(&mut s, &InnerEvent::AgentStart);
         assert_eq!(outcome, ApplyOutcome::EmitNow);
         assert_eq!(s.activity_status, "Agent processing...");
-        assert_eq!(count_items(&s, "status"), 1);
+        // No "Agent started" boundary marker — per-turn duration is shown
+        // inline on each assistant message instead.
+        assert_eq!(count_items(&s, "status"), 0);
+        assert!(s.agent_started_at_ms.is_some());
     }
 
     #[test]
-    fn agent_end_clears_streaming_and_pushes_status() {
+    fn agent_end_clears_streaming_no_status_line() {
         let mut s = fresh_state();
         s.is_streaming = true;
         s.activity_status = "something".to_string();
+        s.agent_started_at_ms = Some(0);
         let outcome = apply_event(&mut s, &InnerEvent::AgentEnd);
         assert_eq!(outcome, ApplyOutcome::EmitNow);
         assert!(!s.is_streaming);
         assert!(s.activity_status.is_empty());
-        assert_eq!(count_items(&s, "status"), 1);
+        // No "Agent finished" boundary marker.
+        assert_eq!(count_items(&s, "status"), 0);
+        assert!(s.agent_started_at_ms.is_none());
     }
 
     #[test]
@@ -780,7 +786,7 @@ mod tests {
         assert!(s.streaming_message.is_none());
         assert_eq!(count_items(&s, "assistant"), 2);
         assert_eq!(count_items(&s, "tool-group"), 1);
-        assert_eq!(count_items(&s, "status"), 2); // AgentStart, AgentEnd
+        assert_eq!(count_items(&s, "status"), 0); // no agent start/finish lines
         assert_eq!(s.event_count, 11);
         assert!(s.state_version > 0);
     }

@@ -41,7 +41,7 @@
       </div>
     {:else if item.kind === "assistant"}
       <div class="turn assistant">
-        <AssistantBlock content={item.content} />
+        <AssistantBlock content={item.content} durationMs={item.durationMs} />
       </div>
     {:else if item.kind === "tool-group"}
       <div class="turn tools">
@@ -56,7 +56,11 @@
 
   {#if streamingMessage}
     <div class="turn assistant">
-      <AssistantBlock content={streamingMessage.content} streaming />
+      <AssistantBlock
+        content={streamingMessage.content}
+        streaming
+        turnStartedAtMs={streamingMessage.turnStartedAtMs}
+      />
     </div>
   {/if}
 </div>
