@@ -23,7 +23,7 @@
   }
   let { agent }: Props = $props();
 
-  let tiles = $derived(chatStore.tiles(agent.id));
+  let tiles = $derived([...chatStore.tiles(agent.id)]);
   let orient = $derived(layoutStore.workspaceOrient);
 
   function tileKey(id: string) {
@@ -35,6 +35,7 @@
 
   const binding = new LiveBinding();
   onMount(() => {
+    chatStore.ensure(agent.id);
     binding.bind(agent).catch((e) => console.error("bind failed:", e));
   });
   onDestroy(() => binding.destroy());
