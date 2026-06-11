@@ -11,8 +11,10 @@
   interface Props {
     panelId: string;
     agentContext: AgentContext;
+    ondragstart?: (e: DragEvent) => void;
+    ondragend?: (e: DragEvent) => void;
   }
-  let { panelId, agentContext }: Props = $props();
+  let { panelId, agentContext, ondragstart, ondragend }: Props = $props();
 
   let def = $derived(getPanel(panelId));
   let pinned = $derived(layoutStore.isPinned(panelId));
@@ -21,7 +23,18 @@
 {#if def}
   {@const Content = def.component}
   <section class="panel" data-density="compact">
-    <header class="panel-head">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <header
+      class="panel-head"
+      draggable={!!ondragstart}
+      ondragstart={(e) => ondragstart?.(e)}
+      ondragend={(e) => ondragend?.(e)}
+    >
+      {#if ondragstart}
+        <span class="grip" aria-hidden="true" title="Drag to reorder">
+          <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor"><circle cx="6" cy="4" r="1"/><circle cx="10" cy="4" r="1"/><circle cx="6" cy="8" r="1"/><circle cx="10" cy="8" r="1"/><circle cx="6" cy="12" r="1"/><circle cx="10" cy="12" r="1"/></svg>
+        </span>
+      {/if}
       <span class="title">{def.title}</span>
       <div class="grow"></div>
       <button class="hbtn" class:on={pinned} title={pinned ? "Unpin" : "Pin (keep open)"} aria-label="Pin panel" onclick={() => layoutStore.togglePin(panelId)}>
@@ -56,6 +69,9 @@
     background: var(--bg-sink);
     border-bottom: 1px solid var(--border-subtle);
   }
+  .panel-head[draggable="true"] { cursor: grab; }
+  .panel-head[draggable="true"]:active { cursor: grabbing; }
+  .grip { display: inline-flex; color: var(--text-muted); flex: none; }
   .title { font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-secondary); }
   .grow { flex: 1; }
   .hbtn {

@@ -35,6 +35,21 @@
   function resizeDock(dx: number) {
     layoutStore.setWidth(layoutStore.dockWidth - dx);
   }
+
+  // --- panel drag-to-reorder within the dock ---
+  let dragIndex = $state<number | null>(null);
+  let overIndex = $state<number | null>(null);
+  function onPanelDragOver(e: DragEvent, i: number) {
+    if (dragIndex === null) return;
+    e.preventDefault();
+    overIndex = i;
+  }
+  function onPanelDrop(e: DragEvent, i: number) {
+    e.preventDefault();
+    if (dragIndex !== null && dragIndex !== i) layoutStore.reorderPanels(dragIndex, i);
+    dragIndex = null;
+    overIndex = null;
+  }
 </script>
 
 <div class="host">
@@ -51,8 +66,21 @@
     <aside class="dock" style="width:{layoutStore.dockWidth}px">
       {#each layoutStore.openPanels as id, i (id)}
         {@const last = i === layoutStore.openPanels.length - 1}
-        <div class="dock-item" style={last ? "flex:1 1 auto" : `height:${layoutStore.panelHeight(id)}px`}>
-          <Panel panelId={id} {agentContext} />
+        <div
+          class="dock-item"
+          class:dragover={overIndex === i && dragIndex !== null && dragIndex !== i}
+          class:dragging={dragIndex === i}
+          style={last ? "flex:1 1 auto" : `height:${layoutStore.panelHeight(id)}px`}
+          ondragover={(e) => onPanelDragOver(e, i)}
+          ondrop={(e) => onPanelDrop(e, i)}
+          role="group"
+        >
+          <Panel
+            panelId={id}
+            {agentContext}
+            ondragstart={() => (dragIndex = i)}
+            ondragend={() => { dragIndex = null; overIndex = null; }}
+          />
         </div>
         {#if !last}
           <Splitter axis="y" onresize={(d) => layoutStore.setPanelHeight(id, layoutStore.panelHeight(id) + d)} />
@@ -103,6 +131,8 @@
     overflow: hidden;
   }
   .dock-item { flex: none; min-height: 0; display: flex; overflow: hidden; }
+  .dock-item.dragging { opacity: 0.5; }
+  .dock-item.dragover { outline: 2px solid var(--accent); outline-offset: -2px; }
   .rail {
     width: 44px;
     flex: none;
