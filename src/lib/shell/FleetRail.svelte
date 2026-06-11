@@ -5,8 +5,11 @@
    * slice 2 fills it with the project-grouped roster.
    */
   import type { Agent, Project } from "$lib/types";
+  import { invoke } from "$lib/api";
   import { agentStore } from "$lib/stores/agentStore.svelte";
   import ShadowRow from "./ShadowRow.svelte";
+  import EditAgentDialog from "$lib/EditAgentDialog.svelte";
+  import ConfirmDialog from "$lib/ConfirmDialog.svelte";
 
   interface Props {
     onextract?: () => void;
@@ -14,6 +17,47 @@
   let { onextract }: Props = $props();
 
   let collapsed = $derived(agentStore.sidebarCollapsed);
+
+  // --- Roster management: context menu + confirm/edit dialogs ---
+  let menu = $state<{ x: number; y: number; agent: Agent } | null>(null);
+  let editing = $state<Agent | null>(null);
+  let confirm = $state<{ kind: "dismiss" | "delete"; agent: Agent } | null>(null);
+
+  function openMenu(e: MouseEvent, agent: Agent) {
+    e.preventDefault();
+    menu = { x: e.clientX, y: e.clientY, agent };
+  }
+
+  async function saveTemplate(agent: Agent) {
+    const now = new Date().toISOString();
+    try {
+      await invoke("db_save_agent_template", {
+        template: {
+          id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: agent.shadow?.shadowName ?? agent.name,
+          provider: agent.provider ?? null,
+          model: agent.model ?? null,
+          thinkingLevel: agent.thinkingLevel ?? null,
+          cwd: agent.cwd ?? null,
+          shadowName: agent.shadow?.shadowName ?? agent.name,
+          shadowTitle: agent.shadow?.shadowTitle ?? null,
+          shadowGrade: agent.shadow?.shadowGrade ?? null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+    } catch (e) {
+      console.error("save template failed:", e);
+    }
+  }
+
+  function runConfirm() {
+    const c = confirm;
+    confirm = null;
+    if (!c) return;
+    if (c.kind === "dismiss") agentStore.archiveAgent(c.agent.id);
+    else agentStore.deleteAgent(c.agent.id);
+  }
 
   interface Group {
     project?: Project;
@@ -103,7 +147,12 @@
             </div>
             <div class="group-rows">
               {#each group.agents as agent (agent.id)}
-                <ShadowRow {agent} />
+                <ShadowRow
+                  {agent}
+                  oncontextmenu={openMenu}
+                  ondismiss={(a) => (confirm = { kind: "dismiss", agent: a })}
+                  onsummon={(a) => agentStore.summonAgent(a.id)}
+                />
               {/each}
             </div>
           </div>
@@ -113,7 +162,59 @@
   </aside>
 {/if}
 
+{#if menu}
+  <button class="ctx-scrim" aria-label="Close menu" onclick={() => (menu = null)} oncontextmenu={(e) => { e.preventDefault(); menu = null; }}></button>
+  <div class="ctx" style="left:{menu.x}px; top:{menu.y}px" role="menu">
+    <button role="menuitem" onclick={() => { const a = menu!.agent; menu = null; editing = a; }}>Edit shadow</button>
+    <button role="menuitem" onclick={() => { const a = menu!.agent; menu = null; saveTemplate(a); }}>Save as template</button>
+    {#if menu.agent.archivedAt}
+      <button role="menuitem" onclick={() => { const a = menu!.agent; menu = null; agentStore.summonAgent(a.id); }}>Summon back</button>
+    {:else}
+      <button role="menuitem" onclick={() => { const a = menu!.agent; menu = null; confirm = { kind: "dismiss", agent: a }; }}>Dismiss</button>
+    {/if}
+    <div class="ctx-div"></div>
+    <button role="menuitem" class="danger" onclick={() => { const a = menu!.agent; menu = null; confirm = { kind: "delete", agent: a }; }}>Delete permanently</button>
+  </div>
+{/if}
+
+{#if editing}
+  <EditAgentDialog agent={editing} onclose={() => (editing = null)} />
+{/if}
+
+<ConfirmDialog
+  open={confirm?.kind === "dismiss"}
+  title="Dismiss {confirm?.agent.name}?"
+  message="The shadow leaves the active roster. History, sessions, and identity are preserved — summon it back anytime from All."
+  confirmLabel="Dismiss"
+  onconfirm={runConfirm}
+  oncancel={() => (confirm = null)}
+/>
+<ConfirmDialog
+  open={confirm?.kind === "delete"}
+  title="Permanently delete {confirm?.agent.name}?"
+  message="Irreversible. All history, sessions, and stats for this shadow are deleted."
+  confirmLabel="Delete permanently"
+  danger
+  onconfirm={runConfirm}
+  oncancel={() => (confirm = null)}
+/>
+
 <style>
+  .ctx-scrim { position: fixed; inset: 0; z-index: 500; background: none; border: none; }
+  .ctx {
+    position: fixed; z-index: 501; min-width: 168px; padding: var(--s1);
+    background: var(--bg-overlay); border: 1px solid var(--border-strong); border-radius: var(--r-md);
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .ctx button {
+    text-align: left; font: inherit; font-size: 12px; color: var(--text-secondary);
+    background: none; border: none; border-radius: var(--r-sm); padding: 6px var(--s3); cursor: pointer;
+  }
+  .ctx button:hover { background: var(--bg-raised); color: var(--text-primary); }
+  .ctx button.danger { color: var(--status-error); }
+  .ctx button.danger:hover { background: color-mix(in srgb, var(--status-error) 16%, transparent); color: var(--status-error); }
+  .ctx-div { height: 1px; background: var(--border-subtle); margin: 2px var(--s2); }
+
   .rail {
     width: 248px;
     flex: none;

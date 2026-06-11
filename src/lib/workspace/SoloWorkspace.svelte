@@ -41,7 +41,7 @@
 </script>
 
 <div class="solo">
-  <ShadowHeader {agent} />
+  <ShadowHeader {agent} {binding} />
   <div class="split">
     <section class="pane timeline" aria-label="Work timeline">
       <div class="pane-head"><span class="t">Timeline</span></div>

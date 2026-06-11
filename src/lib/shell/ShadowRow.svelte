@@ -13,8 +13,10 @@
   interface Props {
     agent: Agent;
     oncontextmenu?: (e: MouseEvent, agent: Agent) => void;
+    ondismiss?: (agent: Agent) => void;
+    onsummon?: (agent: Agent) => void;
   }
-  let { agent, oncontextmenu }: Props = $props();
+  let { agent, oncontextmenu, ondismiss, onsummon }: Props = $props();
 
   let live = $derived(liveAgentStore.byAgent.get(agent.id));
   let streaming = $derived(!!live?.isStreaming);
@@ -84,6 +86,10 @@
       >
         <svg viewBox="0 0 24 24" width="9" height="9" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5" /></svg>
       </button>
+    {:else if archived}
+      <button class="rowbtn" title="Summon back" aria-label="Summon {agent.name}" onclick={(e) => { e.stopPropagation(); onsummon?.(agent); }}>↺</button>
+    {:else}
+      <button class="rowbtn dismiss" title="Dismiss" aria-label="Dismiss {agent.name}" onclick={(e) => { e.stopPropagation(); ondismiss?.(agent); }}>×</button>
     {/if}
   </div>
 </div>
@@ -137,4 +143,14 @@
     color: var(--status-error); cursor: pointer;
   }
   .stop:hover { background: color-mix(in srgb, var(--status-error) 22%, transparent); }
+
+  .rowbtn {
+    width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center;
+    padding: 0; background: none; border: none; border-radius: var(--r-sm);
+    color: var(--text-muted); cursor: pointer; font-size: 14px; line-height: 1;
+    opacity: 0; transition: opacity 0.12s, color 0.12s, background 0.12s;
+  }
+  .row:hover .rowbtn { opacity: 1; }
+  .rowbtn:hover { background: var(--bg-raised); color: var(--text-primary); }
+  .rowbtn.dismiss:hover { color: var(--status-error); }
 </style>

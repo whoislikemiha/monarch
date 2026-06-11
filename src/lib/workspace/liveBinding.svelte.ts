@@ -227,4 +227,16 @@ export class LiveBinding {
   async abort(target: Agent): Promise<void> {
     await this.sendCommand(target, { type: "abort" });
   }
+
+  async setThinkingLevel(target: Agent, level: string): Promise<void> {
+    await this.sendCommand(target, { type: "set_thinking_level", level });
+  }
+
+  async setModel(target: Agent, provider: string, modelId: string): Promise<void> {
+    await this.sendCommand(target, { type: "set_model", provider, modelId });
+  }
+
+  async compact(target: Agent): Promise<void> {
+    await this.sendCommand(target, { type: "compact" });
+  }
 }
