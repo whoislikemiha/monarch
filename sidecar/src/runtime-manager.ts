@@ -638,9 +638,23 @@ export class RuntimeManager {
 				// Reconstruct ToolResultMessage from DB content
 				try {
 					const parsed = JSON.parse(msg.content);
+					// Legacy duplicate rows (raw content arrays double-persisted
+					// from `message_end` between 2026-04 and 2026-06) carry no
+					// toolCallId. Replaying one sends an empty `call_id`, which
+					// the Codex Responses API rejects with a 400 — skip them;
+					// the canonical blob row for the same call follows anyway.
+					if (
+						typeof parsed !== "object" ||
+						parsed === null ||
+						Array.isArray(parsed) ||
+						typeof parsed.toolCallId !== "string" ||
+						parsed.toolCallId.length === 0
+					) {
+						continue;
+					}
 					agentMessages.push({
 						role: "toolResult",
-						toolCallId: parsed.toolCallId || "",
+						toolCallId: parsed.toolCallId,
 						toolName: parsed.toolName || "unknown",
 						content: typeof parsed.result === "string"
 							? [{ type: "text", text: parsed.result }]

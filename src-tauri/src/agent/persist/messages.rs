@@ -121,6 +121,14 @@ pub(crate) fn build_persist_commands(
             } else {
                 message.role.clone()
             };
+            // Pi also emits `message_end` for toolResult messages, but the
+            // canonical toolResult row (with toolCallId/toolName) is written
+            // by the ToolExecutionEnd arm below. Persisting this one too
+            // created a duplicate, id-less row whose replay sent an empty
+            // `call_id` to the Codex Responses API (400 invalid_request).
+            if role == "toolResult" {
+                return cmds;
+            }
             // MON-75: for user messages, pull any inline base64 image
             // blocks out of the content value before serialization. The
             // stored content stays text-only; image bytes are written to

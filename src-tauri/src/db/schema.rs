@@ -271,6 +271,17 @@ impl Database {
                         ON message_attachments(message_id);",
                 );
 
+                // Tool results were double-persisted for a while: the
+                // `message_end` arm saved Pi's toolResult message as a raw
+                // content array (no toolCallId) alongside the canonical
+                // ToolExecutionEnd blob. Replaying those rows sent an empty
+                // `call_id` to the Codex Responses API (400). The blob shape
+                // always starts with '{'; the duplicates start with '['.
+                let _ = conn.execute(
+                    "DELETE FROM messages WHERE role = 'toolResult' AND content LIKE '[%'",
+                    [],
+                );
+
                 // MON-49: the events table is forensic, not operational.
                 // Prune rows older than 30 days on startup so the table does
                 // not grow unbounded. Errors are swallowed — a failed prune
