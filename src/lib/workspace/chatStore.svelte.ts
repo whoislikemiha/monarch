@@ -14,6 +14,10 @@ import { SvelteMap, SvelteSet } from "svelte/reactivity";
 
 export const TIMELINE_TILE = "__timeline__";
 
+/** Stable default so reads before ensure() don't thrash derivations. */
+const DEFAULT_TILES: readonly string[] = [TIMELINE_TILE, "general"];
+const DEFAULT_GENERAL: ChatPane = { id: "general", scope: null, title: "Chat" };
+
 export interface ChatScope {
   id: string;
   kind: "action" | "objective";
@@ -37,18 +41,21 @@ class ChatStore {
   private primed = new SvelteSet<string>();
   private seq = 0;
 
-  private ensure(agentId: string): void {
+  /**
+   * Initialize an agent's tiles. MUST be called from a non-reactive context
+   * (onMount / event handler), never from a $derived — it mutates state.
+   */
+  ensure(agentId: string): void {
     if (this.tilesByAgent.has(agentId)) return;
-    this.tilesByAgent.set(agentId, [TIMELINE_TILE, "general"]);
+    this.tilesByAgent.set(agentId, [...DEFAULT_TILES]);
     const panes = new SvelteMap<string, ChatPane>();
-    panes.set("general", { id: "general", scope: null, title: "Chat" });
+    panes.set("general", { ...DEFAULT_GENERAL });
     this.panesByAgent.set(agentId, panes);
   }
 
-  /** Ordered tile ids for the workspace stack (includes the timeline tile). */
-  tiles(agentId: string): string[] {
-    this.ensure(agentId);
-    return this.tilesByAgent.get(agentId)!;
+  /** Ordered tile ids for the workspace stack. Read-only — safe in derivations. */
+  tiles(agentId: string): readonly string[] {
+    return this.tilesByAgent.get(agentId) ?? DEFAULT_TILES;
   }
 
   isTimeline(id: string): boolean {
@@ -56,8 +63,7 @@ class ChatStore {
   }
 
   pane(agentId: string, paneId: string): ChatPane | undefined {
-    this.ensure(agentId);
-    return this.panesByAgent.get(agentId)!.get(paneId);
+    return this.panesByAgent.get(agentId)?.get(paneId) ?? (paneId === "general" ? DEFAULT_GENERAL : undefined);
   }
 
   chatCount(agentId: string): number {
