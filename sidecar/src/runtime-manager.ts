@@ -261,6 +261,45 @@ export class RuntimeManager {
 				});
 			}
 
+			// Guard against silent empty/errored assistant turns. The
+			// openai-codex (Responses API) backend can complete a turn with
+			// zero output items, or surface a provider stream error that Pi
+			// resolves into an assistant message with empty content /
+			// stopReason "error" — WITHOUT throwing from prompt(). Pi emits a
+			// normal `message_end` in that case, so the empty turn otherwise
+			// persists as a blank assistant bubble with no feedback (looks
+			// like a hang). Detect it and mirror to a top-level `error` so the
+			// notification store toasts it. A user-initiated abort produces an
+			// empty/partial turn too, so exclude `stopReason: "aborted"`.
+			if (event.type === "message_end") {
+				const msg = forwarded.message as
+					| {
+							role?: string;
+							content?: unknown[];
+							stopReason?: string;
+							errorMessage?: string;
+					  }
+					| undefined;
+				if (msg && msg.role === "assistant" && msg.stopReason !== "aborted") {
+					const isEmpty =
+						!Array.isArray(msg.content) || msg.content.length === 0;
+					const hasError =
+						msg.stopReason === "error" ||
+						(typeof msg.errorMessage === "string" &&
+							msg.errorMessage.length > 0);
+					if (isEmpty || hasError) {
+						emit({
+							type: "error",
+							agentId,
+							error: msg.errorMessage
+								? `The model returned an error: ${msg.errorMessage}`
+								: "The model returned an empty response (no output). " +
+									"This usually clears on retry; if it persists, start a new session.",
+						});
+					}
+				}
+			}
+
 		};
 
 		const unsubscribe = session.subscribe(listener);
