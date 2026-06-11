@@ -15,7 +15,7 @@
     presence?: string | null;
     /** When true, the avatar shows an animated "working" ring; idle = static. */
     working?: boolean;
-    avatarType?: "rive" | "image";
+    avatarType?: "image";
     avatarPath?: string;
   }
   let { name, size = 32, grade, presence = null, working = false, avatarType, avatarPath }: Props = $props();

@@ -35,7 +35,7 @@
   let cwd = $state(agent.cwd ?? "");
 
   // Avatar
-  let avatarType = $state<"rive" | "image" | undefined>(agent.avatarType);
+  let avatarType = $state<"image" | undefined>(agent.avatarType);
   let avatarPath = $state<string | undefined>(agent.avatarPath);
 
   // Model dropdown state
@@ -320,7 +320,7 @@
     <!-- Avatar -->
     <div class="section">
       <span class="label">Avatar</span>
-      <AvatarPicker agentId={agent.id} bind:avatarType bind:avatarPath />
+      <AvatarPicker agentId={agent.id} name={shadowName || agent.name} bind:avatarType bind:avatarPath />
     </div>
 
     {#if saveError}

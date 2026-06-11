@@ -64,12 +64,11 @@ export interface Agent {
    * counter stays in sync.
    */
   lifetimeCost?: number;
-  /** MON-73: "rive" | "image" | undefined (undefined = default rive preset). */
-  avatarType?: "rive" | "image";
+  /** MON-73: "image" | undefined (undefined = monogram fallback). */
+  avatarType?: "image";
   /**
-   * MON-73: For "rive" = path to .riv file (undefined = default).
-   * For "image" = built-in web path ("/avatars/foo.svg") or absolute
-   * filesystem path (loaded via convertFileSrc).
+   * MON-73: built-in web path ("/avatars/foo.svg") or absolute filesystem
+   * path (loaded via `read_avatar_data_url`).
    */
   avatarPath?: string;
 }

@@ -4,15 +4,17 @@
    * streaming assistant turn. Auto-scrolls to the newest content.
    */
   import { tick } from "svelte";
-  import type { DisplayItem, AssistantMessage } from "$lib/types";
+  import type { Agent, DisplayItem, AssistantMessage } from "$lib/types";
+  import Avatar from "$lib/ui/Avatar.svelte";
   import AssistantBlock from "./AssistantBlock.svelte";
   import ToolGroupBlock from "./ToolGroupBlock.svelte";
 
   interface Props {
+    agent: Agent;
     items: DisplayItem[];
     streamingMessage: AssistantMessage | null;
   }
-  let { items, streamingMessage }: Props = $props();
+  let { agent, items, streamingMessage }: Props = $props();
 
   let scroller: HTMLDivElement | undefined = $state();
   let pinned = true;
@@ -49,6 +51,10 @@
         </div>
       {:else}
         <div class="turn assistant">
+          <div class="speaker">
+            <Avatar name={agent.name} size={24} avatarType={agent.avatarType} avatarPath={agent.avatarPath} />
+            <span class="speaker-name">{agent.name}</span>
+          </div>
           <AssistantBlock content={item.content} durationMs={item.durationMs} />
         </div>
       {/if}
@@ -65,6 +71,10 @@
 
   {#if streamingMessage}
     <div class="turn assistant">
+      <div class="speaker">
+        <Avatar name={agent.name} size={24} avatarType={agent.avatarType} avatarPath={agent.avatarPath} />
+        <span class="speaker-name">{agent.name}</span>
+      </div>
       <AssistantBlock
         content={streamingMessage.content}
         streaming
@@ -99,6 +109,9 @@
     word-break: break-word;
   }
   .turn.assistant, .turn.tools { flex-direction: column; }
+  .turn.assistant { gap: var(--s2); }
+  .speaker { display: flex; align-items: center; gap: var(--s2); }
+  .speaker-name { font-size: 11.5px; font-weight: 600; color: var(--text-primary); }
   .meta {
     font-size: 10.5px;
     color: var(--text-muted);

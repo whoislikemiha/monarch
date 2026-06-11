@@ -244,9 +244,15 @@ impl Database {
                     "ALTER TABLE messages ADD COLUMN duration_ms INTEGER;",
                 );
 
-                // MON-73: agent avatar type ("rive" | "image") and path.
+                // MON-73: agent avatar type ("image" | NULL) and path.
                 let _ = conn.execute_batch("ALTER TABLE agents ADD COLUMN avatar_type TEXT;");
                 let _ = conn.execute_batch("ALTER TABLE agents ADD COLUMN avatar_path TEXT;");
+
+                // Rive avatars were removed — only "image" remains. Clear any
+                // stale 'rive' rows so they fall back to the monogram avatar.
+                let _ = conn.execute_batch(
+                    "UPDATE agents SET avatar_type = NULL, avatar_path = NULL WHERE avatar_type = 'rive';",
+                );
 
                 // MON-75: per-message image attachments. Bytes live under
                 // ~/.config/monarch/attachments/{uuid}.{ext}; this table
