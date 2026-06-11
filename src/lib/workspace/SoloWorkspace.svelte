@@ -33,13 +33,13 @@
   });
   onDestroy(() => binding.destroy());
 
-  /** Timeline action → scope the chat to that piece of work. */
+  /** Timeline action → open a chat pane scoped to that piece of work. */
   function askAbout(action: { id: string; intent: string; outcome?: string | null }) {
     const ctx =
       `[The captain is asking about this piece of your work: "${action.intent}"` +
       (action.outcome ? ` (outcome: ${action.outcome})` : "") +
       `. Answer with that context in mind.]`;
-    chatStore.setScope(agent.id, {
+    chatStore.openScopedPane(agent.id, {
       id: action.id,
       kind: "action",
       label: action.intent,
