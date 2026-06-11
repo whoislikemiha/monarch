@@ -13,10 +13,17 @@ import { invoke } from "$lib/api";
 const OPEN_KEY = "v2.layout.openPanels";
 const WIDTH_KEY = "v2.layout.dockWidth";
 const PIN_KEY = "v2.layout.pinnedPanels";
+const HEIGHTS_KEY = "v2.layout.panelHeights";
+const TLFRAC_KEY = "v2.layout.timelineFrac";
+const BOARDFRAC_KEY = "v2.layout.boardFrac";
 
 const DEFAULT_WIDTH = 320;
 const MIN_WIDTH = 240;
-const MAX_WIDTH = 560;
+const MAX_WIDTH = 720;
+const DEFAULT_PANEL_HEIGHT = 280;
+const MIN_PANEL_HEIGHT = 120;
+const MIN_TL_FRAC = 0.2;
+const MAX_TL_FRAC = 0.8;
 
 class LayoutStore {
   /** Open panel ids in the right dock, top → bottom. */
@@ -25,6 +32,12 @@ class LayoutStore {
   dockWidth = $state(DEFAULT_WIDTH);
   /** Pinned panel ids (kept open across switches). */
   pinned: string[] = $state([]);
+  /** Per-panel dock height in px (the last panel flexes to fill). */
+  panelHeights: Record<string, number> = $state({});
+  /** Timeline pane share of the solo workspace split (0.2–0.8). */
+  timelineFrac = $state(0.5);
+  /** Campaign-tree share of the Projects board split (0.2–0.8). */
+  boardFrac = $state(0.42);
 
   private initialized = false;
 
@@ -41,7 +54,44 @@ class LayoutStore {
       const p = await invoke<string | null>("db_get_ui_state", { key: PIN_KEY });
       if (p) this.pinned = JSON.parse(p);
     } catch {}
+    try {
+      const h = await invoke<string | null>("db_get_ui_state", { key: HEIGHTS_KEY });
+      if (h) this.panelHeights = JSON.parse(h);
+    } catch {}
+    try {
+      const f = await invoke<string | null>("db_get_ui_state", { key: TLFRAC_KEY });
+      if (f) this.timelineFrac = clampFrac(parseFloat(f) || 0.5);
+    } catch {}
+    try {
+      const b = await invoke<string | null>("db_get_ui_state", { key: BOARDFRAC_KEY });
+      if (b) this.boardFrac = clampFrac(parseFloat(b) || 0.42);
+    } catch {}
     this.initialized = true;
+  }
+
+  panelHeight(id: string): number {
+    return this.panelHeights[id] ?? DEFAULT_PANEL_HEIGHT;
+  }
+
+  setPanelHeight(id: string, px: number): void {
+    this.panelHeights = { ...this.panelHeights, [id]: Math.max(MIN_PANEL_HEIGHT, px) };
+    if (this.initialized) {
+      invoke("db_set_ui_state", { key: HEIGHTS_KEY, value: JSON.stringify(this.panelHeights) }).catch(() => {});
+    }
+  }
+
+  setTimelineFrac(frac: number): void {
+    this.timelineFrac = clampFrac(frac);
+    if (this.initialized) {
+      invoke("db_set_ui_state", { key: TLFRAC_KEY, value: this.timelineFrac.toFixed(4) }).catch(() => {});
+    }
+  }
+
+  setBoardFrac(frac: number): void {
+    this.boardFrac = clampFrac(frac);
+    if (this.initialized) {
+      invoke("db_set_ui_state", { key: BOARDFRAC_KEY, value: this.boardFrac.toFixed(4) }).catch(() => {});
+    }
   }
 
   isOpen(id: string): boolean {
@@ -93,6 +143,10 @@ class LayoutStore {
 
 function clamp(px: number): number {
   return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, px));
+}
+
+function clampFrac(f: number): number {
+  return Math.max(MIN_TL_FRAC, Math.min(MAX_TL_FRAC, f));
 }
 
 export const layoutStore = new LayoutStore();

@@ -13,6 +13,7 @@
   import { agentStore } from "$lib/stores/agentStore.svelte";
   import { liveAgentStore } from "$lib/toolbox/liveAgentStore.svelte";
   import type { AgentContext } from "$lib/toolbox/types";
+  import Splitter from "$lib/ui/Splitter.svelte";
 
   let activeAgent = $derived(agentStore.getAgent(agentStore.activeTabId ?? ""));
   let live = $derived(activeAgent ? liveAgentStore.byAgent.get(activeAgent.id) ?? null : null);
@@ -30,20 +31,9 @@
       : null,
   );
 
-  // --- Dock resize (drag the handle on the dock's left edge) ---
-  let resizing = $state(false);
-  function startResize(e: PointerEvent) {
-    resizing = true;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }
-  function onResize(e: PointerEvent) {
-    if (!resizing) return;
-    // Dock is on the right; width grows as the pointer moves left.
-    layoutStore.setWidth(window.innerWidth - e.clientX - 44);
-  }
-  function endResize(e: PointerEvent) {
-    resizing = false;
-    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+  // Dock is on the right; dragging the handle left (negative dx) grows it.
+  function resizeDock(dx: number) {
+    layoutStore.setWidth(layoutStore.dockWidth - dx);
   }
 </script>
 
@@ -57,18 +47,16 @@
   </div>
 
   {#if layoutStore.openPanels.length > 0}
-    <div
-      class="resize"
-      class:active={resizing}
-      role="separator"
-      aria-label="Resize panels"
-      onpointerdown={startResize}
-      onpointermove={onResize}
-      onpointerup={endResize}
-    ></div>
+    <Splitter axis="x" onresize={resizeDock} />
     <aside class="dock" style="width:{layoutStore.dockWidth}px">
-      {#each layoutStore.openPanels as id (id)}
-        <Panel panelId={id} {agentContext} />
+      {#each layoutStore.openPanels as id, i (id)}
+        {@const last = i === layoutStore.openPanels.length - 1}
+        <div class="dock-item" style={last ? "flex:1 1 auto" : `height:${layoutStore.panelHeight(id)}px`}>
+          <Panel panelId={id} {agentContext} />
+        </div>
+        {#if !last}
+          <Splitter axis="y" onresize={(d) => layoutStore.setPanelHeight(id, layoutStore.panelHeight(id) + d)} />
+        {/if}
       {/each}
     </aside>
   {/if}
@@ -105,14 +93,6 @@
     min-height: 0;
     overflow: hidden;
   }
-  .resize {
-    width: 4px;
-    flex: none;
-    cursor: col-resize;
-    background: var(--border-subtle);
-    transition: background 0.12s;
-  }
-  .resize:hover, .resize.active { background: var(--accent); }
   .dock {
     flex: none;
     display: flex;
@@ -122,6 +102,7 @@
     border-left: 1px solid var(--border-subtle);
     overflow: hidden;
   }
+  .dock-item { flex: none; min-height: 0; display: flex; overflow: hidden; }
   .rail {
     width: 44px;
     flex: none;

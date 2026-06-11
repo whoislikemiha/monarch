@@ -42,8 +42,8 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    flex: 1 1 0;
-    border-bottom: 1px solid var(--border-subtle);
+    width: 100%;
+    height: 100%;
     overflow: hidden;
   }
   .panel-head {
