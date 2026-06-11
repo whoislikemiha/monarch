@@ -7,6 +7,7 @@
   import type { Agent } from "$lib/types";
   import { agentStore } from "$lib/stores/agentStore.svelte";
   import { liveAgentStore } from "$lib/toolbox/liveAgentStore.svelte";
+  import { layoutStore } from "$lib/layout/layoutStore.svelte";
   import { formatCost } from "$lib/format";
   import Avatar from "$lib/ui/Avatar.svelte";
   import { gradeLetter } from "$lib/ui/grade";
@@ -63,6 +64,24 @@
     />
   {/if}
   {#if spend}<span class="spend mono">{spend}</span>{/if}
+
+  <span class="sep" aria-hidden="true"></span>
+
+  <button
+    class="hbtn"
+    title={layoutStore.workspaceOrient === "h" ? "Stack timeline & chat" : "Place side by side"}
+    aria-label="Toggle layout orientation"
+    onclick={() => layoutStore.toggleOrient()}
+  >
+    {#if layoutStore.workspaceOrient === "h"}
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="2.5" width="11" height="4.5" rx="1"/><rect x="2.5" y="9" width="11" height="4.5" rx="1"/></svg>
+    {:else}
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="2.5" width="4.5" height="11" rx="1"/><rect x="9" y="2.5" width="4.5" height="11" rx="1"/></svg>
+    {/if}
+  </button>
+  <button class="hbtn" title="Swap timeline & chat" aria-label="Swap timeline and chat" onclick={() => layoutStore.swapWorkspace()}>
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4.5 5.5h7l-2-2M11.5 10.5h-7l2 2"/></svg>
+  </button>
 
   {#if streaming}
     <button class="hbtn danger" title="Stop" aria-label="Stop" onclick={() => binding.abort(agent)}>
@@ -130,6 +149,7 @@
   .status.live { color: var(--status-info); }
   .grow { flex: 1; min-width: var(--s3); }
   .spend { font-size: 11px; color: var(--text-muted); }
+  .sep { width: 1px; height: 18px; background: var(--border-subtle); margin: 0 var(--s1); flex: none; }
 
   .hbtn {
     width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
