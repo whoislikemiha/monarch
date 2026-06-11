@@ -574,6 +574,41 @@ class AgentStore {
     this.openTab(agentId);
   }
 
+  /**
+   * Switch the live agent to an existing persisted session (from history).
+   * Bumps viewKey so the workspace remounts and re-binds/seeds from that
+   * session, and replays its messages into the sidecar's LLM context.
+   */
+  async switchSession(agentId: string, sessionId: string): Promise<void> {
+    const agent = this.getAgent(agentId);
+    if (!agent || agent.sessionId === sessionId) return;
+    try {
+      await invoke("switch_agent_session", { agentId, sessionId });
+    } catch (e) {
+      console.error("Failed to switch session:", e);
+      return;
+    }
+    this.agents = this.agents.map((a) =>
+      a.id === agentId
+        ? {
+            ...a,
+            sessionId,
+            sourceSessionId: undefined,
+            viewKey: createViewKey(agentId),
+            sessions: [
+              ...(a.sessions.find((s) => s.sessionId === sessionId)
+                ? a.sessions.filter((s) => s.sessionId === sessionId)
+                : []),
+              ...a.sessions.filter((s) => s.sessionId !== sessionId),
+            ],
+          }
+        : a,
+    );
+    invoke("load_session_context", { agentId, sourceSessionId: sessionId }).catch((e) =>
+      console.error("Failed to load session context:", e),
+    );
+  }
+
   async spawnStoppedAgent(id: string): Promise<void> {
     const agent = this.getAgent(id);
     if (!agent || agent.status !== "stopped") return;

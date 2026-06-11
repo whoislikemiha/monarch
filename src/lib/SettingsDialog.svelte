@@ -138,8 +138,8 @@
 
   .dialog {
     background: var(--bg-panel);
-    border: 1px solid var(--border-subtle);
-    border-radius: 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-lg);
     width: 720px;
     max-width: 90vw;
     height: 520px;
@@ -160,10 +160,9 @@
 
   .dialog-header h2 {
     margin: 0;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-primary);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
   .dialog-body {
