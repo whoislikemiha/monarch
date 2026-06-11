@@ -10,8 +10,12 @@
   interface Props {
     content: ContentBlock[];
     streaming?: boolean;
+    /** Final turn duration (ms) for a committed message. Rendered inline. */
+    durationMs?: number | null;
+    /** Wall-clock anchor (ms) for the in-flight turn; drives the live counter. */
+    turnStartedAtMs?: number | null;
   }
-  let { content, streaming = false }: Props = $props();
+  let { content, streaming = false, durationMs = null, turnStartedAtMs = null }: Props = $props();
 
   let expanded = $state(new Set<number>());
   function toggle(i: number) {
@@ -24,6 +28,32 @@
     if (block.type !== "thinking") return "Thinking";
     const d = formatDuration(block._monarch?.durationMs);
     return d ? `Thought for ${d}` : "Thinking";
+  }
+
+  // Live elapsed ticker — only runs while this turn is streaming.
+  let now = $state(Date.now());
+  $effect(() => {
+    if (!streaming) return;
+    const id = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(id);
+  });
+
+  // While generating: count up from the turn anchor. Once committed: final
+  // duration. Falls back to a bare counting state before the anchor lands.
+  let elapsed = $derived(
+    streaming
+      ? turnStartedAtMs != null
+        ? formatElapsed(now - turnStartedAtMs)
+        : null
+      : formatDuration(durationMs),
+  );
+
+  // Like formatDuration but shows "0 sec" from the first tick instead of
+  // hiding sub-1-second values — a live counter that starts blank reads broken.
+  function formatElapsed(ms: number): string {
+    const sec = Math.max(0, Math.floor(ms / 1000));
+    if (sec < 60) return `${sec} sec`;
+    return formatDuration(sec * 1000) ?? `${sec} sec`;
   }
 </script>
 
@@ -46,7 +76,14 @@
       <img class="img" src={`data:${block.mimeType};base64,${block.data}`} alt="attachment" />
     {/if}
   {/each}
-  {#if streaming}<span class="caret"></span>{/if}
+  {#if streaming || elapsed}
+    <div class="foot">
+      {#if streaming}<span class="caret"></span>{/if}
+      {#if elapsed}
+        <span class="elapsed mono" class:live={streaming}>{elapsed}</span>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -80,6 +117,10 @@
   .prose :global(blockquote) { margin: 0 0 var(--s2); padding-left: var(--s3); border-left: 2px solid var(--border); color: var(--text-muted); }
 
   .img { max-width: 280px; border-radius: var(--r-md); border: 1px solid var(--border-subtle); }
+
+  .foot { display: flex; align-items: center; gap: var(--s2); }
+  .elapsed { font-size: 10.5px; color: var(--text-muted); }
+  .elapsed.live { color: var(--text-secondary); }
   .caret { display: inline-block; width: 7px; height: 14px; background: var(--accent); vertical-align: -2px; animation: blink 1.1s steps(2, start) infinite; }
   @keyframes blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
 </style>

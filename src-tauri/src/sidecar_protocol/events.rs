@@ -621,32 +621,21 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
     let outcome = match event {
         InnerEvent::AgentStart => {
             state.activity_status = "Agent processing...".to_string();
-            // MON-71: stamp agent-span start so AgentEnd can decorate the
-            // "finished" status line with elapsed time.
+            // MON-71: stamp agent-span start. The per-turn duration shown
+            // next to each assistant message (see AssistantBlock) supersedes
+            // the old "Agent started"/"Agent finished" status lines, so we no
+            // longer push a boundary marker here.
             state.agent_started_at_ms = Some(now_ms());
-            state.items.push(DisplayItem::Status {
-                text: "Agent started".to_string(),
-            });
             ApplyOutcome::EmitNow
         }
         InnerEvent::AgentEnd => {
             state.activity_status = String::new();
             state.is_streaming = false;
             state.commit_streaming_message();
-            // MON-71: "Agent finished in 2 min 14 sec". Omit the suffix
-            // (and show plain "Agent finished") when we never saw an
-            // AgentStart (replayed session) or when the span was
-            // sub-1-second — matches the TS formatter's null behaviour.
-            let text = match state
-                .agent_started_at_ms
-                .take()
-                .map(|start| now_ms().saturating_sub(start))
-                .and_then(crate::agent::state::format_duration_ms)
-            {
-                Some(d) => format!("Agent finished in {}", d),
-                None => "Agent finished".to_string(),
-            };
-            state.items.push(DisplayItem::Status { text });
+            // MON-71: span end. The elapsed time now lives on each assistant
+            // message's `durationMs` (rendered inline by AssistantBlock), so we
+            // drop the standalone "Agent finished" status line.
+            state.agent_started_at_ms.take();
             ApplyOutcome::EmitNow
         }
         InnerEvent::TurnStart => {
