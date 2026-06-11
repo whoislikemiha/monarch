@@ -10,12 +10,8 @@
   interface Props {
     content: ContentBlock[];
     streaming?: boolean;
-    /** Final turn duration (ms) for a committed message. Rendered inline. */
-    durationMs?: number | null;
-    /** Wall-clock anchor (ms) for the in-flight turn; drives the live counter. */
-    turnStartedAtMs?: number | null;
   }
-  let { content, streaming = false, durationMs = null, turnStartedAtMs = null }: Props = $props();
+  let { content, streaming = false }: Props = $props();
 
   let expanded = $state(new Set<number>());
   function toggle(i: number) {
@@ -24,10 +20,30 @@
     expanded = new Set(expanded);
   }
 
-  function thinkingLabel(block: ContentBlock): string {
-    if (block.type !== "thinking") return "Thinking";
-    const d = formatDuration(block._monarch?.durationMs);
-    return d ? `Thought for ${d}` : "Thinking";
+  /**
+   * Client-side start anchors for in-flight thinking blocks so the toggle can
+   * show a live counter before Rust injects the real `durationMs` at block
+   * end (which then replaces the approximation).
+   */
+  const thinkingStartedAt = new Map<number, number>();
+  $effect(() => {
+    if (!streaming) return;
+    const last = content.length - 1;
+    if (content[last]?.type === "thinking" && !thinkingStartedAt.has(last)) {
+      thinkingStartedAt.set(last, Date.now());
+    }
+  });
+
+  function thinkingSeconds(block: ContentBlock, i: number): string | null {
+    if (block.type !== "thinking") return null;
+    const d = block._monarch?.durationMs;
+    if (d != null) return formatDuration(d);
+    // Still thinking — tick from the moment the block first appeared.
+    if (streaming && i === content.length - 1) {
+      const start = thinkingStartedAt.get(i);
+      if (start != null) return formatElapsed(now - start);
+    }
+    return null;
   }
 
   // Live elapsed ticker — only runs while this turn is streaming.
@@ -37,16 +53,6 @@
     const id = setInterval(() => (now = Date.now()), 1000);
     return () => clearInterval(id);
   });
-
-  // While generating: count up from the turn anchor. Once committed: final
-  // duration. Falls back to a bare counting state before the anchor lands.
-  let elapsed = $derived(
-    streaming
-      ? turnStartedAtMs != null
-        ? formatElapsed(now - turnStartedAtMs)
-        : null
-      : formatDuration(durationMs),
-  );
 
   // Like formatDuration but shows "0 sec" from the first tick instead of
   // hiding sub-1-second values — a live counter that starts blank reads broken.
@@ -63,7 +69,11 @@
       <div class="think">
         <button class="think-toggle" onclick={() => toggle(i)}>
           <span class="chev" class:open={expanded.has(i)} aria-hidden="true">›</span>
-          {thinkingLabel(block)}
+          Thinking
+          {#if thinkingSeconds(block, i)}
+            <span class="think-sep" aria-hidden="true">·</span>
+            <span class="think-secs mono">{thinkingSeconds(block, i)}</span>
+          {/if}
         </button>
         {#if expanded.has(i)}
           <div class="think-body">{block.thinking}</div>
@@ -76,12 +86,9 @@
       <img class="img" src={`data:${block.mimeType};base64,${block.data}`} alt="attachment" />
     {/if}
   {/each}
-  {#if streaming || elapsed}
+  {#if streaming}
     <div class="foot">
-      {#if streaming}<span class="caret"></span>{/if}
-      {#if elapsed}
-        <span class="elapsed mono" class:live={streaming}>{elapsed}</span>
-      {/if}
+      <span class="caret"></span>
     </div>
   {/if}
 </div>
@@ -96,6 +103,8 @@
     font: inherit; font-size: 11px; color: var(--text-muted);
   }
   .think-toggle:hover { color: var(--text-secondary); }
+  .think-sep { color: var(--border); }
+  .think-secs { font-size: 10px; color: var(--text-muted); }
   .chev { transition: transform 0.15s; }
   .chev.open { transform: rotate(90deg); }
   .think-body {
@@ -119,8 +128,6 @@
   .img { max-width: 280px; border-radius: var(--r-md); border: 1px solid var(--border-subtle); }
 
   .foot { display: flex; align-items: center; gap: var(--s2); }
-  .elapsed { font-size: 10.5px; color: var(--text-muted); }
-  .elapsed.live { color: var(--text-secondary); }
   .caret { display: inline-block; width: 7px; height: 14px; background: var(--accent); vertical-align: -2px; animation: blink 1.1s steps(2, start) infinite; }
   @keyframes blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
 </style>
