@@ -58,17 +58,6 @@
   <section class="pane timeline" style="flex-grow:{layoutStore.timelineFrac}" aria-label="Work timeline">
     <div class="pane-head">
       <span class="t">Timeline</span>
-      <div class="grow"></div>
-      <button class="arr" title={orient === "h" ? "Stack vertically" : "Place side by side"} aria-label="Toggle orientation" onclick={() => layoutStore.toggleOrient()}>
-        {#if orient === "h"}
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="2.5" width="11" height="4.5" rx="1"/><rect x="2.5" y="9" width="11" height="4.5" rx="1"/></svg>
-        {:else}
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="2.5" width="4.5" height="11" rx="1"/><rect x="9" y="2.5" width="4.5" height="11" rx="1"/></svg>
-        {/if}
-      </button>
-      <button class="arr" title="Swap timeline and chat" aria-label="Swap" onclick={() => layoutStore.swapWorkspace()}>
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 5h8l-2-2M12 11H4l2 2"/></svg>
-      </button>
     </div>
     <div class="pane-body">
       <TimelinePane {agent} onask={askAbout} />
@@ -135,11 +124,5 @@
     font-size: 10px; font-weight: 600; letter-spacing: 0.14em;
     text-transform: uppercase; color: var(--text-muted);
   }
-  .pane-head .grow { flex: 1; }
-  .arr {
-    width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
-    background: none; border: none; border-radius: var(--r-sm); color: var(--text-muted); cursor: pointer;
-  }
-  .arr:hover { background: var(--bg-raised); color: var(--text-primary); }
   .pane-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s4); }
 </style>
