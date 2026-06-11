@@ -6,7 +6,6 @@
   import type { Agent } from "$lib/types";
   import { agentStore } from "$lib/stores/agentStore.svelte";
   import { liveAgentStore, abortAgent } from "$lib/toolbox/liveAgentStore.svelte";
-  import { formatCost } from "$lib/format";
   import Avatar from "$lib/ui/Avatar.svelte";
   import { gradeLetter } from "$lib/ui/grade";
 
@@ -24,28 +23,10 @@
   let active = $derived(agent.id === agentStore.activeTabId);
 
   let grade = $derived(gradeLetter(agent.shadow?.shadowGrade));
-  let spend = $derived(formatCost(agent.lifetimeCost));
   let model = $derived(agent.model ?? "");
 
-  let presence = $derived(
-    streaming
-      ? "var(--status-info)"
-      : archived
-        ? "var(--text-muted)"
-        : agent.status === "error"
-          ? "var(--status-error)"
-          : agent.status === "stopped"
-            ? "var(--text-muted)"
-            : "var(--status-success)",
-  );
-
-  let statusLine = $derived.by(() => {
-    if (streaming) return live?.activityStatus || "Working…";
-    if (archived) return "Dismissed";
-    if (agent.status === "stopped") return "Paused";
-    if (agent.status === "error") return "Error";
-    return live?.activityStatus || "Idle";
-  });
+  // Only error gets a pip; working is shown by the animated ring; idle = nothing.
+  let presence = $derived(agent.status === "error" ? "var(--status-error)" : null);
 </script>
 
 <div
@@ -64,6 +45,7 @@
     size={32}
     {grade}
     {presence}
+    working={streaming}
     avatarType={agent.avatarType}
     avatarPath={agent.avatarPath}
   />
@@ -80,10 +62,6 @@
       {:else}
         <button class="act rowbtn dismiss" title="Dismiss" aria-label="Dismiss {agent.name}" onclick={(e) => { e.stopPropagation(); ondismiss?.(agent); }}>×</button>
       {/if}
-    </div>
-    <div class="sub">
-      <span class="status" class:live={streaming}>{statusLine}</span>
-      {#if spend}<span class="spend mono">{spend}</span>{/if}
     </div>
     {#if model}<div class="model mono" title={model}>{model}</div>{/if}
   </div>
@@ -122,14 +100,6 @@
     border: 1px solid color-mix(in srgb, var(--gc) 40%, transparent);
     background: color-mix(in srgb, var(--gc) 10%, transparent);
   }
-
-  .sub { display: flex; align-items: baseline; gap: var(--s2); min-width: 0; }
-  .status {
-    font-size: 10.5px; color: var(--text-muted);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1;
-  }
-  .status.live { color: var(--status-info); }
-  .spend { font-size: 10px; color: var(--text-muted); flex: none; }
 
   .model {
     font-size: 10px; color: var(--text-muted); line-height: 1.4;

@@ -27,15 +27,11 @@
   let streaming = $derived(!!live?.isStreaming);
   let grade = $derived(gradeLetter(agent.shadow?.shadowGrade));
   let spend = $derived(formatCost(agent.lifetimeCost));
-  let presence = $derived(
-    streaming ? "var(--status-info)" : agent.status === "error" ? "var(--status-error)"
-      : agent.status === "stopped" ? "var(--text-muted)" : "var(--status-success)",
-  );
-  let status = $derived(
-    streaming ? (live?.activityStatus || "Working…")
-      : agent.status === "stopped" ? "Paused"
-        : (agent.shadow?.shadowTitle || agent.model || "Idle"),
-  );
+  let model = $derived(agent.model ?? "");
+  // Error gets a pip; working shows via the avatar ring; idle = nothing.
+  let presence = $derived(agent.status === "error" ? "var(--status-error)" : null);
+  // Only narrate when actually working; otherwise the model line carries identity.
+  let liveStatus = $derived(streaming ? live?.activityStatus || "Working…" : "");
 
   let menuOpen = $state(false);
   let showHistory = $state(false);
@@ -48,11 +44,17 @@
 </script>
 
 <header class="head">
-  <Avatar name={agent.name} size={28} {grade} {presence} avatarType={agent.avatarType} avatarPath={agent.avatarPath} />
-  <span class="nm">{agent.name}</span>
-  <span class="gchip mono" style="--gc:var(--grade-{grade.toLowerCase()})">{grade}</span>
-  <span class="dot" aria-hidden="true">·</span>
-  <span class="status" class:live={streaming}>{status}</span>
+  <Avatar name={agent.name} size={28} {grade} {presence} working={streaming} avatarType={agent.avatarType} avatarPath={agent.avatarPath} />
+  <div class="who">
+    <div class="line1">
+      <span class="nm">{agent.name}</span>
+      <span class="gchip mono" style="--gc:var(--grade-{grade.toLowerCase()})">{grade}</span>
+      {#if liveStatus}
+        <span class="status live">{liveStatus}</span>
+      {/if}
+    </div>
+    {#if model}<div class="model mono" title={model}>{model}</div>{/if}
+  </div>
 
   <div class="grow"></div>
 
@@ -137,17 +139,20 @@
     border-bottom: 1px solid var(--border-subtle);
     background: var(--bg-base);
   }
-  .nm { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .who { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .line1 { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+  .nm { font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 280px; }
   .gchip {
+    flex: none;
     display: inline-flex; align-items: center; justify-content: center;
     width: 16px; height: 16px; border-radius: var(--r-sm);
     font-size: 9.5px; font-weight: 700; color: var(--gc);
     border: 1px solid color-mix(in srgb, var(--gc) 40%, transparent);
     background: color-mix(in srgb, var(--gc) 10%, transparent);
   }
-  .dot { color: var(--text-muted); }
-  .status { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .status { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .status.live { color: var(--status-info); }
+  .model { font-size: 10.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
   .grow { flex: 1; min-width: var(--s3); }
   .spend { font-size: 11px; color: var(--text-muted); }
   .sep { width: 1px; height: 18px; background: var(--border-subtle); margin: 0 var(--s1); flex: none; }
