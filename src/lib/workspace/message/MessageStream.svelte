@@ -40,9 +40,18 @@
         <div class="bubble">{item.content}</div>
       </div>
     {:else if item.kind === "assistant"}
-      <div class="turn assistant">
-        <AssistantBlock content={item.content} durationMs={item.durationMs} />
-      </div>
+      {#if item.content.length === 0}
+        <!-- Empty assistant turn = the model returned no output (e.g. a codex
+             empty/errored completion). Render it as a visible failure instead
+             of a blank bubble so it doesn't read as a hang. -->
+        <div class="meta note error">
+          The model returned an empty response — no output. Retry, or start a new session if it persists.
+        </div>
+      {:else}
+        <div class="turn assistant">
+          <AssistantBlock content={item.content} durationMs={item.durationMs} />
+        </div>
+      {/if}
     {:else if item.kind === "tool-group"}
       <div class="turn tools">
         <ToolGroupBlock executions={item.executions} />
