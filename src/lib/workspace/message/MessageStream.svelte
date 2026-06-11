@@ -55,7 +55,7 @@
             <Avatar name={agent.name} size={24} avatarType={agent.avatarType} avatarPath={agent.avatarPath} />
             <span class="speaker-name">{agent.name}</span>
           </div>
-          <AssistantBlock content={item.content} durationMs={item.durationMs} />
+          <AssistantBlock content={item.content} />
         </div>
       {/if}
     {:else if item.kind === "tool-group"}
@@ -75,11 +75,7 @@
         <Avatar name={agent.name} size={24} avatarType={agent.avatarType} avatarPath={agent.avatarPath} />
         <span class="speaker-name">{agent.name}</span>
       </div>
-      <AssistantBlock
-        content={streamingMessage.content}
-        streaming
-        turnStartedAtMs={streamingMessage.turnStartedAtMs}
-      />
+      <AssistantBlock content={streamingMessage.content} streaming />
     </div>
   {/if}
 </div>
