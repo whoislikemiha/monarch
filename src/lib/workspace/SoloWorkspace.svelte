@@ -13,11 +13,19 @@
   import ChatColumn from "./ChatColumn.svelte";
   import { LiveBinding } from "./liveBinding.svelte";
   import { chatStore } from "./chatStore.svelte";
+  import { layoutStore } from "$lib/layout/layoutStore.svelte";
+  import Splitter from "$lib/ui/Splitter.svelte";
 
   interface Props {
     agent: Agent;
   }
   let { agent }: Props = $props();
+
+  let splitEl: HTMLDivElement | undefined = $state();
+  function resizeSplit(dx: number) {
+    const w = splitEl?.clientWidth ?? 0;
+    if (w > 0) layoutStore.setTimelineFrac(layoutStore.timelineFrac + dx / w);
+  }
 
   const binding = new LiveBinding();
   onMount(() => {
@@ -42,15 +50,15 @@
 
 <div class="solo">
   <ShadowHeader {agent} {binding} />
-  <div class="split">
-    <section class="pane timeline" aria-label="Work timeline">
+  <div class="split" bind:this={splitEl}>
+    <section class="pane timeline" style="flex-grow:{layoutStore.timelineFrac}" aria-label="Work timeline">
       <div class="pane-head"><span class="t">Timeline</span></div>
       <div class="pane-body">
         <TimelinePane {agent} onask={askAbout} />
       </div>
     </section>
-    <div class="divider" aria-hidden="true"></div>
-    <section class="pane chat" aria-label="Chat">
+    <Splitter axis="x" onresize={resizeSplit} />
+    <section class="pane chat" style="flex-grow:{1 - layoutStore.timelineFrac}" aria-label="Chat">
       <ChatColumn {agent} {binding} />
     </section>
   </div>
@@ -79,7 +87,6 @@
     flex-direction: column;
     overflow: hidden;
   }
-  .divider { width: 1px; flex: none; background: var(--border-subtle); }
   .pane-head {
     display: flex;
     align-items: center;

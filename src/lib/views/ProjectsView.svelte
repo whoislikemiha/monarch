@@ -8,8 +8,16 @@
   import type { ObjectiveRow } from "$lib/bindings";
   import { agentStore } from "$lib/stores/agentStore.svelte";
   import { objectiveStore } from "$lib/toolbox/objectiveStore.svelte";
+  import { layoutStore } from "$lib/layout/layoutStore.svelte";
+  import Splitter from "$lib/ui/Splitter.svelte";
   import CampaignTree from "$lib/board/CampaignTree.svelte";
   import ObjectiveDetail from "$lib/board/ObjectiveDetail.svelte";
+
+  let boardEl: HTMLDivElement | undefined = $state();
+  function resizeBoard(dx: number) {
+    const w = boardEl?.clientWidth ?? 0;
+    if (w > 0) layoutStore.setBoardFrac(layoutStore.boardFrac + dx / w);
+  }
 
   let selectedProjectId = $state<string | null>(null);
   let selectedObjective = $state<ObjectiveRow | null>(null);
@@ -60,8 +68,8 @@
       </div>
     </header>
 
-    <div class="board">
-      <section class="tree-pane" aria-label="Campaign">
+    <div class="board" bind:this={boardEl}>
+      <section class="tree-pane" style="flex-grow:{layoutStore.boardFrac}" aria-label="Campaign">
         <div class="pane-head"><span class="t">Campaign</span></div>
         <div class="pane-body">
           {#if lensAgentId}
@@ -75,8 +83,8 @@
           {/if}
         </div>
       </section>
-      <div class="divider" aria-hidden="true"></div>
-      <section class="detail-pane" aria-label="Objective">
+      <Splitter axis="x" onresize={resizeBoard} />
+      <section class="detail-pane" style="flex-grow:{1 - layoutStore.boardFrac}" aria-label="Objective">
         {#if selectedObjective && lensAgentId}
           {#key selectedObjective.id}
             <ObjectiveDetail agentId={lensAgentId} objective={selectedObjective} />
@@ -106,9 +114,8 @@
   .pchip .slash { color: var(--accent); font-weight: 700; margin-right: 2px; }
 
   .board { flex: 1; display: flex; flex-direction: row; min-height: 0; min-width: 0; }
-  .tree-pane { flex: 0 0 42%; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  .detail-pane { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; }
-  .divider { width: 1px; flex: none; background: var(--border-subtle); }
+  .tree-pane { flex: 1 1 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .detail-pane { flex: 1 1 0; min-width: 0; min-height: 0; overflow-y: auto; }
   .pane-head { display: flex; align-items: center; height: 30px; flex: none; padding: 0 var(--s4); border-bottom: 1px solid var(--border-subtle); }
   .pane-head .t { font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); }
   .pane-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s4); }
