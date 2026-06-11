@@ -1,25 +1,27 @@
 <script lang="ts">
   import { open } from "@tauri-apps/plugin-dialog";
   import { invoke } from "$lib/api";
+  import Avatar from "$lib/ui/Avatar.svelte";
 
   interface AvatarPreset {
     label: string;
-    type: "rive" | "image";
     path: string;
   }
 
   const BUILT_IN_PRESETS: AvatarPreset[] = [
-    { label: "Shadow (animated)", type: "rive", path: "/avatars/shadow_animations.riv" },
-    { label: "Shadow (static)", type: "image", path: "/avatars/shadow_silhouette.svg" },
+    { label: "Shadow", path: "/avatars/shadow_silhouette.svg" },
   ];
 
   let {
     agentId,
+    name = "",
     avatarType = $bindable(undefined),
     avatarPath = $bindable(undefined),
   }: {
     agentId: string;
-    avatarType?: "rive" | "image";
+    /** Agent display name — drives the monogram preview. */
+    name?: string;
+    avatarType?: "image";
     avatarPath?: string;
   } = $props();
 
@@ -46,19 +48,23 @@
       .catch(() => { uploadedDataUrl = undefined; });
   });
 
+  const isMonogramSelected = $derived(avatarType !== "image" || !avatarPath);
+
   function isSelected(preset: AvatarPreset): boolean {
-    if (!avatarType && preset.type === "rive" && preset.path === "/avatars/shadow_animations.riv") {
-      return true;
-    }
-    return avatarType === preset.type && avatarPath === preset.path;
+    return avatarType === "image" && avatarPath === preset.path;
   }
 
   const isCustomSelected = $derived(
     avatarType === "image" && !!avatarPath && !avatarPath.startsWith("/avatars/")
   );
 
+  function selectMonogram(): void {
+    avatarType = undefined;
+    avatarPath = undefined;
+  }
+
   function selectPreset(preset: AvatarPreset): void {
-    avatarType = preset.type;
+    avatarType = "image";
     avatarPath = preset.path;
   }
 
@@ -96,6 +102,17 @@
 
 <div class="avatar-picker">
   <div class="presets">
+    <button
+      class="preset-card"
+      class:selected={isMonogramSelected}
+      onclick={selectMonogram}
+      type="button"
+      title="Monogram"
+    >
+      <Avatar {name} size={44} />
+      <span class="preset-label">Monogram</span>
+    </button>
+
     {#each BUILT_IN_PRESETS as preset (preset.path)}
       <button
         class="preset-card"
@@ -104,18 +121,7 @@
         type="button"
         title={preset.label}
       >
-        {#if preset.type === "image"}
-          <img src={preset.path} alt={preset.label} class="preset-thumb" />
-        {:else}
-          <div class="preset-rive-thumb">
-            <svg viewBox="0 0 32 32" width="32" height="32" aria-hidden="true">
-              <circle cx="16" cy="16" r="14" fill="#1a1a2e" stroke="#7c3aed" stroke-width="1.5"/>
-              <circle cx="16" cy="16" r="8" fill="#7c3aed" opacity="0.4"/>
-              <ellipse cx="13" cy="16" rx="2" ry="2.5" fill="#c084fc"/>
-              <ellipse cx="19" cy="16" rx="2" ry="2.5" fill="#c084fc"/>
-            </svg>
-          </div>
-        {/if}
+        <img src={preset.path} alt={preset.label} class="preset-thumb" />
         <span class="preset-label">{preset.label}</span>
       </button>
     {/each}
@@ -187,14 +193,6 @@
     height: 44px;
     border-radius: 50%;
     object-fit: cover;
-  }
-
-  .preset-rive-thumb {
-    width: 44px;
-    height: 44px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
   }
 
   .preset-label {

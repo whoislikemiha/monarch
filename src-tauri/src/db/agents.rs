@@ -30,10 +30,10 @@ pub struct AgentRow {
     /// Archive preserves the DB row (history, sessions, stats) but removes
     /// the shadow from the default active roster. See `archive_agent_internal`.
     pub archived_at: Option<String>,
-    /// MON-73: "rive" | "image" | null (null = default rive preset).
+    /// MON-73: "image" | null (null = monogram fallback).
     pub avatar_type: Option<String>,
-    /// MON-73: For "rive": path to .riv file (null = default). For "image":
-    /// built-in web path ("/avatars/foo.png") or absolute filesystem path.
+    /// MON-73: built-in web path ("/avatars/foo.png") or absolute
+    /// filesystem path to an uploaded image.
     pub avatar_path: Option<String>,
 }
 

@@ -65,7 +65,7 @@
 
 <div class="thread">
   {#if hasMessages}
-    <MessageStream {items} streamingMessage={streamingMine ? live.streamingMessage : null} />
+    <MessageStream {agent} {items} streamingMessage={streamingMine ? live.streamingMessage : null} />
   {:else}
     <div class="blank">
       <p class="hint">

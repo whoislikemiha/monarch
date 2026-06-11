@@ -2,7 +2,7 @@
   import type { ToolProps } from "../types";
   import type { PlanItemRow, ObjectiveEventRow, ObjectiveRefRow, ObjectiveRow } from "../../bindings";
   import { objectiveStore } from "../objectiveStore.svelte";
-  import ShadowAvatar from "../../avatar/ShadowAvatar.svelte";
+  import Avatar from "$lib/ui/Avatar.svelte";
   import { agentStore } from "../../stores/agentStore.svelte";
 
   let { agentContext }: ToolProps = $props();
@@ -985,10 +985,13 @@
                 >
                   <span class="disclosure">{expanded ? "▾" : "▸"}</span>
                   {#if objective.assigneeShadowId}
+                    {@const assignee = agentStore.getAgent(objective.assigneeShadowId)}
                     <span class="avatar">
-                      <ShadowAvatar
-                        agentId={objective.assigneeShadowId}
+                      <Avatar
+                        name={assignee?.name ?? objective.assigneeShadowId}
                         size={18}
+                        avatarType={assignee?.avatarType}
+                        avatarPath={assignee?.avatarPath}
                       />
                     </span>
                   {/if}

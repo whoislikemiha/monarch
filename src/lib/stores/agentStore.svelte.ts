@@ -249,7 +249,7 @@ class AgentStore {
           sourceSessionId: latestSession?.id,
           archivedAt: row.archivedAt || undefined,
           lifetimeCost,
-          avatarType: (row.avatarType as "rive" | "image") || undefined,
+          avatarType: row.avatarType === "image" ? "image" : undefined,
           avatarPath: row.avatarPath || undefined,
         };
         loaded.push(agent);
@@ -745,7 +745,7 @@ class AgentStore {
     model?: string;
     thinkingLevel?: string;
     cwd?: string;
-    avatarType?: "rive" | "image";
+    avatarType?: "image";
     avatarPath?: string;
   }): Promise<void> {
     await invoke("db_update_agent", { payload: {
