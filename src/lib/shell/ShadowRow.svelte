@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * One shadow in the fleet rail: avatar (grade ring + presence pip) · name ·
-   * rank chip · one-line live status · spend · stop control when working.
+   * One shadow in the fleet rail: avatar (grade ring + presence pip) · name +
+   * rank · status + spend · full model name · stop/dismiss control.
    */
   import type { Agent } from "$lib/types";
   import { agentStore } from "$lib/stores/agentStore.svelte";
@@ -25,6 +25,7 @@
 
   let grade = $derived(gradeLetter(agent.shadow?.shadowGrade));
   let spend = $derived(formatCost(agent.lifetimeCost));
+  let model = $derived(agent.model ?? "");
 
   let presence = $derived(
     streaming
@@ -39,13 +40,11 @@
   );
 
   let statusLine = $derived.by(() => {
-    const liveStatus = live?.activityStatus || "";
-    const subtitle = agent.shadow?.shadowTitle || agent.model || "";
-    if (streaming) return liveStatus || "Working…";
+    if (streaming) return live?.activityStatus || "Working…";
     if (archived) return "Dismissed";
     if (agent.status === "stopped") return "Paused";
     if (agent.status === "error") return "Error";
-    return liveStatus || subtitle || "Idle";
+    return live?.activityStatus || "Idle";
   });
 </script>
 
@@ -72,34 +71,30 @@
     <div class="top">
       <span class="nm">{agent.name}</span>
       <span class="gchip mono" style="--gc:var(--grade-{grade.toLowerCase()})">{grade}</span>
+      {#if streaming}
+        <button class="act stop" title="Stop {agent.name}" aria-label="Stop {agent.name}" onclick={(e) => { e.stopPropagation(); void abortAgent(agent.id); }}>
+          <svg viewBox="0 0 24 24" width="9" height="9" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5" /></svg>
+        </button>
+      {:else if archived}
+        <button class="act rowbtn" title="Summon back" aria-label="Summon {agent.name}" onclick={(e) => { e.stopPropagation(); onsummon?.(agent); }}>↺</button>
+      {:else}
+        <button class="act rowbtn dismiss" title="Dismiss" aria-label="Dismiss {agent.name}" onclick={(e) => { e.stopPropagation(); ondismiss?.(agent); }}>×</button>
+      {/if}
     </div>
-    <div class="status" class:live={streaming}>{statusLine}</div>
-  </div>
-  <div class="trail">
-    {#if spend}<span class="spend mono">{spend}</span>{/if}
-    {#if streaming}
-      <button
-        class="stop"
-        title="Stop {agent.name}"
-        aria-label="Stop {agent.name}"
-        onclick={(e) => { e.stopPropagation(); void abortAgent(agent.id); }}
-      >
-        <svg viewBox="0 0 24 24" width="9" height="9" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5" /></svg>
-      </button>
-    {:else if archived}
-      <button class="rowbtn" title="Summon back" aria-label="Summon {agent.name}" onclick={(e) => { e.stopPropagation(); onsummon?.(agent); }}>↺</button>
-    {:else}
-      <button class="rowbtn dismiss" title="Dismiss" aria-label="Dismiss {agent.name}" onclick={(e) => { e.stopPropagation(); ondismiss?.(agent); }}>×</button>
-    {/if}
+    <div class="sub">
+      <span class="status" class:live={streaming}>{statusLine}</span>
+      {#if spend}<span class="spend mono">{spend}</span>{/if}
+    </div>
+    {#if model}<div class="model mono" title={model}>{model}</div>{/if}
   </div>
 </div>
 
 <style>
   .row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--s3);
-    padding: var(--s2) var(--s2);
+    padding: var(--s2);
     border: 1px solid transparent;
     border-radius: var(--r-md);
     cursor: pointer;
@@ -112,9 +107,10 @@
   .row.archived { opacity: 0.5; }
   .row.archived:hover { opacity: 0.8; }
 
-  .id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .top { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
   .nm {
+    flex: 1;
     font-size: 12.5px; font-weight: 600; color: var(--text-primary);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
   }
@@ -126,14 +122,22 @@
     border: 1px solid color-mix(in srgb, var(--gc) 40%, transparent);
     background: color-mix(in srgb, var(--gc) 10%, transparent);
   }
+
+  .sub { display: flex; align-items: baseline; gap: var(--s2); min-width: 0; }
   .status {
     font-size: 10.5px; color: var(--text-muted);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1;
   }
   .status.live { color: var(--status-info); }
+  .spend { font-size: 10px; color: var(--text-muted); flex: none; }
 
-  .trail { display: flex; align-items: center; gap: var(--s2); flex: none; }
-  .spend { font-size: 10px; color: var(--text-muted); }
+  .model {
+    font-size: 10px; color: var(--text-muted); line-height: 1.4;
+    word-break: break-all;
+  }
+
+  /* action buttons share a slot at the right of the name row */
+  .act { flex: none; }
   .stop {
     display: inline-flex; align-items: center; justify-content: center;
     width: 16px; height: 16px; padding: 0;
@@ -143,7 +147,6 @@
     color: var(--status-error); cursor: pointer;
   }
   .stop:hover { background: color-mix(in srgb, var(--status-error) 22%, transparent); }
-
   .rowbtn {
     width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center;
     padding: 0; background: none; border: none; border-radius: var(--r-sm);
