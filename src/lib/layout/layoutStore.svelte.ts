@@ -17,7 +17,6 @@ const HEIGHTS_KEY = "v2.layout.panelHeights";
 const TLFRAC_KEY = "v2.layout.timelineFrac";
 const BOARDFRAC_KEY = "v2.layout.boardFrac";
 const ORIENT_KEY = "v2.layout.workspaceOrient";
-const TLFIRST_KEY = "v2.layout.timelineFirst";
 
 const DEFAULT_WIDTH = 320;
 const MIN_WIDTH = 240;
@@ -40,10 +39,8 @@ class LayoutStore {
   timelineFrac = $state(0.5);
   /** Campaign-tree share of the Projects board split (0.2–0.8). */
   boardFrac = $state(0.42);
-  /** Solo workspace split orientation: "h" = side-by-side, "v" = stacked. */
+  /** Workspace tile-stack orientation: "h" = side-by-side, "v" = stacked. */
   workspaceOrient: "h" | "v" = $state("h");
-  /** Whether the timeline comes before the chat in the workspace order. */
-  timelineFirst = $state(true);
 
   private initialized = false;
 
@@ -76,21 +73,12 @@ class LayoutStore {
       const o = await invoke<string | null>("db_get_ui_state", { key: ORIENT_KEY });
       if (o === "h" || o === "v") this.workspaceOrient = o;
     } catch {}
-    try {
-      const tf = await invoke<string | null>("db_get_ui_state", { key: TLFIRST_KEY });
-      if (tf) this.timelineFirst = tf === "true";
-    } catch {}
     this.initialized = true;
   }
 
   toggleOrient(): void {
     this.workspaceOrient = this.workspaceOrient === "h" ? "v" : "h";
     if (this.initialized) invoke("db_set_ui_state", { key: ORIENT_KEY, value: this.workspaceOrient }).catch(() => {});
-  }
-
-  swapWorkspace(): void {
-    this.timelineFirst = !this.timelineFirst;
-    if (this.initialized) invoke("db_set_ui_state", { key: TLFIRST_KEY, value: String(this.timelineFirst) }).catch(() => {});
   }
 
   reorderPanels(fromIdx: number, toIdx: number): void {

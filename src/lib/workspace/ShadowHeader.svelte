@@ -19,8 +19,9 @@
   interface Props {
     agent: Agent;
     binding: LiveBinding;
+    onnewchat?: () => void;
   }
-  let { agent, binding }: Props = $props();
+  let { agent, binding, onnewchat }: Props = $props();
 
   let live = $derived(liveAgentStore.byAgent.get(agent.id));
   let streaming = $derived(!!live?.isStreaming);
@@ -67,9 +68,12 @@
 
   <span class="sep" aria-hidden="true"></span>
 
+  <button class="hbtn" title="New chat" aria-label="New chat" onclick={() => onnewchat?.()}>
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10v6H7l-3 2.5V10H3z"/></svg>
+  </button>
   <button
     class="hbtn"
-    title={layoutStore.workspaceOrient === "h" ? "Stack timeline & chat" : "Place side by side"}
+    title={layoutStore.workspaceOrient === "h" ? "Stack tiles vertically" : "Lay tiles side by side"}
     aria-label="Toggle layout orientation"
     onclick={() => layoutStore.toggleOrient()}
   >
@@ -78,9 +82,6 @@
     {:else}
       <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="2.5" width="4.5" height="11" rx="1"/><rect x="9" y="2.5" width="4.5" height="11" rx="1"/></svg>
     {/if}
-  </button>
-  <button class="hbtn" title="Swap timeline & chat" aria-label="Swap timeline and chat" onclick={() => layoutStore.swapWorkspace()}>
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4.5 5.5h7l-2-2M11.5 10.5h-7l2 2"/></svg>
   </button>
 
   {#if streaming}
