@@ -11,12 +11,24 @@
  * threads still need the attention-threads backend.
  */
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
+import { invoke } from "$lib/api";
 
 export const TIMELINE_TILE = "__timeline__";
 
 /** Stable default so reads before ensure() don't thrash derivations. */
 const DEFAULT_TILES: readonly string[] = [TIMELINE_TILE, "general"];
 const DEFAULT_GENERAL: ChatPane = { id: "general", scope: null, title: "Chat" };
+
+/** ui_state key holding one agent's persisted workspace arrangement. */
+const chatKey = (agentId: string) => `v2.chat.${agentId}`;
+
+/** Serialized shape stored in ui_state — tile order, panes, turn membership. */
+interface PersistedChat {
+  tiles: string[];
+  panes: ChatPane[];
+  turns: [number, string][];
+  seq: number;
+}
 
 export interface ChatScope {
   id: string;
@@ -40,10 +52,16 @@ class ChatStore {
   private turnsByAgent = new SvelteMap<string, SvelteMap<number, string>>();
   private primed = new SvelteSet<string>();
   private seq = 0;
+  /** Agents whose persisted arrangement has been loaded — gates writes so we
+   *  never clobber saved state with defaults before hydration completes. */
+  private hydrated = new Set<string>();
 
   /**
    * Initialize an agent's tiles. MUST be called from a non-reactive context
    * (onMount / event handler), never from a $derived — it mutates state.
+   *
+   * Seeds defaults synchronously (so the first render has tiles) then loads any
+   * persisted arrangement from ui_state and swaps it in when it arrives.
    */
   ensure(agentId: string): void {
     if (this.tilesByAgent.has(agentId)) return;
@@ -51,6 +69,47 @@ class ChatStore {
     const panes = new SvelteMap<string, ChatPane>();
     panes.set("general", { ...DEFAULT_GENERAL });
     this.panesByAgent.set(agentId, panes);
+    void this.hydrate(agentId);
+  }
+
+  /** Load this agent's saved arrangement and replace the in-memory defaults. */
+  private async hydrate(agentId: string): Promise<void> {
+    try {
+      const raw = await invoke<string | null>("db_get_ui_state", { key: chatKey(agentId) });
+      if (raw) {
+        const s = JSON.parse(raw) as PersistedChat;
+        const panes = new SvelteMap<string, ChatPane>();
+        for (const p of s.panes ?? []) panes.set(p.id, p);
+        if (!panes.has("general")) panes.set("general", { ...DEFAULT_GENERAL });
+        // Keep only tile ids we can still resolve (timeline or a known pane).
+        const tiles = (s.tiles ?? [...DEFAULT_TILES]).filter(
+          (t) => t === TIMELINE_TILE || panes.has(t),
+        );
+        if (!tiles.includes(TIMELINE_TILE)) tiles.unshift(TIMELINE_TILE);
+        this.panesByAgent.set(agentId, panes);
+        this.tilesByAgent.set(agentId, tiles);
+        const turns = new SvelteMap<number, string>();
+        for (const [ord, pid] of s.turns ?? []) turns.set(ord, panes.has(pid) ? pid : "general");
+        this.turnsByAgent.set(agentId, turns);
+        // seq is process-global; advance past every restored id so new panes
+        // can't collide with ones we just rehydrated.
+        this.seq = Math.max(this.seq, s.seq ?? 0);
+      }
+    } catch {}
+    this.hydrated.add(agentId);
+  }
+
+  /** Persist this agent's current arrangement. No-op until hydration finishes. */
+  private persist(agentId: string): void {
+    if (!this.hydrated.has(agentId)) return;
+    const panes = this.panesByAgent.get(agentId);
+    const data: PersistedChat = {
+      tiles: [...this.tiles(agentId)],
+      panes: panes ? [...panes.values()] : [],
+      turns: [...(this.turnsByAgent.get(agentId)?.entries() ?? [])],
+      seq: this.seq,
+    };
+    invoke("db_set_ui_state", { key: chatKey(agentId), value: JSON.stringify(data) }).catch(() => {});
   }
 
   /** Ordered tile ids for the workspace stack. Read-only — safe in derivations. */
@@ -76,6 +135,7 @@ class ChatStore {
     const id = `c${++this.seq}`;
     this.panesByAgent.get(agentId)!.set(id, { id, scope: null, title: "Chat" });
     this.tilesByAgent.set(agentId, [...this.tiles(agentId), id]);
+    this.persist(agentId);
     return id;
   }
 
@@ -87,6 +147,7 @@ class ChatStore {
     const id = `c${++this.seq}`;
     panes.set(id, { id, scope, title: scope.label });
     this.tilesByAgent.set(agentId, [...this.tiles(agentId), id]);
+    this.persist(agentId);
     return id;
   }
 
@@ -96,6 +157,7 @@ class ChatStore {
     this.tilesByAgent.set(agentId, this.tiles(agentId).filter((t) => t !== paneId));
     const turns = this.turnsByAgent.get(agentId);
     if (turns) for (const [ord, pid] of turns) if (pid === paneId) turns.set(ord, "general");
+    this.persist(agentId);
   }
 
   reorderTiles(agentId: string, fromIdx: number, toIdx: number): void {
@@ -104,6 +166,7 @@ class ChatStore {
     const [moved] = tiles.splice(fromIdx, 1);
     tiles.splice(toIdx, 0, moved);
     this.tilesByAgent.set(agentId, tiles);
+    this.persist(agentId);
   }
 
   // --- turn membership ---
@@ -119,6 +182,7 @@ class ChatStore {
 
   assignTurn(agentId: string, userOrdinal: number, paneId: string): void {
     this.turns(agentId).set(userOrdinal, paneId);
+    this.persist(agentId);
   }
 
   paneForOrdinal(agentId: string, userOrdinal: number): string {
