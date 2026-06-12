@@ -8,7 +8,7 @@
    * scrolls toward the past. The active card live-merges running tools from
    * the agent's in-flight state so the timeline never lags the work.
    */
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import type { Agent, ToolExecution } from "$lib/types";
   import { objectiveStore, type ObjectiveReportView } from "$lib/toolbox/objectiveStore.svelte";
   import { liveAgentStore } from "$lib/toolbox/liveAgentStore.svelte";
@@ -149,10 +149,16 @@
     }));
   });
 
+  /** Chronological, oldest-first — the timeline reads top-down like the
+   * chat; you scroll up for the past. The store keeps newest-first pages
+   * (that's the cursor direction); display reverses. */
   let segments = $derived(
-    tl
-      ? buildSegments(tl.entries, tl.childrenByParent, tl.objectivesById, extraToolRows)
-      : buildSegments([], new Map(), new Map(), extraToolRows),
+    buildSegments(
+      tl ? [...tl.entries].reverse() : [],
+      tl?.childrenByParent ?? new Map(),
+      tl?.objectivesById ?? new Map(),
+      extraToolRows,
+    ),
   );
 
   let hasContent = $derived(segments.length > 0 || (planItems.length > 0 && !!workingMemory));
@@ -187,18 +193,52 @@
     return () => clearTimeout(t);
   });
 
-  /** Infinite scroll: when the sentinel at the old end becomes visible, pull
-   * the next page. The scroll container clips it, so viewport-root IO works. */
+  /** The pane owns its scroller and anchors to the BOTTOM like the chat:
+   * newest at the bottom, scroll up for the past. */
+  let scroller = $state<HTMLElement | null>(null);
+  let pinned = true;
+  function onScroll() {
+    const el = scroller;
+    if (!el) return;
+    pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  }
+  $effect(() => {
+    // Re-run on stream growth; honor the captain's scroll position.
+    segments;
+    if (!pinned) return;
+    tick().then(() => {
+      const el = scroller;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  });
+
+  /** Infinite scroll INTO THE PAST: the sentinel sits at the top; loading an
+   * older page prepends content, so restore the scroll offset afterwards to
+   * keep the viewport visually still. */
+  let loadingOlder = false;
+  async function loadOlder() {
+    const el = scroller;
+    if (loadingOlder || !el) return;
+    loadingOlder = true;
+    const prevHeight = el.scrollHeight;
+    const prevTop = el.scrollTop;
+    try {
+      await timelineStore.loadMore(agent.id);
+      await tick();
+      el.scrollTop = el.scrollHeight - prevHeight + prevTop;
+    } catch {
+      /* surfaced via store error */
+    } finally {
+      loadingOlder = false;
+    }
+  }
   let sentinel = $state<HTMLElement | null>(null);
   $effect(() => {
     const el = sentinel;
-    const agentId = agent.id;
     if (!el) return;
     const io = new IntersectionObserver(
       (hits) => {
-        if (hits.some((h) => h.isIntersecting)) {
-          timelineStore.loadMore(agentId).catch(() => {});
-        }
+        if (hits.some((h) => h.isIntersecting)) void loadOlder();
       },
       { rootMargin: "200px" },
     );
@@ -230,21 +270,22 @@
     }
   });
 
-  /** Segment index → report, for the NEWEST segment of each closed objective
-   * (the close lives at the top of that segment in a newest-first stream). */
+  /** Segment index → report, for the LAST segment of each closed objective —
+   * in a chronological stream the close (and its report) reads at the end. */
   let reportBySegment = $derived.by(() => {
     const map = new Map<number, ObjectiveReportView>();
     const state = timelineStore.byAgent.get(agent.id);
     if (!state) return map;
     const seen = new Set<string>();
-    segments.forEach((segment, i) => {
-      if (seen.has(segment.objectiveId)) return;
+    for (let i = segments.length - 1; i >= 0; i--) {
+      const segment = segments[i];
+      if (seen.has(segment.objectiveId)) continue;
       seen.add(segment.objectiveId);
       const obj = segment.objective;
-      if (!obj || !TERMINAL.has(obj.status)) return;
+      if (!obj || !TERMINAL.has(obj.status)) continue;
       const report = state.reportsByObjective.get(segment.objectiveId);
       if (report) map.set(i, report);
-    });
+    }
     return map;
   });
 </script>
@@ -255,7 +296,16 @@
   {#if tl?.loading}
     <div class="empty mono">Loading the work record…</div>
   {:else if hasContent}
-    <div class="stream">
+    <div class="stream-scroll" bind:this={scroller} onscroll={onScroll}>
+      {#if tl?.hasMore}
+        <div class="more" bind:this={sentinel}>
+          <span class="mono">{tl.loadingMore ? "loading earlier work…" : "earlier work"}</span>
+        </div>
+      {:else if (tl?.entries.length ?? 0) > 0}
+        <div class="end mono">start of the record</div>
+      {/if}
+
+      <div class="stream">
       {#each segments as segment, si (segment.objectiveId + ":" + si)}
         <div class="segment">
           {#if segment.objectiveId !== ""}
@@ -265,9 +315,6 @@
                 <span class="seg-status mono">{statusLabel(segment.objective.status)}</span>
               {/if}
             </div>
-          {/if}
-          {#if reportBySegment.has(si)}
-            <TimelineReportCard report={reportBySegment.get(si)!} />
           {/if}
           {#each segment.items as item (item.event.id)}
             {#if item.kind === "action"}
@@ -303,16 +350,12 @@
               />
             {/if}
           {/each}
+          {#if reportBySegment.has(si)}
+            <TimelineReportCard report={reportBySegment.get(si)!} />
+          {/if}
         </div>
       {/each}
-
-      {#if tl?.hasMore}
-        <div class="more" bind:this={sentinel}>
-          <span class="mono">{tl.loadingMore ? "loading earlier work…" : "earlier work"}</span>
-        </div>
-      {:else if (tl?.entries.length ?? 0) > 0}
-        <div class="end mono">start of the record</div>
-      {/if}
+      </div>
     </div>
   {:else}
     <div class="empty mono">
@@ -330,6 +373,15 @@
     display: flex;
     flex-direction: column;
     gap: var(--s3);
+    flex: 1;
+    min-height: 0;
+  }
+  .stream-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
   }
   .stream { display: flex; flex-direction: column; gap: var(--s2); }
 

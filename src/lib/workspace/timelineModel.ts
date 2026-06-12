@@ -180,10 +180,11 @@ export function buildActionView(
 }
 
 /**
- * Group the feed (top-level entries newest-first) into objective segments —
- * consecutive runs on the same objective. Splitting on transition (not a
- * global group-by) keeps interleaved work honest: A → B → A renders as three
- * segments, which is what actually happened.
+ * Group the stream into objective segments — consecutive runs on the same
+ * objective. Input and output are CHRONOLOGICAL (oldest first): the timeline
+ * reads top-down like the chat; you scroll up for the past. Splitting on
+ * transition (not a global group-by) keeps interleaved work honest:
+ * A → B → A renders as three segments, which is what actually happened.
  */
 export function buildSegments(
   entries: ObjectiveEventRow[],
@@ -213,8 +214,8 @@ export function buildSegments(
   const all = pseudoRows.length
     ? [...entries, ...pseudoRows].sort((a, b) =>
         a.createdAt === b.createdAt
-          ? b.id.localeCompare(a.id)
-          : b.createdAt.localeCompare(a.createdAt),
+          ? a.id.localeCompare(b.id)
+          : a.createdAt.localeCompare(b.createdAt),
       )
     : entries;
 
@@ -249,8 +250,16 @@ export function buildSegments(
 }
 
 /** Frontend mirror of the backend's target extraction, for live (not yet
- * persisted) tool executions where we hold the full args. */
+ * persisted) tool executions where we hold the full args. Restored history
+ * stores args as a JSON string — parse before extracting. */
 export function extractClientTarget(toolName: string, args: unknown): string | null {
+  if (typeof args === "string") {
+    try {
+      args = JSON.parse(args);
+    } catch {
+      return null;
+    }
+  }
   if (!args || typeof args !== "object") return null;
   const o = args as Record<string, unknown>;
   const pick = (k: string) => str(o[k]);
@@ -272,12 +281,21 @@ export interface LiveToolExecution {
 }
 
 function liveToolToView(exec: LiveToolExecution): ToolCallView {
+  const target = extractClientTarget(exec.toolName, exec.args);
+  // No extractable target → fall back to a compact args preview so the row
+  // always shows WHAT ran, never just the tool name.
+  let argsPreview = "";
+  if (!target && exec.args != null) {
+    const raw = typeof exec.args === "string" ? exec.args : JSON.stringify(exec.args);
+    const compact = raw.split(/\s+/).join(" ");
+    argsPreview = compact.length <= 200 ? compact : `${compact.slice(0, 197)}...`;
+  }
   return {
     eventId: `live:${exec.toolCallId}`,
     toolCallId: exec.toolCallId,
     toolName: exec.toolName,
-    target: extractClientTarget(exec.toolName, exec.args),
-    argsPreview: "",
+    target,
+    argsPreview,
     resultPreview: null,
     status: exec.status,
     isError: exec.status === "error",

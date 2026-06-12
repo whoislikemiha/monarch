@@ -368,7 +368,8 @@ pub fn display_items_from_messages(
                     // executions keep their place in the chronological
                     // timeline. Status is terminal here, so no live ticker
                     // ever reads this — it's purely an ordering key.
-                    exec.started_at_ms = parse_timestamp(&msg.timestamp);
+                    // parse_timestamp yields SECONDS; this field is ms.
+                    exec.started_at_ms = parse_timestamp(&msg.timestamp).map(|s| s * 1000);
                     pending_tool_results.push(exec);
                 }
             }
