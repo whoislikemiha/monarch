@@ -23,6 +23,7 @@
   } from "./timelineModel";
   import NowStrip from "./NowStrip.svelte";
   import TimelineAction from "./TimelineAction.svelte";
+  import EventIcon from "$lib/ui/EventIcon.svelte";
 
   interface Props {
     agent: Agent;
@@ -235,7 +236,14 @@
               />
             {:else}
               <div class="mile">
-                <span class="mile-mark" aria-hidden="true"></span>
+                <span class="mile-mark">
+                  <EventIcon
+                    kind={item.event.eventType}
+                    size={11}
+                    tone={item.event.eventType === "blocker" ? "warning" : "neutral"}
+                    muted={item.event.eventType !== "blocker"}
+                  />
+                </span>
                 <span class="mile-label">{milestoneLabel(item.event.eventType, item.payload)}</span>
                 <span class="mile-time mono">{relTime(item.event.createdAt)}</span>
               </div>
@@ -302,9 +310,8 @@
     min-width: 0;
   }
   .mile-mark {
-    width: 5px; height: 5px; border-radius: var(--r-full);
-    background: var(--border-strong); flex: none; align-self: center;
-    margin: 0 4px 0 2px;
+    flex: none; align-self: center;
+    display: inline-flex; width: 14px; justify-content: center;
   }
   .mile-label {
     font-size: 11px; color: var(--text-muted); line-height: 1.5;

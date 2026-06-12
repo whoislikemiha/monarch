@@ -9,6 +9,7 @@
    */
   import type { ActionView, ToolCallView } from "./timelineModel";
   import { elapsedClock, fmtDuration, relTime } from "./timelineModel";
+  import EventIcon from "$lib/ui/EventIcon.svelte";
 
   interface Props {
     action: ActionView;
@@ -43,7 +44,9 @@
 
 <div class="act" class:active={phase === "active"} class:expanded>
   <span class="rail" aria-hidden="true">
-    <span class="node" class:active={phase === "active"} class:auto={phase === "auto"}></span>
+    <span class="node">
+      <EventIcon kind="action" size={13} tone={phase === "active" ? "info" : "neutral"} muted={phase === "auto"} />
+    </span>
   </span>
 
   <div class="body">
@@ -102,9 +105,10 @@
       <div class="children">
         {#each toolList as tool (tool.eventId)}
           <div class="tool" class:error={tool.isError} class:running={tool.status === "running"}>
+            <EventIcon kind="tool" size={10} tone={tool.isError ? "error" : "neutral"} muted={!tool.isError} />
             <span class="t-name mono">{tool.toolName}</span>
             {#if tool.target}
-              <span class="t-target mono" title={tool.target}>{tool.target}</span>
+              <span class="t-target mono trunc-head" title={tool.target}>{tool.target}</span>
             {:else if tool.argsPreview}
               <span class="t-target mono dim" title={tool.argsPreview}>{tool.argsPreview}</span>
             {/if}
@@ -123,6 +127,7 @@
         {/each}
         {#each action.decisions as d (d.eventId)}
           <div class="decision">
+            <EventIcon kind="decision" size={11} muted />
             <span class="d-label">decision</span>
             <span class="d-text">{d.decision}{d.rationale ? ` — ${d.rationale}` : ""}</span>
           </div>
@@ -130,7 +135,7 @@
         {#if action.filesTouched.length > 0}
           <div class="files-list">
             {#each action.filesTouched as f (f)}
-              <span class="f-path mono" title={f}>{f}</span>
+              <span class="f-path mono trunc-head" title={f}>{f}</span>
             {/each}
           </div>
         {/if}
@@ -163,12 +168,10 @@
     width: 1px; background: var(--border-subtle); transform: translateX(-0.5px);
   }
   .node {
-    width: 9px; height: 9px; margin-top: 5px; border-radius: var(--r-full);
-    background: var(--bg-overlay); border: 1.5px solid var(--border-strong);
-    position: relative; z-index: 1; flex: none;
+    margin-top: 3px; position: relative; z-index: 1; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-base); padding: 1px 0;
   }
-  .node.active { background: var(--status-info); border-color: var(--status-info); }
-  .node.auto { border-style: dashed; }
 
   .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 
@@ -217,6 +220,9 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .t-target.dim { opacity: 0.7; }
+  /* Head truncation: paths keep their TAIL visible (…/module.rs), never the
+   * head — the "path truncation" backport fix. RTL-ellipsis trick. */
+  .trunc-head { direction: rtl; text-align: left; unicode-bidi: isolate; }
   .t-end { flex: none; margin-left: auto; font-size: 9.5px; color: var(--text-muted); }
   .t-status.run { color: var(--status-info); }
   .t-status.err { color: var(--status-error); }

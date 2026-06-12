@@ -150,11 +150,20 @@
 .trow.leaf .chev { visibility: hidden; }
 .tkids { display: none; position: relative; padding-left: 0; }
 .tnode[data-open="true"] > .tkids { display: block; }
-/* indent guide — 1px vertical rule per nesting level */
+/* indent guide — 1px vertical rule per nesting level. Generalized past the
+   foundation's 2 hardcoded levels (the "deep-tree indent" backport fix,
+   MON-124): objective trees nest 3–5 deep; each level steps the same 20px so
+   depth 5 reads as cleanly as depth 1. Later rules win ties in source order. */
 .tkids > .tnode > .trow { padding-left: calc(var(--row-px) + 20px); }
 .tkids > .tnode > .tkids > .tnode > .trow { padding-left: calc(var(--row-px) + 40px); }
+.tkids .tkids .tkids > .tnode > .trow { padding-left: calc(var(--row-px) + 60px); }
+.tkids .tkids .tkids .tkids > .tnode > .trow { padding-left: calc(var(--row-px) + 80px); }
+.tkids .tkids .tkids .tkids .tkids > .tnode > .trow { padding-left: calc(var(--row-px) + 100px); }
 .tkids::before { content: ""; position: absolute; left: calc(var(--row-px) + 5px); top: 0; bottom: 0; width: 1px; background: var(--border); }
 .tkids .tkids::before { left: calc(var(--row-px) + 25px); }
+.tkids .tkids .tkids::before { left: calc(var(--row-px) + 45px); }
+.tkids .tkids .tkids .tkids::before { left: calc(var(--row-px) + 65px); }
+.tkids .tkids .tkids .tkids .tkids::before { left: calc(var(--row-px) + 85px); }
 
 /* — popover / tooltip — flat, no shadow — */
 .popover { width: 206px; background: var(--bg-overlay); border: 1px solid var(--border-strong); border-radius: var(--r-md); position: relative; }

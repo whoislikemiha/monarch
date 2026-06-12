@@ -158,6 +158,8 @@
   .path {
     font-size: 10px; color: var(--text-muted);
     min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    /* Head truncation — keep the leaf objective visible, clip the ancestry. */
+    direction: rtl; text-align: left; unicode-bidi: isolate;
   }
   .status { font-size: 9.5px; color: var(--text-muted); flex: none; margin-left: auto; }
   .no-obj { font-size: 10px; color: var(--text-muted); font-style: italic; }
