@@ -333,7 +333,11 @@ impl AgentManager {
         // acquire, cloned out, guard dropped before anything else — no
         // ordering question, no lock held across the awaits below.
         let (agents_snapshot, session_snapshot) = {
-            let guard = self.inner.lock();
+            let mut guard = self.inner.lock();
+            // MON-128: chat-shadow sessions died with the old sidecar and are
+            // NOT replayed here — they respawn lazily on the next chat input
+            // (ensure_chat_session). Forgetting them now keeps the map honest.
+            guard.chat_session_map.clear();
             (guard.agents.clone(), guard.session_map.clone())
         };
 

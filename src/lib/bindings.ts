@@ -12,6 +12,13 @@ import { invoke as __TAURI_INVOKE } from "./api";
 export const commands = {
 	spawnAgent: (req: SpawnAgentRequest) => typedError<null, ErrorDto>(__TAURI_INVOKE("spawn_agent", { req })),
 	sendCommand: (id: string, commandJson: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("send_command", { id, commandJson })),
+	/**
+	 *  MON-128 (P3): send a captain message to the agent's chat-shadow organ.
+	 *  Lazily spawns the chat Pi session on first use (same identity/config as
+	 *  the executor, `role='chat'` DB row continued in place). The reply streams
+	 *  back on `agent-chat-state-{agent_id}`.
+	 */
+	chatPrompt: (agentId: string, message: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("chat_prompt", { agentId, message })),
 	killAgent: (id: string, graceful: boolean | null) => typedError<null, ErrorDto>(__TAURI_INVOKE("kill_agent", { id, graceful })),
 	/**
 	 *  Return the current assembled live state for an agent. This is the "pull"
@@ -71,6 +78,58 @@ export const commands = {
 	 */
 	tokensSinceLastCompaction?: number,
 } | null, ErrorDto>(__TAURI_INVOKE("get_agent_state", { agentId })),
+	/**
+	 *  MON-128 (P3): pull half of the chat organ's pull-then-subscribe pattern —
+	 *  mirrors `get_agent_state` for the `agent-chat-state-{id}` channel.
+	 */
+	getAgentChatState: (agentId: string) => typedError<{
+	items: DisplayItem[],
+	/**
+	 *  Flat map from tool call id → execution. Serializes as a JS object.
+	 *  Phase 2's store adapter converts to a `Map` before handing to tool
+	 *  components so the `AgentContext.live` shape stays frozen.
+	 */
+	toolExecutions: { [key in string]: ToolExecution },
+	streamingMessage: StreamingMessage | null,
+	lastUsage: Usage | null,
+	activityStatus: string,
+	eventCount: number,
+	/**
+	 *  Set to true when the reader hit a parse failure or an out-of-order
+	 *  event it could not reconcile. Reset to false on the next `message_start`.
+	 */
+	desynced: boolean,
+	/**
+	 *  Monotonically increasing per-agent. The frontend reconciles by dropping
+	 *  any incoming snapshot whose version is <= its current entry version.
+	 */
+	stateVersion: number,
+	/**
+	 *  True while the agent is actively producing a turn. Drives the Abort
+	 *  button and the `ChatInput` disabled state on the frontend, plus the
+	 *  status dots in Sidebar/TabBar. Flipped on in `apply_event` at
+	 *  `MessageStart { assistant }` and `ToolExecutionStart`, off at
+	 *  `AgentEnd`. Tighter boundaries (`TurnEnd`, `MessageEnd`,
+	 *  `ToolExecutionEnd`) are intentionally avoided to prevent mid-turn
+	 *  flicker while tools run or the next LLM call spins up — a turn is
+	 *  not "done" until the agent stops talking and tools stop running.
+	 *  If Pi SDK ever starts firing `MessageEnd` mid-agent-turn (parallel
+	 *  tool calls) this policy needs to be revisited — see MON-40.
+	 */
+	isStreaming: boolean,
+	/**
+	 *  MON-100: running sum of `usage.input + output + cache_read + cache_write`
+	 *  across assistant `message_end` events since the last successful Keeper
+	 *  tick. The event handler compares this against soft/hard thresholds in
+	 *  `memory.toml` to decide when to dispatch a Keeper run; on a successful
+	 *  `keeper_result`, the handler resets it to 0. Seeded on cold restart from
+	 *  the DB via `rebuild_state_from_session` so the counter survives Monarch
+	 *  restarts. Sum components instead of trusting `total_tokens` so we know
+	 *  exactly what we're measuring (cache reads must count — the Anthropic
+	 *  200k-cache-read window is real context the LLM has loaded).
+	 */
+	tokensSinceLastCompaction?: number,
+} | null, ErrorDto>(__TAURI_INVOKE("get_agent_chat_state", { agentId })),
 	/**
 	 *  Rebuild the assembled `LiveAgentState` for an agent from a SQLite session
 	 *  and publish a snapshot on `agent-state-{id}`. Returns the new state so the

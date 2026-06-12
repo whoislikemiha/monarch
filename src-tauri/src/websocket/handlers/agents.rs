@@ -28,6 +28,30 @@ pub(crate) async fn send_command(state: &WsState, args: Value) -> Result<Value, 
     Ok(Value::Null)
 }
 
+/// MON-128 (P3): WS mirror of the `chat_prompt` Tauri command.
+pub(crate) async fn chat_prompt(state: &WsState, args: Value) -> Result<Value, MonarchError> {
+    let agent_id = str_field(&args, "agentId")?;
+    let message = str_field(&args, "message")?;
+    let app = state.agent_mgr.get_app_handle()?;
+    state
+        .agent_mgr
+        .chat_prompt(&app, &state.db, agent_id, Value::String(message))
+        .await?;
+    Ok(Value::Null)
+}
+
+/// MON-128 (P3): WS mirror of `get_agent_chat_state`.
+pub(crate) async fn get_agent_chat_state(
+    state: &WsState,
+    args: Value,
+) -> Result<Value, MonarchError> {
+    let agent_id = str_field(&args, "agentId")?;
+    match state.agent_mgr.get_chat_state(&agent_id).await {
+        Some(chat_state) => Ok(serde_json::to_value(chat_state)?),
+        None => Ok(Value::Null),
+    }
+}
+
 pub(crate) async fn kill_agent(state: &WsState, args: Value) -> Result<Value, MonarchError> {
     let id = str_field(&args, "id")?;
     state.agent_mgr.kill(&id).await?;

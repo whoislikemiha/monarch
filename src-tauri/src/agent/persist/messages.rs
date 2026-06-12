@@ -6,6 +6,7 @@ use tokio::sync::broadcast;
 use crate::agent::WsBroadcast;
 use crate::db::{Database, MessageRow, RecordObjectiveEventPayload, SetPlanPayload};
 use crate::error::MonarchError;
+use crate::sidecar_protocol::SessionRole;
 use crate::memory::index::MemoryIndex;
 use crate::persistence::write_attachment_bytes;
 use crate::sidecar_protocol::InnerEvent;
@@ -91,6 +92,7 @@ pub(crate) struct EventDurations {
 pub(crate) fn build_persist_commands(
     agent_id: &str,
     session_id: Option<String>,
+    session_role: SessionRole,
     event: &InnerEvent,
     inner_raw: Option<&serde_json::Value>,
     durations: EventDurations,
@@ -110,6 +112,103 @@ pub(crate) fn build_persist_commands(
     let Some(session_id) = session_id else {
         return cmds;
     };
+
+    // MON-128 (P3): the chat organ persists DIALOGUE ONLY — message rows so
+    // the conversation survives restarts (LoadSession replays them), nothing
+    // else. No timeline/objective rows (its reads are not work), no
+    // tool-usage/turn stats (those track the executor's specialization), no
+    // narration/plan handling (it doesn't have those tools).
+    if session_role == SessionRole::Chat {
+        match event {
+            InnerEvent::MessageEnd { message, .. } => {
+                let role = if message.role.is_empty() {
+                    "unknown".to_string()
+                } else {
+                    message.role.clone()
+                };
+                if role == "toolResult" {
+                    return cmds;
+                }
+                let content = message
+                    .content
+                    .as_ref()
+                    .map(|c| serde_json::to_string(c).unwrap_or_default())
+                    .unwrap_or_default();
+                let (tokens, cost) = match &message.usage {
+                    Some(u) => (u.total_tokens as i32, u.cost.total),
+                    None => (0, 0.0),
+                };
+                cmds.push(PersistCommand::SaveAssistantMessage {
+                    agent_id: agent_id.to_string(),
+                    message: MessageRow {
+                        id: 0,
+                        session_id,
+                        role,
+                        content,
+                        model: message.model.clone(),
+                        tokens,
+                        cost,
+                        timestamp: chrono_now(),
+                        duration_ms: durations.turn_duration_ms,
+                        attachments: Vec::new(),
+                    },
+                    attachments: Vec::new(),
+                    pending_classification_id: None,
+                });
+                // Chat tokens are real spend — they count toward the agent's
+                // lifetime stats even though turn/tool counters stay
+                // executor-only.
+                let (input_tokens, output_tokens, msg_cost) = match &message.usage {
+                    Some(u) => (u.input, u.output, u.cost.total),
+                    None => (0, 0, 0.0),
+                };
+                cmds.push(PersistCommand::IncrementAgentStats {
+                    agent_id: agent_id.to_string(),
+                    input_tokens,
+                    output_tokens,
+                    cost: msg_cost,
+                });
+            }
+            InnerEvent::ToolExecutionEnd {
+                tool_call_id,
+                tool_name,
+                result,
+                is_error,
+            } => {
+                // Persist the toolResult row so chat-session replay is
+                // faithful — but no timeline row, no usage stats.
+                let tool_name = tool_name.clone().unwrap_or_else(|| "unknown".to_string());
+                let result_str = result
+                    .as_ref()
+                    .map(|r| serde_json::to_string(r).unwrap_or_default())
+                    .unwrap_or_default();
+                let content = serde_json::json!({
+                    "toolCallId": tool_call_id,
+                    "toolName": tool_name,
+                    "result": result_str,
+                    "isError": *is_error,
+                })
+                .to_string();
+                cmds.push(PersistCommand::SaveToolResult {
+                    agent_id: agent_id.to_string(),
+                    message: MessageRow {
+                        id: 0,
+                        session_id,
+                        role: "toolResult".to_string(),
+                        content,
+                        model: None,
+                        tokens: 0,
+                        cost: 0.0,
+                        timestamp: chrono_now(),
+                        duration_ms: None,
+                        attachments: Vec::new(),
+                    },
+                });
+            }
+            _ => {}
+        }
+        return cmds;
+    }
 
     match event {
         InnerEvent::MessageEnd {

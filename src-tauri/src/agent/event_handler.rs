@@ -17,10 +17,10 @@ use tokio::sync::{broadcast, mpsc};
 use crate::agent::state::{ApplyOutcome, DisplayItem, LiveAgentState};
 use crate::db::Database;
 use crate::memory::index::MemoryIndex;
-use crate::sidecar_protocol::{apply_event, InnerEvent, SidecarCommand, SidecarEvent};
+use crate::sidecar_protocol::{apply_event, InnerEvent, SessionRole, SidecarCommand, SidecarEvent};
 
 use super::keeper::{handle_keeper_result, maybe_trigger_keeper};
-use super::manager::{AgentManagerInner, AgentStateEntry, InternalDispatch};
+use super::manager::{chat_state_key, AgentManagerInner, AgentStateEntry, InternalDispatch};
 use super::persist::{build_persist_commands, EventDurations, PersistCommand};
 use super::{WsBroadcast, DEBOUNCE_MILLIS};
 
@@ -28,8 +28,27 @@ use super::{WsBroadcast, DEBOUNCE_MILLIS};
 /// MON-34: reads the map through the single `parking_lot::Mutex` shared
 /// with `AgentManager`. Infallible — `parking_lot` doesn't poison — so the
 /// call site no longer has to branch on lock error.
-fn get_session_id(inner: &Arc<PlMutex<AgentManagerInner>>, agent_id: &str) -> Option<String> {
-    inner.lock().session_map.get(agent_id).cloned()
+fn get_session_id(
+    inner: &Arc<PlMutex<AgentManagerInner>>,
+    agent_id: &str,
+    role: SessionRole,
+) -> Option<String> {
+    let guard = inner.lock();
+    match role {
+        SessionRole::Executor => guard.session_map.get(agent_id).cloned(),
+        SessionRole::Chat => guard.chat_session_map.get(agent_id).cloned(),
+    }
+}
+
+/// MON-128 (P3): which `live_states` key a session-tagged event mutates.
+/// Executor events keep the bare agent id (every pre-P3 path unchanged);
+/// chat events ride the same map under a derived key with their own
+/// `agent-chat-state-{id}` topic.
+fn live_state_key(agent_id: &str, role: SessionRole) -> String {
+    match role {
+        SessionRole::Executor => agent_id.to_string(),
+        SessionRole::Chat => chat_state_key(agent_id),
+    }
 }
 
 /// Emit an event to both Tauri webview and WebSocket clients.
@@ -133,23 +152,40 @@ pub(super) async fn handle_sidecar_event(
         SidecarEvent::SessionReady {
             agent_id,
             context_window,
-            // MON-128 Slice B: parsed but not yet routed on — Slice C splits
-            // executor/chat handling per organ.
-            session_role: _,
+            session_role,
         } => {
             let event_name = format!("agent-event-{}", agent_id);
             let ready_event = serde_json::json!({
                 "type": "session_ready",
                 "agentId": agent_id,
                 "contextWindow": context_window,
+                "sessionRole": session_role,
             });
             emit_event(app, ws_tx, &event_name, &ready_event.to_string());
         }
 
         SidecarEvent::SessionDestroyed {
             agent_id,
-            session_role: _,
+            session_role,
         } => {
+            // MON-128: a chat-organ teardown is not an agent exit. Clear the
+            // chat entry + tracking and notify on its own channel; the
+            // executor's lifecycle events are untouched.
+            if session_role == SessionRole::Chat {
+                inner.lock().chat_session_map.remove(&agent_id);
+                if let Some((_, entry)) = live_states.remove(&chat_state_key(&agent_id)) {
+                    entry.cancel_generation.fetch_add(1, Ordering::Release);
+                }
+                let exit_event = format!("agent-chat-exit-{}", agent_id);
+                emit_event(
+                    app,
+                    ws_tx,
+                    &exit_event,
+                    &serde_json::json!(null).to_string(),
+                );
+                return;
+            }
+
             let exit_event = format!("agent-exit-{}", agent_id);
             emit_event(
                 app,
@@ -181,7 +217,7 @@ pub(super) async fn handle_sidecar_event(
         SidecarEvent::Event {
             agent_id,
             event: inner_event,
-            session_role: _,
+            session_role,
         } => {
             // Flip desync and stop here if the sidecar shipped an event type
             // the Rust side doesn't recognize. Pre-MON-32 this fell through
@@ -194,7 +230,8 @@ pub(super) async fn handle_sidecar_event(
                     agent_id, raw
                 );
                 if !agent_id.is_empty() {
-                    mark_agent_desynced(app, ws_tx, live_states, &agent_id).await;
+                    mark_desynced_for_role(app, ws_tx, live_states, &agent_id, session_role)
+                        .await;
                 }
                 return;
             }
@@ -205,7 +242,7 @@ pub(super) async fn handle_sidecar_event(
             // even if the session map mutates between enqueue and apply.
             // `send().await` intentionally back-pressures the reader if the
             // consumer is lagging — that is the point of a bounded channel.
-            let session_id = get_session_id(inner, &agent_id);
+            let session_id = get_session_id(inner, &agent_id, session_role);
             let inner_raw = raw_value.get("event");
             // MON-71: pre-apply peek at the live state for finalized durations
             // persisted alongside assistant/tool-result rows. MessageEnd uses
@@ -213,12 +250,22 @@ pub(super) async fn handle_sidecar_event(
             // `started_at_ms`. Reading before apply is load-bearing because
             // apply clears the turn anchor and writes the duration onto the
             // ToolExecution — peeking after would see the mutation.
-            let durations = compute_event_durations(live_states, &agent_id, &inner_event).await;
-            let current_objective_id =
-                current_objective_for_event(app, ws_tx, db, &agent_id, &inner_event).await;
+            let durations =
+                compute_event_durations(live_states, &agent_id, session_role, &inner_event).await;
+            // MON-128: the objective/timeline machinery is the EXECUTOR's
+            // record of work. Chat-organ events never resolve an objective
+            // (which would silently mint scratch objectives) and never land
+            // timeline rows — chat persists dialogue only.
+            let current_objective_id = match session_role {
+                SessionRole::Executor => {
+                    current_objective_for_event(app, ws_tx, db, &agent_id, &inner_event).await
+                }
+                SessionRole::Chat => None,
+            };
             for cmd in build_persist_commands(
                 &agent_id,
                 session_id,
+                session_role,
                 &inner_event,
                 inner_raw,
                 durations,
@@ -230,9 +277,10 @@ pub(super) async fn handle_sidecar_event(
                 }
             }
 
-            // Apply the event to per-agent LiveAgentState and decide whether
-            // to emit a snapshot now, debounce it, or skip.
-            apply_and_maybe_emit(app, ws_tx, live_states, &agent_id, &inner_event).await;
+            // Apply the event to the organ's LiveAgentState and decide
+            // whether to emit a snapshot now, debounce it, or skip.
+            apply_and_maybe_emit(app, ws_tx, live_states, &agent_id, session_role, &inner_event)
+                .await;
 
             // MON-100: continuous-compaction trigger checks. Run after the
             // event applied (so `tokens_since_last_compaction` reflects the
@@ -240,7 +288,10 @@ pub(super) async fn handle_sidecar_event(
             // for the soft threshold, MessageEnd for the hard threshold.
             // The dispatcher consumes via `Arc<AgentManager>` since
             // Keeper dispatch needs the sidecar pipe + db.
-            maybe_trigger_keeper(dispatch_tx, live_states, &agent_id, &inner_event).await;
+            // MON-128: executor-only — the Keeper never distills dialogue.
+            if session_role == SessionRole::Executor {
+                maybe_trigger_keeper(dispatch_tx, live_states, &agent_id, &inner_event).await;
+            }
         }
 
         SidecarEvent::ExtensionUiRequest {
@@ -564,9 +615,10 @@ async fn try_consume_debounce_snapshot(
 async fn compute_event_durations(
     live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
     agent_id: &str,
+    role: SessionRole,
     event: &InnerEvent,
 ) -> EventDurations {
-    let entry = match live_states.get(agent_id) {
+    let entry = match live_states.get(&live_state_key(agent_id, role)) {
         Some(e) => e.clone(),
         None => return EventDurations::default(),
     };
@@ -602,16 +654,17 @@ async fn apply_and_maybe_emit(
     ws_tx: &broadcast::Sender<WsBroadcast>,
     live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
     agent_id: &str,
+    role: SessionRole,
     inner_event: &InnerEvent,
 ) {
     if agent_id.is_empty() {
         return;
     }
 
-    // Lazy entry creation on first event for this agent.
+    // Lazy entry creation on first event for this agent + organ.
     let entry = live_states
-        .entry(agent_id.to_string())
-        .or_insert_with(|| Arc::new(AgentStateEntry::new(agent_id)))
+        .entry(live_state_key(agent_id, role))
+        .or_insert_with(|| Arc::new(AgentStateEntry::for_role(agent_id, role)))
         .clone();
 
     // EmitNow branch: clone inside the guard, then drop(guard) before emit so
@@ -669,9 +722,21 @@ pub(super) async fn mark_agent_desynced(
     live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
     agent_id: &str,
 ) {
+    mark_desynced_for_role(app, ws_tx, live_states, agent_id, SessionRole::Executor).await
+}
+
+/// Role-aware desync flag (MON-128) — chat-organ desyncs land on the chat
+/// entry/topic so they can't perturb the executor view.
+async fn mark_desynced_for_role(
+    app: &AppHandle,
+    ws_tx: &broadcast::Sender<WsBroadcast>,
+    live_states: &Arc<DashMap<String, Arc<AgentStateEntry>>>,
+    agent_id: &str,
+    role: SessionRole,
+) {
     let entry = live_states
-        .entry(agent_id.to_string())
-        .or_insert_with(|| Arc::new(AgentStateEntry::new(agent_id)))
+        .entry(live_state_key(agent_id, role))
+        .or_insert_with(|| Arc::new(AgentStateEntry::for_role(agent_id, role)))
         .clone();
     let mut guard = entry.inner.write().await;
     guard.state.mark_desynced();

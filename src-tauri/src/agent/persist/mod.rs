@@ -507,6 +507,7 @@ pub(super) async fn run_persist_consumer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sidecar_protocol::SessionRole;
     use crate::db::CreateObjectivePayload;
     use crate::sidecar_protocol::{InnerEvent, ObjectiveReport};
 
@@ -556,6 +557,49 @@ mod tests {
         (memory_index, app, ws_tx)
     }
 
+    /// MON-128: the chat organ persists dialogue only — tool starts never
+    /// become timeline rows even if an objective id is (wrongly) supplied.
+    #[test]
+    fn chat_role_tool_execution_start_emits_no_timeline_rows() {
+        let event = InnerEvent::ToolExecutionStart {
+            tool_call_id: "tc-1".to_string(),
+            tool_name: "read".to_string(),
+            args: Some(serde_json::json!({"path": "x"})),
+        };
+        let cmds = build_persist_commands(
+            "agent-1",
+            Some("chat-sess-1".to_string()),
+            SessionRole::Chat,
+            &event,
+            None,
+            EventDurations::default(),
+            Some("objective-1".to_string()),
+        );
+        assert_eq!(cmds.len(), 1);
+        assert!(matches!(cmds[0], PersistCommand::LogEvent { .. }));
+    }
+
+    /// MON-128: narration-shaped events from a chat session are dropped —
+    /// only the executor writes the work record.
+    #[test]
+    fn chat_role_action_transition_is_dropped() {
+        let event = InnerEvent::ActionTransition {
+            intent: "investigate".to_string(),
+            previous_outcome: None,
+        };
+        let cmds = build_persist_commands(
+            "agent-1",
+            Some("chat-sess-1".to_string()),
+            SessionRole::Chat,
+            &event,
+            None,
+            EventDurations::default(),
+            Some("objective-1".to_string()),
+        );
+        assert_eq!(cmds.len(), 1);
+        assert!(matches!(cmds[0], PersistCommand::LogEvent { .. }));
+    }
+
     #[test]
     fn objective_report_event_builds_complete_objective_command() {
         let event = InnerEvent::ObjectiveReport {
@@ -564,6 +608,7 @@ mod tests {
         let cmds = build_persist_commands(
             "agent-1",
             Some("sess-1".to_string()),
+            SessionRole::Executor,
             &event,
             None,
             EventDurations::default(),
@@ -594,6 +639,7 @@ mod tests {
         let cmds = build_persist_commands(
             "agent-1",
             Some("sess-1".to_string()),
+            SessionRole::Executor,
             &event,
             None,
             EventDurations::default(),

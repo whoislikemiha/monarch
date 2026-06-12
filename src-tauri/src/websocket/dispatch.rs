@@ -15,6 +15,8 @@ pub(crate) async fn dispatch_command(
         // ---- Agent lifecycle ----
         "spawn_agent" => agents::spawn_agent(state, args).await,
         "send_command" => agents::send_command(state, args).await,
+        "chat_prompt" => agents::chat_prompt(state, args).await,
+        "get_agent_chat_state" => agents::get_agent_chat_state(state, args).await,
         "kill_agent" => agents::kill_agent(state, args).await,
         "load_session_context" => agents::load_session_context(state, args).await,
         "new_agent_session" => agents::new_agent_session(state, args).await,

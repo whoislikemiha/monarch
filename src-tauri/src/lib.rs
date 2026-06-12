@@ -54,8 +54,10 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             // Agent lifecycle (sidecar-based)
             agent::commands::spawn_agent,
             agent::commands::send_command,
+            agent::commands::chat_prompt,
             agent::commands::kill_agent,
             agent::commands::get_agent_state,
+            agent::commands::get_agent_chat_state,
             agent::commands::rebuild_agent_state_from_session,
             agent::commands::load_session_context,
             agent::commands::new_agent_session,
@@ -265,8 +267,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             agent::commands::spawn_agent,
             agent::commands::send_command,
+            agent::commands::chat_prompt,
             agent::commands::kill_agent,
             agent::commands::get_agent_state,
+            agent::commands::get_agent_chat_state,
             agent::commands::rebuild_agent_state_from_session,
             agent::commands::load_session_context,
             agent::commands::new_agent_session,

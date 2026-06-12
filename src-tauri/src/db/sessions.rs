@@ -355,6 +355,32 @@ impl Database {
         Ok(())
     }
 
+    /// MON-128 (P3): latest session id for an agent with the given role.
+    /// Used by the chat-organ ensure path — the newest `role='chat'` row is
+    /// THE chat conversation for the agent (continued in place, MON-127).
+    pub async fn get_latest_session_for_role_internal(
+        &self,
+        agent_id: &str,
+        role: &str,
+    ) -> Result<Option<String>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        let role = role.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let id: Option<String> = conn
+                    .query_row(
+                        "SELECT id FROM sessions WHERE agent_id = ?1 AND role = ?2
+                         ORDER BY started_at DESC LIMIT 1",
+                        params![agent_id, role],
+                        |row| row.get(0),
+                    )
+                    .ok();
+                Ok(id)
+            })
+            .await?)
+    }
+
     /// Get the full message chain for a session, following parent_session_id links.
     /// Returns messages from oldest ancestor to current, in chronological order.
     pub async fn get_messages_with_ancestry(

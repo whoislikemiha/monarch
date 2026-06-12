@@ -57,8 +57,14 @@ pub struct AgentState {
 pub(super) struct AgentManagerInner {
     pub(super) agents: HashMap<String, AgentState>,
     /// agentId → sessionId mapping, shared with the reader task via an
-    /// `Arc<PlMutex<AgentManagerInner>>` clone.
+    /// `Arc<PlMutex<AgentManagerInner>>` clone. Executor sessions only —
+    /// the chat organ tracks separately in `chat_session_map` (MON-128).
     pub(super) session_map: HashMap<String, String>,
+    /// MON-128 (P3): agentId → chat-shadow sessionId. Present iff the chat
+    /// organ has a live sidecar session. Cleared on kill and on sidecar
+    /// crash (chat sessions are not replayed by recovery — they respawn
+    /// lazily on the next chat input).
+    pub(super) chat_session_map: HashMap<String, String>,
 }
 
 /// Per-agent live state entry. Holds the assembled `LiveAgentState` plus the
@@ -81,12 +87,30 @@ pub struct AgentStateEntry {
 
 impl AgentStateEntry {
     pub fn new(agent_id: &str) -> Self {
+        Self::for_role(agent_id, SessionRole::Executor)
+    }
+
+    /// MON-128 (P3): the chat organ gets its own live-state entry and its
+    /// own snapshot channel (`agent-chat-state-{id}`), so chat streaming can
+    /// never clobber the executor view (independent `stateVersion` streams).
+    pub fn for_role(agent_id: &str, role: SessionRole) -> Self {
+        let topic = match role {
+            SessionRole::Executor => format!("agent-state-{}", agent_id),
+            SessionRole::Chat => format!("agent-chat-state-{}", agent_id),
+        };
         Self {
             inner: RwLock::new(AgentStateInner::default()),
             cancel_generation: AtomicU64::new(0),
-            topic: format!("agent-state-{}", agent_id),
+            topic,
         }
     }
+}
+
+/// MON-128 (P3): key for the chat organ's entry in the `live_states` map.
+/// Executor entries stay keyed by the bare agent id so every pre-P3 lookup
+/// is untouched; the chat organ rides the same map under a derived key.
+pub(super) fn chat_state_key(agent_id: &str) -> String {
+    format!("{agent_id}::chat")
 }
 
 #[derive(Default)]
@@ -872,9 +896,167 @@ impl AgentManager {
             let mut inner = self.inner.lock();
             inner.agents.remove(id);
             inner.session_map.remove(id);
+            // MON-128: the role-less DestroySession above tears down every
+            // organ sidecar-side; mirror that here for the chat organ.
+            inner.chat_session_map.remove(id);
         }
         self.remove_live_entry(id);
+        self.remove_live_entry(&chat_state_key(id));
         Ok(())
+    }
+
+    /// MON-128 (P3): make sure the agent's chat-shadow session exists —
+    /// lazily, on first chat input. Reuses the executor's stored
+    /// `create_session` config (same identity, same model — the two organs
+    /// are one shadow) with `session_role: Chat`; the sidecar gives the chat
+    /// organ its own Pi session, read-only toolset, and prompt block (Slice
+    /// D). The DB row is found-or-created with `role='chat'` and is
+    /// continued in place across sidecar restarts (a process restart is not
+    /// a conversation boundary — MON-127); prior dialogue is replayed via
+    /// `LoadSession` on respawn.
+    pub async fn ensure_chat_session(
+        &self,
+        app: &AppHandle,
+        db: &Arc<Database>,
+        agent_id: &str,
+    ) -> Result<String, MonarchError> {
+        if let Some(sid) = {
+            let inner = self.inner.lock();
+            inner.chat_session_map.get(agent_id).cloned()
+        } {
+            return Ok(sid);
+        }
+
+        // The chat organ shares the executor's create config. No live
+        // executor = nothing to share; Slice F wakes the agent first.
+        let create_cmd = {
+            let inner = self.inner.lock();
+            inner.agents.get(agent_id).map(|a| a.create_cmd.clone())
+        };
+        let Some(SidecarCommand::CreateSession {
+            cwd,
+            provider,
+            model,
+            thinking_level,
+            shadow,
+            custom_prompt,
+            project_instructions,
+            context_window,
+            captain_identity_payload,
+            shadow_identity_payload,
+            ..
+        }) = create_cmd
+        else {
+            return Err(MonarchError::not_found(format!(
+                "agent {agent_id} is not running — cannot open its chat organ"
+            )));
+        };
+
+        // Find-or-create the chat session row. Latest `role='chat'` row is
+        // THE chat conversation for this agent; we continue it in place.
+        let session_id = match db
+            .get_latest_session_for_role_internal(agent_id, "chat")
+            .await?
+        {
+            Some(existing) => existing,
+            None => {
+                let new_id = crate::util::uuid_v4_simple();
+                db.create_session_internal(&crate::db::SessionRow {
+                    id: new_id.clone(),
+                    agent_id: agent_id.to_string(),
+                    pi_session_file: None,
+                    model: Some(model.clone()),
+                    provider: Some(provider.clone()),
+                    started_at: chrono_now(),
+                    ended_at: None,
+                    message_count: 0,
+                    total_tokens: 0,
+                    total_cost: 0.0,
+                    parent_session_id: None,
+                    title: None,
+                    role: "chat".to_string(),
+                })
+                .await?;
+                new_id
+            }
+        };
+
+        let create = SidecarCommand::CreateSession {
+            agent_id: agent_id.to_string(),
+            cwd,
+            provider,
+            model,
+            thinking_level,
+            shadow,
+            custom_prompt,
+            project_instructions,
+            context_window,
+            captain_identity_payload,
+            shadow_identity_payload,
+            session_role: SessionRole::Chat,
+        };
+        self.send_with_recovery(app, db, &serde_json::to_string(&create)?)
+            .await?;
+
+        // Replay prior dialogue (per-session — chat rows have no ancestry).
+        let messages = db.get_messages_internal(&session_id).await?;
+        if !messages.is_empty() {
+            let load = SidecarCommand::LoadSession {
+                agent_id: agent_id.to_string(),
+                session_role: SessionRole::Chat,
+                messages: messages
+                    .iter()
+                    .filter(|m| {
+                        m.role == "user" || m.role == "assistant" || m.role == "toolResult"
+                    })
+                    .map(|m| LoadSessionMessage {
+                        role: m.role.clone(),
+                        content: m.content.clone(),
+                        model: m.model.clone(),
+                    })
+                    .collect(),
+            };
+            self.send_with_recovery(app, db, &serde_json::to_string(&load)?)
+                .await?;
+        }
+
+        {
+            let mut inner = self.inner.lock();
+            inner
+                .chat_session_map
+                .insert(agent_id.to_string(), session_id.clone());
+        }
+        Ok(session_id)
+    }
+
+    /// MON-128 (P3): current assembled chat-organ state, if any. Pull half
+    /// of the chat channel's pull-then-subscribe pattern; shared by the
+    /// Tauri command and the WS bridge.
+    pub async fn get_chat_state(&self, agent_id: &str) -> Option<LiveAgentState> {
+        let entry = self.live_states.get(&chat_state_key(agent_id))?.clone();
+        let guard = entry.inner.read().await;
+        Some(guard.state.clone())
+    }
+
+    /// MON-128 (P3): send a captain message to the chat-shadow organ. No
+    /// classifier (that is an executor-turn concern) and no memory-retrieval
+    /// special casing beyond what the sidecar already does per prompt.
+    pub async fn chat_prompt(
+        &self,
+        app: &AppHandle,
+        db: &Arc<Database>,
+        agent_id: String,
+        message: serde_json::Value,
+    ) -> Result<(), MonarchError> {
+        self.ensure_chat_session(app, db, &agent_id).await?;
+        let cmd = SidecarCommand::Prompt {
+            agent_id,
+            message,
+            classifier: None,
+            session_role: SessionRole::Chat,
+        };
+        self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
+            .await
     }
 
     pub async fn load_session_context(

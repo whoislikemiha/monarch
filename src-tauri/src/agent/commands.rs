@@ -114,6 +114,35 @@ pub async fn get_agent_state(
     Ok(Some(guard.state.clone()))
 }
 
+/// MON-128 (P3): send a captain message to the agent's chat-shadow organ.
+/// Lazily spawns the chat Pi session on first use (same identity/config as
+/// the executor, `role='chat'` DB row continued in place). The reply streams
+/// back on `agent-chat-state-{agent_id}`.
+#[tauri::command]
+#[specta::specta]
+pub async fn chat_prompt(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AgentManager>>,
+    db: tauri::State<'_, Arc<Database>>,
+    agent_id: String,
+    message: String,
+) -> Result<(), MonarchError> {
+    state
+        .chat_prompt(&app, &db, agent_id, serde_json::Value::String(message))
+        .await
+}
+
+/// MON-128 (P3): pull half of the chat organ's pull-then-subscribe pattern —
+/// mirrors `get_agent_state` for the `agent-chat-state-{id}` channel.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_agent_chat_state(
+    state: tauri::State<'_, Arc<AgentManager>>,
+    agent_id: String,
+) -> Result<Option<LiveAgentState>, MonarchError> {
+    Ok(state.get_chat_state(&agent_id).await)
+}
+
 /// Rebuild the assembled `LiveAgentState` for an agent from a SQLite session
 /// and publish a snapshot on `agent-state-{id}`. Returns the new state so the
 /// frontend can seed its store without waiting for the event loopback.
