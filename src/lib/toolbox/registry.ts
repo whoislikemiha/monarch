@@ -5,6 +5,7 @@ import ObjectiveTimelineTool from "./tools/ObjectiveTimelineTool.svelte";
 import ClassifierSettingsTool from "./tools/ClassifierSettingsTool.svelte";
 import IdentityTool from "./tools/IdentityTool.svelte";
 import MemoryInspectorTool from "./tools/MemoryInspectorTool.svelte";
+import SessionHistoryTool from "./tools/SessionHistoryTool.svelte";
 import type { ToolDefinition } from "./types";
 
 /**
@@ -30,6 +31,15 @@ export const TOOLS: ToolDefinition[] = [
     // brain / nodes icon — memory tree inspector
     icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><circle cx="12" cy="12" r="2"/><line x1="7.4" y1="7.4" x2="10.6" y2="10.6"/><line x1="16.6" y1="7.4" x2="13.4" y2="10.6"/><line x1="7.4" y1="16.6" x2="10.6" y2="13.4"/><line x1="16.6" y1="16.6" x2="13.4" y2="13.4"/></svg>`,
     component: MemoryInspectorTool,
+  },
+  {
+    id: "session-history",
+    title: "Sessions",
+    order: 8,
+    hasBackend: true,
+    // clock-with-arrow history icon — session browser (MON-127)
+    icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 9 8 9"/><polyline points="12 7 12 12 16 14"/></svg>`,
+    component: SessionHistoryTool,
   },
   {
     id: "context-inspector",
