@@ -188,6 +188,16 @@ class ChatStore {
     return t;
   }
 
+  /** MON-127: clear turn membership when the session resets or switches —
+   * user-ordinals are positions in the previous conversation, so keeping
+   * them would route the new session's turns into stale panes. Panes
+   * themselves survive (they're workspace arrangement, not conversation
+   * state); they just start empty. */
+  resetTurns(agentId: string): void {
+    this.turnsByAgent.get(agentId)?.clear();
+    this.persist(agentId);
+  }
+
   assignTurn(agentId: string, userOrdinal: number, paneId: string): void {
     this.turns(agentId).set(userOrdinal, paneId);
     this.persist(agentId);

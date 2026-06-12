@@ -37,6 +37,7 @@
 import { invoke, listen, type UnlistenFn } from "$lib/api";
 import { commands } from "../bindings";
 import { removeLiveState } from "../toolbox/liveAgentStore.svelte";
+import { chatStore } from "../workspace/chatStore.svelte";
 import { notificationsStore } from "./notificationsStore.svelte";
 import type { Agent, AgentConfig, Project } from "../types";
 
@@ -529,7 +530,12 @@ class AgentStore {
   async newConversation(agentId: string): Promise<void> {
     const agent = this.getAgent(agentId);
     if (!agent) return;
+    // MON-127: stale turn→pane routing belongs to the old conversation.
+    chatStore.resetTurns(agentId);
     if (agent.status === "stopped") {
+      // MON-127: a stopped agent used to silently no-op here. Wake it fresh
+      // instead — clean parentless session, no history replay.
+      await this.spawnStoppedAgent(agentId, { fresh: true });
       this.openTab(agentId);
       return;
     }
@@ -576,6 +582,8 @@ class AgentStore {
       console.error("Failed to switch session:", e);
       return;
     }
+    // MON-127: turn ordinals are positions in the previous conversation.
+    chatStore.resetTurns(agentId);
     this.agents = this.agents.map((a) =>
       a.id === agentId
         ? {
@@ -597,10 +605,18 @@ class AgentStore {
     );
   }
 
-  async spawnStoppedAgent(id: string): Promise<void> {
+  /**
+   * Wake a stopped agent. Default is *continuation with ancestry*: the new
+   * session chains to the previous one and history is replayed on
+   * `session_ready` (via `sourceSessionId`). With `fresh: true` (MON-127,
+   * "new session" on a sleeping agent) the session is parentless, nothing is
+   * replayed, and the live display state is reset.
+   */
+  async spawnStoppedAgent(id: string, options?: { fresh?: boolean }): Promise<void> {
     const agent = this.getAgent(id);
     if (!agent || agent.status !== "stopped") return;
-    const previousSessionId = agent.sessionId;
+    const fresh = options?.fresh ?? false;
+    const previousSessionId = fresh ? undefined : agent.sessionId;
     this.counter++;
     const newSessionId = `session-${Date.now()}-${this.counter}`;
     try {
@@ -620,6 +636,15 @@ class AgentStore {
     } catch (e) {
       console.error("Failed to create session for lazy spawn:", e);
     }
+    if (fresh) {
+      // Clear any cached display items so the remount can't seed the old
+      // conversation back in.
+      await invoke("rebuild_agent_state_from_session", {
+        agentId: id,
+        sessionId: null,
+        statusText: "New session",
+      }).catch((e) => console.error("Failed to reset agent state:", e));
+    }
     this.agents = this.agents.map((a) =>
       a.id === id
         ? {
@@ -627,6 +652,7 @@ class AgentStore {
             status: "running" as const,
             sessionId: newSessionId,
             sourceSessionId: previousSessionId,
+            ...(fresh ? { viewKey: createViewKey(id) } : {}),
             sessions: [
               { sessionId: newSessionId, model: a.model, provider: a.provider, startedAt: new Date().toISOString(), messageCount: 0 },
               ...a.sessions,

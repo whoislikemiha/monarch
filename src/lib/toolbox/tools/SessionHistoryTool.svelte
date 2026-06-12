@@ -174,7 +174,7 @@
               <span class="meta mono">
                 {formatDate(s.startedAt)}
                 · {s.messageCount} msg{s.messageCount === 1 ? "" : "s"}
-                {#if s.parentSessionId}· ↳ continued{/if}
+                {#if s.parentSessionId}· continued{/if}
                 {#if formatCost(s.totalCost)}· {formatCost(s.totalCost)}{/if}
                 {#if s.id === activeSessionId}· active{/if}
               </span>
