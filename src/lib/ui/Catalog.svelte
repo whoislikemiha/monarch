@@ -6,6 +6,7 @@
   // theme system so themes are verified, not mocked.
   import "./styles/atoms.css";
   import { applyTheme, listThemes, DEFAULT_THEME, type ThemeId } from "../themes";
+  import EventIcon from "./EventIcon.svelte";
 
   let theme = $state<ThemeId>(DEFAULT_THEME);
   const themeList = listThemes();
@@ -20,6 +21,21 @@
   let codeOpen = $state(false);
 
   const grades = ["E", "D", "C", "B", "A", "S"] as const;
+  // MON-124 event taxonomy — kind · label · mono note.
+  const eventKinds = [
+    { k: "action", n: "coherent action", d: "headline · weighted" },
+    { k: "tool", n: "tool call", d: "nested" },
+    { k: "outcome", n: "action outcome", d: "closes a card" },
+    { k: "decision", n: "decision", d: "fork — never ◇" },
+    { k: "plan", n: "plan event", d: "set / step" },
+    { k: "status", n: "status change", d: "divider" },
+    { k: "note", n: "note", d: "manual" },
+    { k: "blocker", n: "blocker", d: "warning tone" },
+    { k: "question", n: "question", d: "manual" },
+    { k: "chat", n: "chat spawned", d: "artifact" },
+    { k: "report", n: "report", d: "objective close" },
+    { k: "event", n: "fallback", d: "unknown kind" },
+  ] as const;
   const elevations = [
     { v: "--bg-sink", u: "sidebar · deepest recesses" },
     { v: "--bg-base", u: "app canvas" },
@@ -229,6 +245,23 @@
                 {#if !codeOpen}<div class="fade"></div>{/if}
               </div>
               <button class="showmore" onclick={() => (codeOpen = !codeOpen)}>{codeOpen ? "show less ▴" : "show more ▾"}</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- event icons (MON-124) -->
+        <div class="panel">
+          <div class="panel-head"><div class="ttl"><h4>Event Icons</h4></div><span class="cap">timeline taxonomy</span></div>
+          <div class="panel-body">
+            <div class="evt-grid" style="grid-template-columns: repeat(3, 1fr)">
+              {#each eventKinds as e (e.k)}
+                <div class="evt">
+                  <span class="ei" class:tone-error={e.k === "blocker"}>
+                    <EventIcon kind={e.k} tone={e.k === "blocker" ? "warning" : "neutral"} />
+                  </span>
+                  <div class="el"><div class="en">{e.n}</div><div class="ek">{e.d}</div></div>
+                </div>
+              {/each}
             </div>
           </div>
         </div>
