@@ -1,11 +1,16 @@
 <script lang="ts">
   /**
-   * One chat pane: the shared session's stream filtered to this pane's turns,
-   * plus a composer that tags new turns to this pane (and injects scope context
-   * on the first scoped message).
+   * One chat pane: the CHAT ORGAN's stream filtered to this pane's turns,
+   * plus a composer that tags new turns to this pane (and injects scope
+   * context on the first scoped message).
+   *
+   * MON-128 (P3): chat panes talk to the chat-shadow session — a second Pi
+   * session of the same shadow that reads the substrate and dispatches work
+   * to the executor verbatim (`hand_to_executor`). The executor's stream
+   * never renders here; its work lives on the timeline.
    */
   import type { Agent, DisplayItem } from "$lib/types";
-  import { liveAgentStore, detachedLiveState } from "$lib/toolbox/liveAgentStore.svelte";
+  import { chatLiveStore, detachedLiveState } from "$lib/toolbox/liveAgentStore.svelte";
   import type { LiveBinding } from "./liveBinding.svelte";
   import { chatStore, type ChatPane } from "./chatStore.svelte";
   import MessageStream from "./message/MessageStream.svelte";
@@ -19,7 +24,7 @@
   let { agent, binding, pane }: Props = $props();
 
   const DETACHED = detachedLiveState();
-  let live = $derived(liveAgentStore.byAgent.get(agent.id) ?? DETACHED);
+  let live = $derived(chatLiveStore.byAgent.get(agent.id) ?? DETACHED);
 
   // Filter the shared stream to the turns that belong to this pane.
   let items = $derived.by<DisplayItem[]>(() => {
@@ -56,10 +61,10 @@
       const primer = chatStore.consumePrimer(agent.id, pane.scope);
       if (primer) message = `${primer}\n\n${text}`;
     }
-    binding.sendPrompt(agent, message).catch((e) => console.error("send failed:", e));
+    binding.sendChatPrompt(agent, message).catch((e) => console.error("send failed:", e));
   }
   function stop() {
-    binding.abort(agent).catch(() => {});
+    binding.abortChat(agent).catch(() => {});
   }
 </script>
 
@@ -72,7 +77,7 @@
         {#if pane.scope}
           Ask about “{pane.scope.label}” — {agent.name} answers with that work in mind.
         {:else}
-          Talk to {agent.name}. Shares the same memory as the shadow doing the work.
+          Talk to {agent.name} while it works — same shadow, same memory. Work you give it is relayed to the executor verbatim.
         {/if}
       </p>
     </div>

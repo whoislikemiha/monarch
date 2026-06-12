@@ -13,7 +13,13 @@
  */
 import { invoke, listen, type UnlistenFn } from "$lib/api";
 import { commands, type LiveAgentState as WireLiveAgentState } from "$lib/bindings";
-import { seedFromSnapshot, applyUpdate } from "$lib/toolbox/liveAgentStore.svelte";
+import {
+  seedFromSnapshot,
+  applyUpdate,
+  seedChatFromSnapshot,
+  applyChatUpdate,
+  chatLiveStore,
+} from "$lib/toolbox/liveAgentStore.svelte";
 import { agentStore } from "$lib/stores/agentStore.svelte";
 import type { Agent, ExtensionUIRequest } from "$lib/types";
 
@@ -50,6 +56,23 @@ export class LiveBinding {
       await listen<WireLiveAgentState>(`agent-state-${target.id}`, (e) => {
         if (version !== this.version) return;
         applyUpdate(target.id, e.payload);
+      }),
+    );
+    // MON-128 (P3): the chat organ's own snapshot channel. Seeded lazily —
+    // a missing chat state just means the organ hasn't spoken yet.
+    try {
+      const chatSnapshot = await invoke<WireLiveAgentState | null>("get_agent_chat_state", {
+        agentId: target.id,
+      });
+      if (chatSnapshot) seedChatFromSnapshot(target.id, chatSnapshot);
+    } catch (e) {
+      console.error("Failed to fetch chat state:", e);
+    }
+    if (version !== this.version) return;
+    this.unlisteners.push(
+      await listen<WireLiveAgentState>(`agent-chat-state-${target.id}`, (e) => {
+        if (version !== this.version) return;
+        applyChatUpdate(target.id, e.payload);
       }),
     );
     this.unlisteners.push(
@@ -235,6 +258,31 @@ export class LiveBinding {
 
   async abort(target: Agent): Promise<void> {
     await this.sendCommand(target, { type: "abort" });
+  }
+
+  /**
+   * MON-128 (P3): send a captain message to the chat-shadow organ. Wakes a
+   * stopped agent first — the chat organ borrows the executor's create
+   * config, so the agent must be live. The reply streams on
+   * `agent-chat-state-{id}` into `chatLiveStore`.
+   */
+  async sendChatPrompt(target: Agent, message: string): Promise<void> {
+    if (target.status === "stopped") {
+      const ready = new Promise<void>((resolve) => { this.sessionReadyResolve = resolve; });
+      await agentStore.spawnStoppedAgent(target.id);
+      await ready;
+    }
+    await invoke("chat_prompt", { agentId: target.id, message });
+  }
+
+  /** MON-128: abort the chat organ's in-flight turn (not the executor's). */
+  async abortChat(target: Agent): Promise<void> {
+    await this.sendCommand(target, { type: "abort", sessionRole: "chat" });
+  }
+
+  /** MON-128: drop the cached chat state (e.g. when switching agents). */
+  clearChatState(agentId: string): void {
+    chatLiveStore.byAgent.delete(agentId);
   }
 
   async setThinkingLevel(target: Agent, level: string): Promise<void> {

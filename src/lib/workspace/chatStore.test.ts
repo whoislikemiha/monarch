@@ -60,7 +60,7 @@ describe("chatStore persistence", () => {
     // Simulate a restart: a brand-new agent id sharing the same saved key
     // isn't possible (key is per-agent), so re-read by clearing the in-memory
     // entry and forcing a re-hydrate via the persisted blob directly.
-    const blob = kv.get(`v2.chat.${id}`)!;
+    const blob = kv.get(`v3.chat.${id}`)!;
     expect(blob).toBeTruthy();
     const saved = JSON.parse(blob);
     expect(saved.panes.some((p: any) => p.id === paneId && p.scope?.id === "act-1")).toBe(true);
@@ -71,7 +71,7 @@ describe("chatStore persistence", () => {
     const id = freshAgent();
     // Pre-seed a saved arrangement as if from a previous run.
     kv.set(
-      `v2.chat.${id}`,
+      `v3.chat.${id}`,
       JSON.stringify({
         tiles: [TIMELINE_TILE, "general", "c9"],
         panes: [
@@ -86,7 +86,7 @@ describe("chatStore persistence", () => {
     chatStore.ensure(id);
     // Before flush, a reorder must NOT overwrite the saved blob.
     chatStore.reorderTiles(id, 0, 1);
-    const stillSaved = JSON.parse(kv.get(`v2.chat.${id}`)!);
+    const stillSaved = JSON.parse(kv.get(`v3.chat.${id}`)!);
     expect(stillSaved.tiles).toEqual([TIMELINE_TILE, "general", "c9"]);
 
     await flush(); // hydrate swaps the saved arrangement in

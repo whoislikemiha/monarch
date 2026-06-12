@@ -23,6 +23,16 @@ export const liveAgentStore: { byAgent: SvelteMap<string, LiveAgentState> } = {
   byAgent: new SvelteMap<string, LiveAgentState>(),
 };
 
+/**
+ * MON-128 (P3): the chat organ's live state, per agent. Snapshots arrive on
+ * `agent-chat-state-{id}` — an independent stateVersion stream from the
+ * executor's `agent-state-{id}`, so chat streaming can never clobber the
+ * executor view. Same wire shape, separate map.
+ */
+export const chatLiveStore: { byAgent: SvelteMap<string, LiveAgentState> } = {
+  byAgent: new SvelteMap<string, LiveAgentState>(),
+};
+
 /** Field-by-field copy from an adapted snapshot onto an existing reactive entry. */
 function assignInto(target: LiveAgentState, source: LiveAgentState): void {
   target.items = source.items;
@@ -35,6 +45,8 @@ function assignInto(target: LiveAgentState, source: LiveAgentState): void {
   target.stateVersion = source.stateVersion;
   target.desynced = source.desynced;
   target.isStreaming = source.isStreaming;
+  target.executorPaused = source.executorPaused;
+  target.executorPauseReason = source.executorPauseReason;
 }
 
 /**
@@ -76,7 +88,78 @@ function adaptSnapshot(snapshot: WireLiveAgentState): LiveAgentState {
     stateVersion: Number(snapshot.stateVersion),
     desynced: snapshot.desynced,
     isStreaming: snapshot.isStreaming,
+    executorPaused: snapshot.executorPaused ?? false,
+    executorPauseReason: snapshot.executorPauseReason ?? null,
   };
+}
+
+/** Shared seed/apply against an arbitrary organ map (executor or chat). */
+function seedInto(
+  map: SvelteMap<string, LiveAgentState>,
+  agentId: string,
+  snapshot: WireLiveAgentState,
+): LiveAgentState {
+  const adapted = adaptSnapshot(snapshot);
+  const existing = map.get(agentId);
+  if (existing) {
+    assignInto(existing, adapted);
+    return existing;
+  }
+  const entry = $state(adapted);
+  map.set(agentId, entry);
+  return entry;
+}
+
+function applyUpdateInto(
+  map: SvelteMap<string, LiveAgentState>,
+  agentId: string,
+  snapshot: WireLiveAgentState,
+): void {
+  const existing = map.get(agentId);
+  const incomingVersion = Number(snapshot.stateVersion);
+  if (existing && incomingVersion <= existing.stateVersion) {
+    return;
+  }
+  const adapted = adaptSnapshot(snapshot);
+  if (existing) {
+    assignInto(existing, adapted);
+    return;
+  }
+  const entry = $state(adapted);
+  map.set(agentId, entry);
+}
+
+/** MON-128: seed the chat organ's state (pull half of pull-then-subscribe). */
+export function seedChatFromSnapshot(
+  agentId: string,
+  snapshot: WireLiveAgentState,
+): LiveAgentState {
+  return seedInto(chatLiveStore.byAgent, agentId, snapshot);
+}
+
+/** MON-128: incremental update from `agent-chat-state-{id}`. */
+export function applyChatUpdate(agentId: string, snapshot: WireLiveAgentState): void {
+  applyUpdateInto(chatLiveStore.byAgent, agentId, snapshot);
+}
+
+/**
+ * MON-128: captain-side executor control (pause/resume/stop). Same sidecar
+ * machinery as the chat organ's tools; fire-and-forget like `abortAgent` —
+ * the canonical signal is `executorPaused` flipping on the live state.
+ */
+export async function executorControl(
+  agentId: string,
+  action: "pause" | "resume" | "stop",
+  reason?: string,
+): Promise<void> {
+  try {
+    await invoke("send_command", {
+      id: agentId,
+      commandJson: JSON.stringify({ type: "executor_control", action, reason }),
+    });
+  } catch (err) {
+    console.error(`[executorControl] ${action} failed for ${agentId}`, err);
+  }
 }
 
 /**
@@ -167,5 +250,7 @@ export function detachedLiveState(): LiveAgentState {
     stateVersion: 0,
     desynced: false,
     isStreaming: false,
+    executorPaused: false,
+    executorPauseReason: null,
   };
 }

@@ -4,11 +4,11 @@
  * closes chats; the timeline is just another tile (id = TIMELINE_TILE) so it can
  * be moved among the chats.
  *
- * Chats share the agent's one live Pi session; to keep them distinct we track
- * *turn membership* (a pane's sends tag the resulting turn to it, so each pane
- * shows only its own exchange). Scoped panes inject the action's context on the
- * first message. See [[monarch-ui-v2-interaction-model]]. True parallel live
- * threads still need the attention-threads backend.
+ * Chats share the agent's one CHAT-SHADOW session (MON-128); to keep panes
+ * distinct we track *turn membership* (a pane's sends tag the resulting turn
+ * to it, so each pane shows only its own exchange). Scoped panes inject the
+ * action's context on the first message. See
+ * [[monarch-ui-v2-interaction-model]].
  */
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { invoke } from "$lib/api";
@@ -20,7 +20,10 @@ const DEFAULT_TILES: readonly string[] = [TIMELINE_TILE, "general"];
 const DEFAULT_GENERAL: ChatPane = { id: "general", scope: null, title: "Chat" };
 
 /** ui_state key holding one agent's persisted workspace arrangement. */
-const chatKey = (agentId: string) => `v2.chat.${agentId}`;
+// v3 (MON-128): turn ordinals index the CHAT ORGAN's stream, not the
+// executor session — old persisted assignments would misroute, so the key
+// generation bumps and arrangements start fresh.
+const chatKey = (agentId: string) => `v3.chat.${agentId}`;
 
 /** Serialized shape stored in ui_state — tile order, panes, turn membership. */
 interface PersistedChat {

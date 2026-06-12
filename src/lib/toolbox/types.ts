@@ -33,6 +33,10 @@ export interface LiveAgentState {
   desynced: boolean;
   /** True while the agent is actively producing a turn. Drives Abort/ChatInput/status dots. */
   isStreaming: boolean;
+  /** MON-128: true while the executor's pause gate is engaged. */
+  executorPaused: boolean;
+  /** MON-128: optional reason supplied with the pause. */
+  executorPauseReason: string | null;
 }
 
 /**

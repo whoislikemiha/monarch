@@ -107,6 +107,15 @@ const MUTATING_TOOLS = new Set(["write", "edit", "multi_edit", "apply_patch"]);
  * `is_narration_tool`. Their semantics land as coherent_action / plan_* events;
  * the tool CALLS themselves are never work and never render as tool rows. */
 export const META_TOOLS = new Set([
+  // MON-128: chat-organ control/meta tools (never timeline rows; filtered
+  // from chat tool chips too).
+  "recall_actions",
+  "memory_search",
+  "hand_to_executor",
+  "pause_executor",
+  "resume_executor",
+  "stop_executor",
+  "surface_observation",
   "set_current_action",
   "complete_action",
   "record_decision",

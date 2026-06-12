@@ -11,7 +11,7 @@
   import { onMount, tick } from "svelte";
   import type { Agent, ToolExecution } from "$lib/types";
   import { objectiveStore, type ObjectiveReportView } from "$lib/toolbox/objectiveStore.svelte";
-  import { liveAgentStore } from "$lib/toolbox/liveAgentStore.svelte";
+  import { executorControl, liveAgentStore } from "$lib/toolbox/liveAgentStore.svelte";
   import { timelineStore } from "./timelineStore.svelte";
   import {
     buildSegments,
@@ -299,7 +299,16 @@
 </script>
 
 <div class="timeline" bind:this={rootEl}>
-  <NowStrip {workingMemory} {planItems} {streaming} {currentObjective} />
+  <NowStrip
+    {workingMemory}
+    {planItems}
+    {streaming}
+    {currentObjective}
+    paused={!!live?.executorPaused}
+    pauseReason={live?.executorPauseReason ?? null}
+    onpause={() => executorControl(agent.id, "pause")}
+    onresume={() => executorControl(agent.id, "resume")}
+  />
 
   {#if tl?.loading}
     <div class="empty mono">Loading the work record…</div>

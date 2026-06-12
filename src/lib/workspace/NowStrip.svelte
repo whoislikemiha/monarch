@@ -14,8 +14,22 @@
     streaming: boolean;
     /** Metadata of the objective the shadow is currently going after. */
     currentObjective?: ObjectiveRow | null;
+    /** MON-128: executor pause gate engaged (halts at next tool boundary). */
+    paused?: boolean;
+    pauseReason?: string | null;
+    onpause?: () => void;
+    onresume?: () => void;
   }
-  let { workingMemory, planItems, streaming, currentObjective = null }: Props = $props();
+  let {
+    workingMemory,
+    planItems,
+    streaming,
+    currentObjective = null,
+    paused = false,
+    pauseReason = null,
+    onpause,
+    onresume,
+  }: Props = $props();
 
   let current = $derived(workingMemory?.currentAction ?? null);
   let path = $derived(workingMemory?.currentObjectivePath ?? []);
@@ -55,15 +69,22 @@
 
 <div class="now">
   <div class="now-line">
-    <span class="tag" class:live={streaming}>NOW</span>
-    {#if current}
+    <span class="tag" class:live={streaming && !paused}>NOW</span>
+    {#if paused}
+      <span class="intent paused" title={pauseReason ?? "Paused"}>Paused{pauseReason ? ` — ${pauseReason}` : ""}</span>
+    {:else if current}
       <span class="intent" title={current.intent}>{current.intent}</span>
     {:else if streaming}
       <span class="intent idle">Working</span>
     {:else}
       <span class="intent idle">Idle</span>
     {/if}
-    {#if streaming}<span class="pulse" aria-hidden="true"></span>{/if}
+    {#if streaming && !paused}<span class="pulse" aria-hidden="true"></span>{/if}
+    {#if paused}
+      <button class="ctl" onclick={() => onresume?.()} title="Resume the executor">Resume</button>
+    {:else if streaming}
+      <button class="ctl" onclick={() => onpause?.()} title="Pause at the next tool boundary">Pause</button>
+    {/if}
   </div>
 
   {#if hasObjective}
@@ -137,6 +158,18 @@
     border-radius: var(--r-md);
   }
   .now-line { display: flex; align-items: center; gap: var(--s2); }
+  .intent.paused { color: var(--status-warning); }
+  .ctl {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 1px var(--s2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-raised);
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .ctl:hover { color: var(--text); border-color: var(--focus); }
   .tag {
     font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
     color: var(--text-muted); flex: none;
