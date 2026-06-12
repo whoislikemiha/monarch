@@ -87,6 +87,7 @@ pub(crate) async fn dispatch_command(
         "db_get_campaign_root_for_agent" => objectives::db_get_campaign_root_for_agent(state, args).await,
         "db_record_objective_event" => objectives::db_record_objective_event(state, args).await,
         "db_list_objective_events" => objectives::db_list_objective_events(state, args).await,
+        "db_list_agent_timeline" => objectives::db_list_agent_timeline(state, args).await,
         "db_update_objective_manual" => objectives::db_update_objective_manual(state, args).await,
         "db_record_manual_objective_event" => objectives::db_record_manual_objective_event(state, args).await,
         "db_list_objective_refs" => objectives::db_list_objective_refs(state, args).await,

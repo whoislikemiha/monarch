@@ -280,6 +280,10 @@ export const commands = {
 } | null, ErrorDto>(__TAURI_INVOKE("db_get_campaign_root_for_agent", { agentId })),
 	dbRecordObjectiveEvent: (payload: RecordObjectiveEventPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_record_objective_event", { payload })),
 	dbListObjectiveEvents: (objectiveId: string) => typedError<ObjectiveEventRow[], ErrorDto>(__TAURI_INVOKE("db_list_objective_events", { objectiveId })),
+	dbListAgentTimeline: (agentId: string, before: {
+	createdAt: string,
+	id: string,
+} | null, limit: number | null) => typedError<AgentTimelinePage, ErrorDto>(__TAURI_INVOKE("db_list_agent_timeline", { agentId, before, limit })),
 	dbUpdateObjectiveManual: (payload: ManualObjectiveUpdatePayload) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_update_objective_manual", { payload })),
 	dbRecordManualObjectiveEvent: (payload: ManualObjectiveEventPayload) => typedError<string, ErrorDto>(__TAURI_INVOKE("db_record_manual_objective_event", { payload })),
 	dbListObjectiveRefs: (objectiveId: string) => typedError<ObjectiveRefRow[], ErrorDto>(__TAURI_INVOKE("db_list_objective_refs", { objectiveId })),
@@ -402,11 +406,11 @@ export type AgentRow = {
 	 *  the shadow from the default active roster. See `archive_agent_internal`.
 	 */
 	archivedAt: string | null,
-	// MON-73: "rive" | "image" | null (null = default rive preset).
+	// MON-73: "image" | null (null = monogram fallback).
 	avatarType: string | null,
 	/**
-	 *  MON-73: For "rive": path to .riv file (null = default). For "image":
-	 *  built-in web path ("/avatars/foo.png") or absolute filesystem path.
+	 *  MON-73: built-in web path ("/avatars/foo.png") or absolute
+	 *  filesystem path to an uploaded image.
 	 */
 	avatarPath: string | null,
 };
@@ -438,6 +442,21 @@ export type AgentTemplateRow = {
 	shadowGrade: string | null,
 	createdAt: string,
 	updatedAt: string,
+};
+
+/**
+ *  MON-124: one page of the per-agent execution timeline. `entries` are
+ *  top-level events (`parent_event_id IS NULL`) newest-first across all of the
+ *  agent's objectives; `children` are every nested event of those entries
+ *  (oldest-first); `objectives` carries the metadata needed to render segment
+ *  headers without extra round-trips.
+ */
+export type AgentTimelinePage = {
+	entries: ObjectiveEventRow[],
+	children: ObjectiveEventRow[],
+	objectives: ObjectiveRow[],
+	hasMore: boolean,
+	nextBefore: TimelineCursor | null,
 };
 
 // MON-73: Payload for updating editable agent fields post-creation.
@@ -1024,6 +1043,16 @@ export type StreamingMessage = {
 	 *  Drives the live "N sec" ticker on the streaming assistant header.
 	 */
 	turnStartedAtMs?: number | null,
+};
+
+/**
+ *  MON-124: cursor into the per-agent timeline feed. Pages walk backwards in
+ *  time; the cursor is the (created_at, id) of the oldest top-level event the
+ *  client already has.
+ */
+export type TimelineCursor = {
+	createdAt: string,
+	id: string,
 };
 
 export type ToolDescriptor = {

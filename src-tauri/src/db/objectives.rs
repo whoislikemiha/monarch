@@ -65,6 +65,31 @@ pub struct ObjectiveEventRow {
     pub plan_item_id: Option<String>,
 }
 
+/// MON-124: cursor into the per-agent timeline feed. Pages walk backwards in
+/// time; the cursor is the (created_at, id) of the oldest top-level event the
+/// client already has.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineCursor {
+    pub created_at: String,
+    pub id: String,
+}
+
+/// MON-124: one page of the per-agent execution timeline. `entries` are
+/// top-level events (`parent_event_id IS NULL`) newest-first across all of the
+/// agent's objectives; `children` are every nested event of those entries
+/// (oldest-first); `objectives` carries the metadata needed to render segment
+/// headers without extra round-trips.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTimelinePage {
+    pub entries: Vec<ObjectiveEventRow>,
+    pub children: Vec<ObjectiveEventRow>,
+    pub objectives: Vec<ObjectiveRow>,
+    pub has_more: bool,
+    pub next_before: Option<TimelineCursor>,
+}
+
 /// Payload for `db_create_objective`. `id` is optional — server generates a
 /// UUID if omitted. Defaults: `status='pending'`, `grade='C'`,
 /// `exec_hint='in_context'`, `created_by='monarch'`.
@@ -819,6 +844,112 @@ impl Database {
             .await?)
     }
 
+    /// MON-124: one page of the agent's execution timeline. Pages on TOP-LEVEL
+    /// events (`parent_event_id IS NULL`) across every objective assigned to
+    /// the agent (campaign roots excluded — they're containers, not work),
+    /// newest-first with a stable `(created_at, id)` cursor. Children of the
+    /// page's entries ride along in the same response, as does the metadata of
+    /// every objective referenced, so the frontend renders segment headers
+    /// without N follow-up fetches.
+    pub async fn list_agent_timeline_internal(
+        &self,
+        agent_id: &str,
+        before: Option<TimelineCursor>,
+        limit: u32,
+    ) -> Result<AgentTimelinePage, MonarchError> {
+        let agent_id = agent_id.to_string();
+        let limit = limit.clamp(1, 200) as i64;
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let (cursor_at, cursor_id) = match &before {
+                    Some(c) => (Some(c.created_at.clone()), Some(c.id.clone())),
+                    None => (None, None),
+                };
+                let mut stmt = conn.prepare(
+                    "SELECT e.id, e.objective_id, e.event_type, e.actor, e.payload_json,
+                            e.created_at, e.parent_event_id, e.author, e.surface_override,
+                            e.payload_schema_version, e.plan_item_id
+                     FROM objective_events e
+                     JOIN objective_nodes o ON o.id = e.objective_id
+                     WHERE o.assignee_shadow_id = ?1
+                       AND o.kind = 'objective'
+                       AND e.parent_event_id IS NULL
+                       AND (?2 IS NULL
+                            OR e.created_at < ?2
+                            OR (e.created_at = ?2 AND e.id < ?3))
+                     ORDER BY e.created_at DESC, e.id DESC
+                     LIMIT ?4",
+                )?;
+                let mut entries = stmt
+                    .query_map(
+                        params![agent_id, cursor_at, cursor_id, limit + 1],
+                        map_objective_event,
+                    )?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                drop(stmt);
+
+                let has_more = entries.len() as i64 > limit;
+                if has_more {
+                    entries.truncate(limit as usize);
+                }
+                let next_before = if has_more {
+                    entries.last().map(|e| TimelineCursor {
+                        created_at: e.created_at.clone(),
+                        id: e.id.clone(),
+                    })
+                } else {
+                    None
+                };
+
+                let mut children = Vec::new();
+                if !entries.is_empty() {
+                    let placeholders = vec!["?"; entries.len()].join(", ");
+                    let sql = format!(
+                        "SELECT id, objective_id, event_type, actor, payload_json, created_at,
+                                parent_event_id, author, surface_override, payload_schema_version,
+                                plan_item_id
+                         FROM objective_events
+                         WHERE parent_event_id IN ({placeholders})
+                         ORDER BY created_at ASC, id ASC"
+                    );
+                    let mut stmt = conn.prepare(&sql)?;
+                    let ids: Vec<&dyn rusqlite::ToSql> =
+                        entries.iter().map(|e| &e.id as &dyn rusqlite::ToSql).collect();
+                    children = stmt
+                        .query_map(ids.as_slice(), map_objective_event)?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                }
+
+                let mut objective_ids: Vec<String> =
+                    entries.iter().map(|e| e.objective_id.clone()).collect();
+                objective_ids.sort();
+                objective_ids.dedup();
+                let mut objectives = Vec::new();
+                if !objective_ids.is_empty() {
+                    let placeholders = vec!["?"; objective_ids.len()].join(", ");
+                    let sql = format!("{OBJECTIVE_BASE_SELECT} WHERE id IN ({placeholders})");
+                    let mut stmt = conn.prepare(&sql)?;
+                    let ids: Vec<&dyn rusqlite::ToSql> = objective_ids
+                        .iter()
+                        .map(|id| id as &dyn rusqlite::ToSql)
+                        .collect();
+                    objectives = stmt
+                        .query_map(ids.as_slice(), map_objective)?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                }
+
+                Ok(AgentTimelinePage {
+                    entries,
+                    children,
+                    objectives,
+                    has_more,
+                    next_before,
+                })
+            })
+            .await?)
+    }
+
     pub async fn update_objective_manual_internal(
         &self,
         payload: &ManualObjectiveUpdatePayload,
@@ -1317,6 +1448,7 @@ impl Database {
                     "tool_call_id": tool_call_id,
                     "tool_name": tool_name,
                     "args_preview": preview_value(args.as_ref()),
+                    "target": extract_tool_target(&tool_name, args.as_ref()),
                     "status": "running",
                     "started_at": now,
                 })
@@ -1544,6 +1676,35 @@ fn ensure_campaign_root_tx(
     Ok(new_id)
 }
 
+/// MON-124: normalized "what did this tool act on" extracted from the full
+/// args while they're still in hand (only a 500-char preview is persisted).
+/// Path-bearing tools yield the path; bash yields the command; unknown tools
+/// fall back to any path-like key they carry. Best-effort — `None` is fine.
+fn extract_tool_target(tool_name: &str, args: Option<&Value>) -> Option<String> {
+    let obj = args?.as_object()?;
+    let str_key = |key: &str| -> Option<String> {
+        obj.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let path = str_key("path")
+        .or_else(|| str_key("file_path"))
+        .or_else(|| str_key("filePath"))
+        .or_else(|| str_key("absolute_path"));
+    let raw = match tool_name {
+        "bash" => str_key("command").or(path),
+        _ => path.or_else(|| str_key("command")).or_else(|| str_key("url")),
+    }?;
+    let compact = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    Some(if compact.chars().count() <= 200 {
+        compact
+    } else {
+        format!("{}...", compact.chars().take(197).collect::<String>())
+    })
+}
+
 fn preview_value(value: Option<&Value>) -> String {
     let Some(value) = value else {
         return String::new();
@@ -1760,6 +1921,18 @@ pub async fn db_list_objective_events(
     objective_id: String,
 ) -> Result<Vec<ObjectiveEventRow>, MonarchError> {
     db.list_objective_events_internal(&objective_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn db_list_agent_timeline(
+    db: tauri::State<'_, Arc<Database>>,
+    agent_id: String,
+    before: Option<TimelineCursor>,
+    limit: Option<u32>,
+) -> Result<AgentTimelinePage, MonarchError> {
+    db.list_agent_timeline_internal(&agent_id, before, limit.unwrap_or(20))
+        .await
 }
 
 #[tauri::command]

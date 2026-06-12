@@ -47,14 +47,14 @@ pub use projects::{
 
 // objectives
 pub use objectives::{
-    CreateObjectivePayload, CreateObjectiveRefPayload, ManualObjectiveEventPayload, ManualObjectiveUpdatePayload,
-    ObjectiveEventNotification, ObjectiveRow, RecordObjectiveEventPayload, UpdateObjectivePayload,
-    UpdateObjectiveRefPayload,
+    AgentTimelinePage, CreateObjectivePayload, CreateObjectiveRefPayload, ManualObjectiveEventPayload,
+    ManualObjectiveUpdatePayload, ObjectiveEventNotification, ObjectiveRow, RecordObjectiveEventPayload,
+    TimelineCursor, UpdateObjectivePayload, UpdateObjectiveRefPayload,
 };
 pub use objectives::{
     db_create_objective, db_create_objective_ref, db_delete_objective_ref, db_get_objective,
     db_get_campaign_root_for_agent, db_get_objective_tree_for_root, db_get_working_memory,
-    db_list_objective_events,
+    db_list_agent_timeline, db_list_objective_events,
     db_list_objective_refs, db_list_objectives_for_agent, db_record_manual_objective_event,
     db_record_objective_event, db_update_objective, db_update_objective_manual, db_update_objective_ref,
 };
@@ -127,6 +127,7 @@ pub use objectives::{
     __cmd__db_create_objective, __cmd__db_create_objective_ref, __cmd__db_delete_objective_ref,
     __cmd__db_get_campaign_root_for_agent, __cmd__db_get_objective,
     __cmd__db_get_objective_tree_for_root, __cmd__db_get_working_memory,
+    __cmd__db_list_agent_timeline,
     __cmd__db_list_objective_events, __cmd__db_list_objective_refs, __cmd__db_list_objectives_for_agent,
     __cmd__db_record_manual_objective_event, __cmd__db_record_objective_event, __cmd__db_update_objective,
     __cmd__db_update_objective_manual, __cmd__db_update_objective_ref,
@@ -182,6 +183,7 @@ pub use objectives::{
     __specta__fn__db_delete_objective_ref, __specta__fn__db_get_objective,
     __specta__fn__db_get_campaign_root_for_agent, __specta__fn__db_get_objective_tree_for_root,
     __specta__fn__db_get_working_memory,
+    __specta__fn__db_list_agent_timeline,
     __specta__fn__db_list_objective_events, __specta__fn__db_list_objective_refs,
     __specta__fn__db_list_objectives_for_agent, __specta__fn__db_record_manual_objective_event,
     __specta__fn__db_record_objective_event, __specta__fn__db_update_objective,
