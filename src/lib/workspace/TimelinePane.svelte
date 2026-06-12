@@ -44,6 +44,20 @@
       : [],
   );
 
+  /** Metadata for the objective the shadow is going after right now — feed
+   * cache first, objective trees as fallback. */
+  let currentObjective = $derived.by(() => {
+    const oid = workingMemory?.currentObjectiveId;
+    if (!oid) return null;
+    const fromFeed = timelineStore.byAgent.get(agent.id)?.objectivesById.get(oid);
+    if (fromFeed) return fromFeed;
+    for (const tree of entry?.treesByRoot.values() ?? []) {
+      const hit = tree.find((o) => o.id === oid);
+      if (hit) return hit;
+    }
+    return null;
+  });
+
   let tl = $derived(timelineStore.byAgent.get(agent.id));
   let segments = $derived(
     tl ? buildSegments(tl.entries, tl.childrenByParent, tl.objectivesById) : [],
@@ -181,7 +195,7 @@
 </script>
 
 <div class="timeline">
-  <NowStrip {workingMemory} {planItems} {streaming} />
+  <NowStrip {workingMemory} {planItems} {streaming} {currentObjective} />
 
   {#if tl?.loading}
     <div class="empty mono">Loading the work record…</div>
