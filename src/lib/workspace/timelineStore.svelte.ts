@@ -153,24 +153,29 @@ class TimelineStore {
     this.focusRequest = { agentId, actionId, nonce: ++this.focusNonce };
   }
 
-  /** Resolve a chat tool-group to the action card containing its tool calls.
-   * Returns null when the action isn't in the loaded feed (e.g. replayed
-   * history past the loaded pages) — chips render non-linking then. */
+  /** Resolve a chat tool-group to the timeline row containing its tool
+   * calls: the parent action card when narrated, the top-level tool row
+   * itself when bare. Returns null when nothing is in the loaded feed (e.g.
+   * replayed history past the loaded pages). */
   findActionForToolCalls(agentId: string, toolCallIds: Iterable<string>): string | null {
     const entry = this.byAgent.get(agentId);
     if (!entry) return null;
     const wanted = new Set(toolCallIds);
     if (wanted.size === 0) return null;
-    for (const [parentId, children] of entry.childrenByParent) {
-      for (const child of children) {
-        if (child.eventType !== "tool_call" || !child.payloadJson) continue;
-        try {
-          const p = JSON.parse(child.payloadJson) as { tool_call_id?: string };
-          if (p.tool_call_id && wanted.has(p.tool_call_id)) return parentId;
-        } catch {
-          /* ignore */
-        }
+    const matches = (row: ObjectiveEventRow): boolean => {
+      if (row.eventType !== "tool_call" || !row.payloadJson) return false;
+      try {
+        const p = JSON.parse(row.payloadJson) as { tool_call_id?: string };
+        return !!p.tool_call_id && wanted.has(p.tool_call_id);
+      } catch {
+        return false;
       }
+    };
+    for (const [parentId, children] of entry.childrenByParent) {
+      if (children.some(matches)) return parentId;
+    }
+    for (const row of entry.entries) {
+      if (matches(row)) return row.id;
     }
     return null;
   }

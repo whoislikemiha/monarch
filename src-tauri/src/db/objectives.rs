@@ -1434,14 +1434,12 @@ impl Database {
             .conn
             .call(move |conn| {
                 let tx = conn.unchecked_transaction()?;
-                let Some(wm) = load_working_memory_tx(&tx, &agent_id) else {
-                    tx.commit()?;
-                    return Ok(Vec::new());
-                };
-                let Some(parent) = wm.current_action.map(|a| a.event_id) else {
-                    tx.commit()?;
-                    return Ok(Vec::new());
-                };
+                // MON-124: a tool call with no current narrated action is
+                // recorded TOP-LEVEL (parent NULL) instead of dropped — the
+                // timeline renders it as a bare chronological tool row.
+                let parent: Option<String> = load_working_memory_tx(&tx, &agent_id)
+                    .and_then(|wm| wm.current_action)
+                    .map(|a| a.event_id);
                 let now = crate::util::chrono_now();
                 let event_id = crate::util::uuid_v4_simple();
                 let payload = serde_json::json!({
@@ -1532,6 +1530,36 @@ impl Database {
                 }])
             })
             .await?)
+    }
+
+    /// MON-124: get-or-create the agent's SCRATCH objective — the durable home
+    /// for unscoped work (project-less agents, or narration/tool activity with
+    /// no current objective). Deterministic id makes this an idempotent
+    /// INSERT OR IGNORE; created silently (no seeded events) so it never adds
+    /// timeline noise. Never closed/graded/reported — it's a container for
+    /// the record, not work to manage. This realizes the roadmap's deferred
+    /// "scratch campaign" seam at per-agent granularity.
+    pub async fn ensure_scratch_objective_internal(
+        &self,
+        agent_id: &str,
+    ) -> Result<String, MonarchError> {
+        let agent_id = agent_id.to_string();
+        let id = format!("scratch-{agent_id}");
+        let id_for_return = id.clone();
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "INSERT OR IGNORE INTO objective_nodes (
+                        id, root_id, parent_id, title, status, created_by,
+                        created_at, kind, assignee_shadow_id
+                     ) VALUES (?1, ?1, NULL, 'Unscoped work', 'in_progress', 'monarch',
+                        strftime('%Y-%m-%dT%H:%M:%SZ','now'), 'objective', ?2)",
+                    params![id, agent_id],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(id_for_return)
     }
 
     /// MON-105 / P1: on a meaningful user turn, create an objective as a BRANCH

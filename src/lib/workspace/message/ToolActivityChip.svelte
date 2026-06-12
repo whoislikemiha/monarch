@@ -8,8 +8,6 @@
    */
   import type { Agent, ToolExecution } from "$lib/types";
   import { timelineStore } from "../timelineStore.svelte";
-  import { liveAgentStore } from "$lib/toolbox/liveAgentStore.svelte";
-  import { FALLBACK_ACTION_ID } from "../timelineModel";
   import EventIcon from "$lib/ui/EventIcon.svelte";
 
   interface Props {
@@ -27,17 +25,11 @@
       executions.map((e) => e.toolCallId),
     );
     if (persisted) return persisted;
-    // No persisted record (project-less agent / unnarrated work) — link to
-    // the timeline's synthesized fallback card. These executions come from
-    // the agent's chat history, which is exactly what feeds that card once
-    // the feed is fully loaded; mid-turn tools are in the live map too.
+    // No persisted record — these executions render as history-sourced bare
+    // tool rows once the feed is fully loaded, addressed `live:{toolCallId}`.
     const st = timelineStore.byAgent.get(agent.id);
     const feedComplete = !st || (!st.hasMore && !st.loading);
-    if (feedComplete) return FALLBACK_ACTION_ID;
-    const liveTools = liveAgentStore.byAgent.get(agent.id)?.toolExecutions;
-    if (liveTools && executions.some((e) => liveTools.has(e.toolCallId))) {
-      return FALLBACK_ACTION_ID;
-    }
+    if (feedComplete && executions.length > 0) return `live:${executions[0].toolCallId}`;
     return null;
   });
 

@@ -429,63 +429,93 @@ async fn current_objective_for_event(
     event: &InnerEvent,
 ) -> Option<String> {
     match event {
-        InnerEvent::MemorySuggestion { .. }
-        | InnerEvent::ToolExecutionStart { .. }
-        | InnerEvent::ToolExecutionEnd { .. }
-        | InnerEvent::ExecutorDecision { .. } => db
+        InnerEvent::MemorySuggestion { .. } | InnerEvent::ToolExecutionEnd { .. } => db
             .get_agent_current_objective_id_internal(agent_id)
             .await
             .ok()
             .flatten(),
-        InnerEvent::ActionTransition { intent, .. } => {
-            if let Some(qid) = db
+        // MON-124: tool calls and decisions with no current objective land on
+        // the agent's scratch objective instead of being dropped — unscoped
+        // work is still part of the record.
+        InnerEvent::ToolExecutionStart { .. } | InnerEvent::ExecutorDecision { .. } => {
+            match db
                 .get_agent_current_objective_id_internal(agent_id)
                 .await
                 .ok()
                 .flatten()
             {
-                return Some(qid);
+                Some(qid) => Some(qid),
+                None => db.ensure_scratch_objective_internal(agent_id).await.ok(),
             }
-            let title = intent.trim();
-            if title.is_empty() {
-                return None;
-            }
-            match db
-                .auto_create_current_objective_internal(agent_id, title, None)
-                .await
-            {
-                Ok(Some(qid)) => {
-                    let payload = serde_json::json!({ "id": qid, "agentId": agent_id });
-                    emit_event(
-                        app,
-                        ws_tx,
-                        &format!("objective-created-{}", qid),
-                        &payload.to_string(),
-                    );
-                    emit_event(
-                        app,
-                        ws_tx,
-                        &format!("objective-created-for-agent-{}", agent_id),
-                        &payload.to_string(),
-                    );
-                    Some(qid)
-                }
-                Ok(None) => db
-                    .get_agent_current_objective_id_internal(agent_id)
-                    .await
-                    .ok()
-                    .flatten(),
-                Err(e) => {
-                    eprintln!(
-                        "[monarch] P4 action narration could not create objective for {}: {:?}",
-                        agent_id, e
-                    );
-                    None
-                }
-            }
+        }
+        InnerEvent::ActionTransition { intent, .. } => {
+            resolve_narration_objective(app, ws_tx, db, agent_id, intent).await
+        }
+        // MON-124: a working assistant turn (text + real tool calls) harvests
+        // its trailing sentence as narration — resolve the objective the same
+        // way explicit narration does so the ActionTransition command built
+        // from this MessageEnd has somewhere to land.
+        InnerEvent::MessageEnd { message, .. } if message.role == "assistant" => {
+            let intent = crate::agent::persist::harvest_narration_intent(message.content.as_ref())?;
+            resolve_narration_objective(app, ws_tx, db, agent_id, &intent).await
         }
         InnerEvent::ActionComplete { .. } => None,
         _ => None,
+    }
+}
+
+/// Narration needs an objective: the agent's current one, else auto-create
+/// from the intent (project agents, MON-105), else the per-agent scratch
+/// objective (project-less — MON-124).
+async fn resolve_narration_objective(
+    app: &AppHandle,
+    ws_tx: &broadcast::Sender<WsBroadcast>,
+    db: &Arc<Database>,
+    agent_id: &str,
+    intent: &str,
+) -> Option<String> {
+    if let Some(qid) = db
+        .get_agent_current_objective_id_internal(agent_id)
+        .await
+        .ok()
+        .flatten()
+    {
+        return Some(qid);
+    }
+    let title = intent.trim();
+    if title.is_empty() {
+        return None;
+    }
+    match db
+        .auto_create_current_objective_internal(agent_id, title, None)
+        .await
+    {
+        Ok(Some(qid)) => {
+            let payload = serde_json::json!({ "id": qid, "agentId": agent_id });
+            emit_event(
+                app,
+                ws_tx,
+                &format!("objective-created-{}", qid),
+                &payload.to_string(),
+            );
+            emit_event(
+                app,
+                ws_tx,
+                &format!("objective-created-for-agent-{}", agent_id),
+                &payload.to_string(),
+            );
+            Some(qid)
+        }
+        // No project → no campaign to branch under: the scratch objective is
+        // the durable home for unscoped narration.
+        Ok(None) => db.ensure_scratch_objective_internal(agent_id).await.ok(),
+        Err(e) => {
+            eprintln!(
+                "[monarch] P4 action narration could not create objective for {}: {:?}",
+                agent_id, e
+            );
+            None
+        }
     }
 }
 

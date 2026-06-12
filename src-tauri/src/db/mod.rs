@@ -47,7 +47,7 @@ pub use projects::{
 
 // objectives
 pub use objectives::{
-    AgentTimelinePage, CreateObjectivePayload, CreateObjectiveRefPayload, ManualObjectiveEventPayload,
+    CreateObjectivePayload, CreateObjectiveRefPayload, ManualObjectiveEventPayload,
     ManualObjectiveUpdatePayload, ObjectiveEventNotification, ObjectiveRow, RecordObjectiveEventPayload,
     TimelineCursor, UpdateObjectivePayload, UpdateObjectiveRefPayload,
 };

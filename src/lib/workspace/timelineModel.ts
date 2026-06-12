@@ -67,7 +67,19 @@ export interface AskPayload {
 
 export type TimelineItem =
   | { kind: "action"; event: ObjectiveEventRow; action: ActionView }
+  /** A bare tool call with no narrated action above it — a top-level
+   * `tool_call` event, or a chat-history execution with no persisted record.
+   * Renders as a slim chronological row (MON-124 flat timeline). */
+  | { kind: "tool"; event: ObjectiveEventRow; tool: ToolCallView }
   | { kind: "milestone"; event: ObjectiveEventRow; payload: Record<string, unknown> };
+
+/** A history-only tool execution to interleave into the stream (no
+ * objective_events row — sourced from the agent's chat history). */
+export interface ExtraToolRow {
+  view: ToolCallView;
+  /** ISO sort key; empty string sorts to the oldest end. */
+  createdAt: string;
+}
 
 /** A run of consecutive items on the same objective, newest-first. */
 export interface TimelineSegment {
@@ -177,10 +189,38 @@ export function buildSegments(
   entries: ObjectiveEventRow[],
   childrenByParent: ReadonlyMap<string, ObjectiveEventRow[]>,
   objectivesById: ReadonlyMap<string, ObjectiveRow>,
+  extraTools: ExtraToolRow[] = [],
 ): TimelineSegment[] {
+  // History-only tool rows ride as pseudo events (objectiveId "") so the
+  // whole stream stays one chronological sort — no synthetic grouping.
+  const pseudoViews = new Map<string, ToolCallView>();
+  const pseudoRows: ObjectiveEventRow[] = extraTools.map(({ view, createdAt }) => {
+    pseudoViews.set(view.eventId, view);
+    return {
+      id: view.eventId,
+      objectiveId: "",
+      eventType: "tool_call",
+      actor: null,
+      payloadJson: null,
+      createdAt,
+      parentEventId: null,
+      author: null,
+      surfaceOverride: null,
+      payloadSchemaVersion: 1,
+      planItemId: null,
+    };
+  });
+  const all = pseudoRows.length
+    ? [...entries, ...pseudoRows].sort((a, b) =>
+        a.createdAt === b.createdAt
+          ? b.id.localeCompare(a.id)
+          : b.createdAt.localeCompare(a.createdAt),
+      )
+    : entries;
+
   const segments: TimelineSegment[] = [];
   let current: TimelineSegment | null = null;
-  for (const entry of entries) {
+  for (const entry of all) {
     if (!current || current.objectiveId !== entry.objectiveId) {
       current = {
         objectiveId: entry.objectiveId,
@@ -194,6 +234,12 @@ export function buildSegments(
         kind: "action",
         event: entry,
         action: buildActionView(entry, childrenByParent.get(entry.id) ?? []),
+      });
+    } else if (entry.eventType === "tool_call") {
+      current.items.push({
+        kind: "tool",
+        event: entry,
+        tool: pseudoViews.get(entry.id) ?? toToolCallView(entry),
       });
     } else {
       current.items.push({ kind: "milestone", event: entry, payload: parsePayload(entry) });
@@ -214,10 +260,6 @@ export function extractClientTarget(toolName: string, args: unknown): string | n
   const compact = raw.split(/\s+/).join(" ");
   return compact.length <= 200 ? compact : `${compact.slice(0, 197)}...`;
 }
-
-/** Card id of the synthesized "unnarrated session work" fallback card. Chat
- * activity chips link here when their tool calls have no persisted record. */
-export const FALLBACK_ACTION_ID = "__fallback__";
 
 /** Minimal shape of a live tool execution (from liveAgentStore) we merge in. */
 export interface LiveToolExecution {
