@@ -7,7 +7,7 @@
   import type { Agent, DisplayItem, AssistantMessage } from "$lib/types";
   import Avatar from "$lib/ui/Avatar.svelte";
   import AssistantBlock from "./AssistantBlock.svelte";
-  import ToolGroupBlock from "./ToolGroupBlock.svelte";
+  import ToolActivityChip from "./ToolActivityChip.svelte";
 
   interface Props {
     agent: Agent;
@@ -59,8 +59,10 @@
         </div>
       {/if}
     {:else if item.kind === "tool-group"}
+      <!-- MON-124: chat is dialogue-only — tool tables live on the timeline.
+           This chip marks that work happened here and links to the card. -->
       <div class="turn tools">
-        <ToolGroupBlock executions={item.executions} />
+        <ToolActivityChip {agent} executions={item.executions} turnComplete={item.turnComplete} />
       </div>
     {:else if item.kind === "status"}
       <div class="meta">{item.text}</div>
@@ -105,6 +107,7 @@
     word-break: break-word;
   }
   .turn.assistant, .turn.tools { flex-direction: column; }
+  .turn.tools { align-items: center; }
   .turn.assistant { gap: var(--s2); }
   .speaker { display: flex; align-items: center; gap: var(--s2); }
   .speaker-name { font-size: 11.5px; font-weight: 600; color: var(--text-primary); }

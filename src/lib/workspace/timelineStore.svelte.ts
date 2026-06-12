@@ -53,6 +53,9 @@ function isOlder(a: ObjectiveEventRow, b: ObjectiveEventRow): boolean {
 
 class TimelineStore {
   readonly byAgent = new SvelteMap<string, AgentTimelineState>();
+  /** One-shot "scroll to this card" request from the chat's activity chips. */
+  focusRequest = $state<{ agentId: string; actionId: string; nonce: number } | null>(null);
+  private focusNonce = 0;
   private subs = new Map<string, Array<Promise<UnlistenFn>>>();
   private subbedObjectives = new Map<string, Set<string>>();
   private headTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -143,6 +146,33 @@ class TimelineStore {
         });
       }, HEAD_REFRESH_DEBOUNCE_MS),
     );
+  }
+
+  /** Ask the timeline pane to scroll to + flash an action card. */
+  focusAction(agentId: string, actionId: string): void {
+    this.focusRequest = { agentId, actionId, nonce: ++this.focusNonce };
+  }
+
+  /** Resolve a chat tool-group to the action card containing its tool calls.
+   * Returns null when the action isn't in the loaded feed (e.g. replayed
+   * history past the loaded pages) — chips render non-linking then. */
+  findActionForToolCalls(agentId: string, toolCallIds: Iterable<string>): string | null {
+    const entry = this.byAgent.get(agentId);
+    if (!entry) return null;
+    const wanted = new Set(toolCallIds);
+    if (wanted.size === 0) return null;
+    for (const [parentId, children] of entry.childrenByParent) {
+      for (const child of children) {
+        if (child.eventType !== "tool_call" || !child.payloadJson) continue;
+        try {
+          const p = JSON.parse(child.payloadJson) as { tool_call_id?: string };
+          if (p.tool_call_id && wanted.has(p.tool_call_id)) return parentId;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return null;
   }
 
   /** Lazily load a closed objective's first-person report. */

@@ -144,6 +144,21 @@
     timelineStore.init(agent.id).catch(() => {});
   });
 
+  /** Chat activity chips request "show me this work": scroll the card into
+   * view and flash it. */
+  let rootEl = $state<HTMLElement | null>(null);
+  let flashId = $state<string | null>(null);
+  $effect(() => {
+    const req = timelineStore.focusRequest;
+    if (!req || req.agentId !== agent.id || !rootEl) return;
+    const el = rootEl.querySelector(`[data-action-id="${req.actionId}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    flashId = req.actionId;
+    const t = setTimeout(() => (flashId = null), 1600);
+    return () => clearTimeout(t);
+  });
+
   /** Infinite scroll: when the sentinel at the old end becomes visible, pull
    * the next page. The scroll container clips it, so viewport-root IO works. */
   let sentinel = $state<HTMLElement | null>(null);
@@ -206,7 +221,7 @@
   });
 </script>
 
-<div class="timeline">
+<div class="timeline" bind:this={rootEl}>
   <NowStrip {workingMemory} {planItems} {streaming} {currentObjective} />
 
   {#if tl?.loading}
@@ -231,23 +246,25 @@
           {#each segment.items as item (item.event.id)}
             {#if item.kind === "action"}
               {@const a = item.action}
-              <TimelineAction
-                action={a}
-                phase={a.eventId === activeActionId ? "active" : a.autoClosed ? "auto" : "done"}
-                tools={liveToolsFor(a)}
-                {nowMs}
-                onask={onask
-                  ? () =>
-                      onask({
-                        id: a.eventId,
-                        intent: a.intent,
-                        outcome: a.outcome,
-                        objectiveId: a.objectiveId,
-                        spawned: a.chatsSpawned.length > 0,
-                      })
-                  : undefined}
-                {onopenchat}
-              />
+              <div class="act-wrap" class:flash={flashId === a.eventId} data-action-id={a.eventId}>
+                <TimelineAction
+                  action={a}
+                  phase={a.eventId === activeActionId ? "active" : a.autoClosed ? "auto" : "done"}
+                  tools={liveToolsFor(a)}
+                  {nowMs}
+                  onask={onask
+                    ? () =>
+                        onask({
+                          id: a.eventId,
+                          intent: a.intent,
+                          outcome: a.outcome,
+                          objectiveId: a.objectiveId,
+                          spawned: a.chatsSpawned.length > 0,
+                        })
+                    : undefined}
+                  {onopenchat}
+                />
+              </div>
             {:else}
               <TimelineMilestone
                 event={item.event}
@@ -308,6 +325,16 @@
     min-width: 0;
   }
   .seg-status { font-size: 9.5px; color: var(--text-muted); flex: none; margin-left: auto; }
+
+  .act-wrap { border-radius: var(--r-md); }
+  .act-wrap.flash { animation: tl-flash 1.6s ease-out; }
+  @keyframes tl-flash {
+    0%, 30% { background: var(--accent-bg-subtle); }
+    100% { background: transparent; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .act-wrap.flash { animation: none; background: var(--accent-bg-subtle); }
+  }
 
   .more, .end {
     display: flex; justify-content: center;
