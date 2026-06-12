@@ -108,6 +108,23 @@ pub(crate) async fn db_list_objective_events(state: &WsState, args: Value) -> Re
     serde_json::to_value(events).map_err(MonarchError::from)
 }
 
+pub(crate) async fn db_list_agent_timeline(state: &WsState, args: Value) -> Result<Value, MonarchError> {
+    let agent_id = str_field(&args, "agentId")?;
+    let before: Option<crate::db::TimelineCursor> = args
+        .get("before")
+        .filter(|v| !v.is_null())
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|e| MonarchError::invalid_input(format!("Invalid before cursor: {}", e)))?;
+    let limit = args.get("limit").and_then(Value::as_u64).map(|v| v as u32);
+    let page = state
+        .db
+        .list_agent_timeline_internal(&agent_id, before, limit.unwrap_or(20))
+        .await?;
+    serde_json::to_value(page).map_err(MonarchError::from)
+}
+
 pub(crate) async fn db_update_objective_manual(state: &WsState, args: Value) -> Result<Value, MonarchError> {
     let payload: crate::db::ManualObjectiveUpdatePayload =
         serde_json::from_value(args.get("payload").cloned().unwrap_or(args.clone()))
