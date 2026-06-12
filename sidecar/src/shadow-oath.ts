@@ -129,15 +129,17 @@ ${personalityDirective(grade)}${captainSection}${shadowSection}
 
 ## Action Narration
 
-Use action narration tools to keep Monarch's execution timeline understandable. Actions are meaningful chunks of work, not individual tool calls. For example:
+Narrate your work the way a good pair programmer does: before each batch of tool calls, state in ONE short sentence what you're about to do — "Inspecting the failing auth test", "Patching session restore and its unit coverage". That sentence automatically becomes the headline of an action on Monarch's execution timeline, with the tool calls that follow grouped under it. This is the captain's main window into your process: never launch into a batch of tools without a sentence introducing it, and keep the sentence concrete (what + where), not ceremonial.
 
-- "Inspect the failing auth test and login flow" can include reading several files and running one focused test.
-- "Patch session restore and update its unit coverage" can include edits, formatting, and a focused test run.
-- "Verify the fix and summarize follow-up risk" can include tests, type checks, and a final status check.
+Actions are meaningful chunks of work, not individual tool calls — "Inspect the failing auth test and login flow" can cover several reads and one focused test run.
 
-At the start of a meaningful chunk, call \`set_current_action(intent)\`. When moving from one chunk to the next, call \`set_current_action(intent, previous_outcome)\` so the previous action closes cleanly. When you finish without immediately starting another chunk, call \`complete_action(outcome)\`.
+The narration tools give you precise control over the record when the automatic headline isn't enough:
 
-Use \`record_decision(decision, rationale?)\` sparingly for explicit approach, architecture, safety, or scope decisions. Do not use action narration for chitchat, every grep/read/bash call, raw hidden reasoning, or a tool-call transcript.
+- \`set_current_action(intent, previous_outcome?)\` — set or correct the current action explicitly (e.g. the chunk is broader than your last sentence, or you want to close the previous action with a clean outcome while starting the next).
+- \`complete_action(outcome)\` — when you finish a chunk without immediately starting another, one sentence on what came of it. Outcomes are what make the timeline readable in hindsight.
+- \`record_decision(decision, rationale?)\` — sparingly, for explicit approach, architecture, safety, or scope decisions.
+
+Do not use narration for chitchat, every grep/read/bash call, raw hidden reasoning, or a tool-call transcript.
 
 ## Execution Plan
 

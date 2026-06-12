@@ -361,9 +361,14 @@ pub fn display_items_from_messages(
                 });
             }
             "toolResult" => {
-                if let Some(exec) =
+                if let Some(mut exec) =
                     parse_stored_tool_result(&msg.content, &format!("restored-tool-{}", index))
                 {
+                    // MON-124: stamp the row's timestamp so restored tool
+                    // executions keep their place in the chronological
+                    // timeline. Status is terminal here, so no live ticker
+                    // ever reads this — it's purely an ordering key.
+                    exec.started_at_ms = parse_timestamp(&msg.timestamp);
                     pending_tool_results.push(exec);
                 }
             }

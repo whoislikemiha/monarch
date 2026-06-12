@@ -15,18 +15,19 @@
   import { timelineStore } from "./timelineStore.svelte";
   import {
     buildSegments,
-    FALLBACK_ACTION_ID,
     mergeAllLiveTools,
     mergeLiveTools,
     relTime,
     type ActionView,
     type AskPayload,
+    type ExtraToolRow,
     type ToolCallView,
   } from "./timelineModel";
   import NowStrip from "./NowStrip.svelte";
   import TimelineAction from "./TimelineAction.svelte";
   import TimelineMilestone from "./TimelineMilestone.svelte";
   import TimelineReportCard from "./TimelineReportCard.svelte";
+  import TimelineToolRow from "./TimelineToolRow.svelte";
 
   interface Props {
     agent: Agent;
@@ -63,25 +64,15 @@
   });
 
   let tl = $derived(timelineStore.byAgent.get(agent.id));
-  let segments = $derived(
-    tl ? buildSegments(tl.entries, tl.childrenByParent, tl.objectivesById) : [],
-  );
   let newestEntryId = $derived(tl?.entries[0]?.id ?? null);
 
-  /** The in-flight action (newest entry, coherent_action, no outcome yet). */
-  let activeActionId = $derived.by(() => {
-    const first = segments[0]?.items[0];
-    if (!first || first.kind !== "action") return null;
-    const a = first.action;
-    return first.event.id === newestEntryId && !a.outcome && !a.completedAt ? a.eventId : null;
-  });
-
-  /** Tool calls already persisted as children anywhere in the loaded feed. */
+  /** Tool calls already persisted anywhere in the loaded feed — nested under
+   * actions OR as top-level rows. */
   let persistedToolCallIds = $derived.by(() => {
     const ids = new Set<string>();
     if (!tl) return ids;
-    for (const children of tl.childrenByParent.values()) {
-      for (const c of children) {
+    const collect = (rows: Iterable<import("$lib/bindings").ObjectiveEventRow>) => {
+      for (const c of rows) {
         if (c.eventType !== "tool_call" || !c.payloadJson) continue;
         try {
           const p = JSON.parse(c.payloadJson) as { tool_call_id?: string };
@@ -90,8 +81,18 @@
           /* ignore */
         }
       }
-    }
+    };
+    for (const children of tl.childrenByParent.values()) collect(children);
+    collect(tl.entries);
     return ids;
+  });
+
+  /** The in-flight action (newest top-level entry, no outcome child yet). */
+  let activeActionId = $derived.by(() => {
+    const first = tl?.entries[0];
+    if (!first || first.eventType !== "coherent_action") return null;
+    const children = tl?.childrenByParent.get(first.id) ?? [];
+    return children.some((c) => c.eventType === "action_outcome") ? null : first.id;
   });
 
   /** Live tools for the active card (persisted ⊕ in-flight, by toolCallId). */
@@ -100,11 +101,23 @@
     return mergeLiveTools(action.toolCalls, live.toolExecutions.values());
   }
 
+  /** Overlay live status onto a top-level tool row (running ticker before
+   * the persisted row's end-mutation ping lands). */
+  function liveToolOverlay(tool: ToolCallView): ToolCallView {
+    if (tool.status !== "running" || !live) return tool;
+    const exec = live.toolExecutions.get(tool.toolCallId);
+    if (!exec || exec.status === "running") return tool;
+    return {
+      ...tool,
+      status: exec.status,
+      isError: exec.status === "error",
+      durationMs: exec.durationMs ?? tool.durationMs,
+    };
+  }
+
   /** Every tool execution this agent's loaded history knows about: restored
-   * chat-history tool groups first (durable — the messages table is written
-   * project or not), overlaid by the live map (fresh status mid-turn, and
-   * cleared on restore). This is what makes project-less work a real part of
-   * the record: it rides the agent's chat history, not objective_events. */
+   * chat-history tool groups (durable — the messages table is written
+   * project or not), overlaid by the live map (fresh status mid-turn). */
   let sessionToolExecutions = $derived.by(() => {
     const map = new Map<string, ToolExecution>();
     if (!live) return map;
@@ -117,48 +130,32 @@
     return map;
   });
 
-  /** Unnarrated fallback: tool executions with no persisted objective_events
-   * record — no objective (project-less agent) or no narrated action to live
-   * under. Running AND finished ones both render: work must never silently
-   * disappear from the timeline. History-sourced executions are only safe to
-   * classify as unrecorded once the feed is fully loaded (a partially-loaded
-   * feed can't prove an old tool call wasn't narrated on a deeper page) —
-   * until then, only the live in-flight map feeds the card. */
-  let orphanTools = $derived.by(() => {
-    if (!live || activeActionId) return [];
+  /** MON-124 flat chronology: tool executions with no persisted
+   * objective_events record (pre-scratch history, or in-flight latency)
+   * interleave into the stream as bare tool rows — never grouped, never
+   * dropped. History-sourced executions only qualify once the feed is fully
+   * loaded (a partial feed can't prove an old call wasn't recorded deeper);
+   * until then only live in-flight tools ride along. */
+  let extraToolRows = $derived.by((): ExtraToolRow[] => {
+    if (!live) return [];
     const feedComplete = !tl || (!tl.hasMore && !tl.loading);
-    const source = feedComplete ? sessionToolExecutions.values() : live.toolExecutions.values();
+    const source = feedComplete
+      ? sessionToolExecutions.values()
+      : [...live.toolExecutions.values()].filter((t) => t.status === "running");
     const orphans = [...source].filter((t) => !persistedToolCallIds.has(t.toolCallId));
-    return orphans.length ? mergeAllLiveTools(orphans) : [];
+    return mergeAllLiveTools(orphans).map((view) => ({
+      view,
+      createdAt: view.startedAt ?? "",
+    }));
   });
-  let fallbackAction = $derived.by((): ActionView | null => {
-    if (!orphanTools.length) return null;
-    const running = orphanTools.some((t) => t.status === "running");
-    const errors = orphanTools.filter((t) => t.isError).length;
-    return {
-      eventId: FALLBACK_ACTION_ID,
-      objectiveId: "",
-      intent: running ? "working…" : "unnarrated work",
-      startedAt: null,
-      outcome: running
-        ? null
-        : errors > 0
-          ? `${errors} of ${orphanTools.length} tool call${orphanTools.length === 1 ? "" : "s"} failed`
-          : `${orphanTools.length} tool call${orphanTools.length === 1 ? "" : "s"}`,
-      autoClosed: false,
-      completedAt: null,
-      toolCalls: orphanTools,
-      decisions: [],
-      chatsSpawned: [],
-      filesTouched: [],
-      planItemId: null,
-    };
-  });
-  let fallbackRunning = $derived(orphanTools.some((t) => t.status === "running"));
 
-  let hasContent = $derived(
-    segments.length > 0 || !!fallbackAction || (planItems.length > 0 && !!workingMemory),
+  let segments = $derived(
+    tl
+      ? buildSegments(tl.entries, tl.childrenByParent, tl.objectivesById, extraToolRows)
+      : buildSegments([], new Map(), new Map(), extraToolRows),
   );
+
+  let hasContent = $derived(segments.length > 0 || (planItems.length > 0 && !!workingMemory));
 
   /** 1s wall clock driving the active card's elapsed timer and live durations. */
   let nowMs = $state(Date.now());
@@ -259,24 +256,16 @@
     <div class="empty mono">Loading the work record…</div>
   {:else if hasContent}
     <div class="stream">
-      {#if fallbackAction}
-        <div
-          class="act-wrap"
-          class:flash={flashId === FALLBACK_ACTION_ID}
-          data-action-id={FALLBACK_ACTION_ID}
-        >
-          <TimelineAction action={fallbackAction} phase={fallbackRunning ? "active" : "auto"} {nowMs} />
-        </div>
-      {/if}
-
       {#each segments as segment, si (segment.objectiveId + ":" + si)}
         <div class="segment">
-          <div class="seg-head">
-            <span class="seg-title">{segment.objective?.title ?? "Objective"}</span>
-            {#if segment.objective}
-              <span class="seg-status mono">{statusLabel(segment.objective.status)}</span>
-            {/if}
-          </div>
+          {#if segment.objectiveId !== ""}
+            <div class="seg-head">
+              <span class="seg-title">{segment.objective?.title ?? "Objective"}</span>
+              {#if segment.objective}
+                <span class="seg-status mono">{statusLabel(segment.objective.status)}</span>
+              {/if}
+            </div>
+          {/if}
           {#if reportBySegment.has(si)}
             <TimelineReportCard report={reportBySegment.get(si)!} />
           {/if}
@@ -301,6 +290,10 @@
                     : undefined}
                   {onopenchat}
                 />
+              </div>
+            {:else if item.kind === "tool"}
+              <div class="act-wrap" class:flash={flashId === item.event.id} data-action-id={item.event.id}>
+                <TimelineToolRow tool={liveToolOverlay(item.tool)} time={relTime(item.event.createdAt || item.tool.startedAt)} />
               </div>
             {:else}
               <TimelineMilestone

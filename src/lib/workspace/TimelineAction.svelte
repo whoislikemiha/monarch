@@ -62,8 +62,6 @@
 
     {#if action.outcome}
       <div class="outcome">{action.outcome}</div>
-    {:else if phase === "auto"}
-      <div class="outcome muted">left unresolved</div>
     {/if}
 
     {#if childCount > 0 || action.filesTouched.length > 0 || action.chatsSpawned.length > 0}
@@ -190,7 +188,6 @@
   .time.live { color: var(--status-info); font-variant-numeric: tabular-nums; }
 
   .outcome { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; }
-  .outcome.muted { font-style: italic; opacity: 0.8; }
 
   .meta { display: flex; gap: var(--s2); flex-wrap: wrap; padding-top: 1px; }
   .chip {
