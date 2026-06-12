@@ -134,6 +134,28 @@ pub async fn rebuild_agent_state_from_session(
         .await
 }
 
+/// MON-127: read-only display items for a single session (no ancestry walk).
+/// Powers the session-history browser's conversation view — pure DB read,
+/// never touches the live `LiveAgentState` cache or the sidecar.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_session_display_items(
+    db: tauri::State<'_, Arc<Database>>,
+    session_id: String,
+) -> Result<Vec<crate::agent::state::DisplayItem>, MonarchError> {
+    let messages = db.get_messages_internal(&session_id).await?;
+    if messages.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Drop the leading Status header — the browser renders its own chrome.
+    Ok(
+        crate::agent::state::display_items_from_messages(&messages, "")
+            .into_iter()
+            .filter(|i| !matches!(i, crate::agent::state::DisplayItem::Status { .. }))
+            .collect(),
+    )
+}
+
 /// Load messages from a previous SQLite session into the sidecar's agent context.
 /// This gives the LLM conversational continuity when restoring.
 #[tauri::command]

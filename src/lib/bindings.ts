@@ -95,6 +95,12 @@ export const commands = {
 	 *  subsequent messages are appended to the selected session.
 	 */
 	switchAgentSession: (agentId: string, sessionId: string) => typedError<null, ErrorDto>(__TAURI_INVOKE("switch_agent_session", { agentId, sessionId })),
+	/**
+	 *  MON-127: read-only display items for a single session (no ancestry walk).
+	 *  Powers the session-history browser's conversation view — pure DB read,
+	 *  never touches the live `LiveAgentState` cache or the sidecar.
+	 */
+	getSessionDisplayItems: (sessionId: string) => typedError<DisplayItem[], ErrorDto>(__TAURI_INVOKE("get_session_display_items", { sessionId })),
 	// Forward extension UI response from frontend to sidecar
 	respondExtensionUi: (req: ExtensionUiResponseRequest) => typedError<null, ErrorDto>(__TAURI_INVOKE("respond_extension_ui", { req })),
 	getCaptainIdentity: () => typedError<CaptainIdentityRow, ErrorDto>(__TAURI_INVOKE("get_captain_identity")),
@@ -143,6 +149,10 @@ export const commands = {
 	dbGetMessages: (sessionId: string) => typedError<MessageRow[], ErrorDto>(__TAURI_INVOKE("db_get_messages", { sessionId })),
 	// Get messages for a session, including all ancestor sessions (for continued sessions)
 	dbGetMessagesWithAncestry: (sessionId: string) => typedError<MessageRow[], ErrorDto>(__TAURI_INVOKE("db_get_messages_with_ancestry", { sessionId })),
+	// MON-127: per-agent session list with titles + first-user-message previews.
+	dbListSessionSummaries: (agentId: string) => typedError<SessionSummary[], ErrorDto>(__TAURI_INVOKE("db_list_session_summaries", { agentId })),
+	// MON-127: rename a session (None clears back to the derived preview title).
+	dbSetSessionTitle: (sessionId: string, title: string | null) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_set_session_title", { sessionId, title })),
 	// MON-99: List all non-archived memories for an agent (Memory Inspector v0).
 	dbListMemoriesForAgent: (agentId: string) => typedError<MemoryRow[], ErrorDto>(__TAURI_INVOKE("db_list_memories_for_agent", { agentId })),
 	// MON-99: Get a single memory by id.
@@ -964,6 +974,30 @@ export type SessionRow = {
 	totalTokens: number,
 	totalCost: number,
 	parentSessionId: string | null,
+	/**
+	 *  MON-127: user-facing session title. NULL = untitled; display falls
+	 *  back to a snippet of the first user message.
+	 */
+	title?: string | null,
+};
+
+/**
+ *  MON-127: one row in the session-history list. `SessionRow` plus a derived
+ *  `preview` (first user message snippet) so the browser can label untitled
+ *  sessions without fetching full message bodies per session.
+ */
+export type SessionSummary = {
+	id: string,
+	model: string | null,
+	provider: string | null,
+	startedAt: string,
+	endedAt: string | null,
+	messageCount: number,
+	totalTokens: number,
+	totalCost: number,
+	parentSessionId: string | null,
+	title: string | null,
+	preview: string | null,
 };
 
 /**
