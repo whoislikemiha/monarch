@@ -15,6 +15,8 @@
   import { timelineStore } from "./timelineStore.svelte";
   import {
     buildSegments,
+    FALLBACK_ACTION_ID,
+    mergeAllLiveTools,
     mergeLiveTools,
     relTime,
     type ActionView,
@@ -98,23 +100,32 @@
     return mergeLiveTools(action.toolCalls, live.toolExecutions.values());
   }
 
-  /** Unnarrated fallback: running tools with no narrated action to live under.
-   * Work must never silently disappear from the timeline. */
+  /** Unnarrated fallback: session tool executions with no persisted record —
+   * no objective (project-less agent) or no narrated action to live under.
+   * Running AND finished ones both render: work must never silently
+   * disappear from the timeline. (Live-state only — vanishes on restart;
+   * durable recording needs an objective, per the P1 ephemeral rule.) */
   let orphanTools = $derived.by(() => {
     if (!live || activeActionId) return [];
     const orphans = [...live.toolExecutions.values()].filter(
-      (t) => t.status === "running" && !persistedToolCallIds.has(t.toolCallId),
+      (t) => !persistedToolCallIds.has(t.toolCallId),
     );
-    return orphans.length ? mergeLiveTools([], orphans) : [];
+    return orphans.length ? mergeAllLiveTools(orphans) : [];
   });
   let fallbackAction = $derived.by((): ActionView | null => {
     if (!orphanTools.length) return null;
+    const running = orphanTools.some((t) => t.status === "running");
+    const errors = orphanTools.filter((t) => t.isError).length;
     return {
-      eventId: "__fallback__",
+      eventId: FALLBACK_ACTION_ID,
       objectiveId: "",
-      intent: "working…",
+      intent: running ? "working…" : "unnarrated work · this session",
       startedAt: null,
-      outcome: null,
+      outcome: running
+        ? null
+        : errors > 0
+          ? `${errors} of ${orphanTools.length} tool call${orphanTools.length === 1 ? "" : "s"} failed`
+          : `${orphanTools.length} tool call${orphanTools.length === 1 ? "" : "s"}`,
       autoClosed: false,
       completedAt: null,
       toolCalls: orphanTools,
@@ -124,6 +135,7 @@
       planItemId: null,
     };
   });
+  let fallbackRunning = $derived(orphanTools.some((t) => t.status === "running"));
 
   let hasContent = $derived(
     segments.length > 0 || !!fallbackAction || (planItems.length > 0 && !!workingMemory),
@@ -229,7 +241,13 @@
   {:else if hasContent}
     <div class="stream">
       {#if fallbackAction}
-        <TimelineAction action={fallbackAction} phase="active" {nowMs} />
+        <div
+          class="act-wrap"
+          class:flash={flashId === FALLBACK_ACTION_ID}
+          data-action-id={FALLBACK_ACTION_ID}
+        >
+          <TimelineAction action={fallbackAction} phase={fallbackRunning ? "active" : "auto"} {nowMs} />
+        </div>
       {/if}
 
       {#each segments as segment, si (segment.objectiveId + ":" + si)}

@@ -8,6 +8,8 @@
    */
   import type { Agent, ToolExecution } from "$lib/types";
   import { timelineStore } from "../timelineStore.svelte";
+  import { liveAgentStore } from "$lib/toolbox/liveAgentStore.svelte";
+  import { FALLBACK_ACTION_ID } from "../timelineModel";
   import EventIcon from "$lib/ui/EventIcon.svelte";
 
   interface Props {
@@ -19,12 +21,20 @@
 
   let running = $derived(!turnComplete || executions.some((e) => e.status === "running"));
   let errored = $derived(executions.some((e) => e.status === "error"));
-  let actionId = $derived(
-    timelineStore.findActionForToolCalls(
+  let actionId = $derived.by(() => {
+    const persisted = timelineStore.findActionForToolCalls(
       agent.id,
       executions.map((e) => e.toolCallId),
-    ),
-  );
+    );
+    if (persisted) return persisted;
+    // No persisted record (project-less agent / unnarrated work) — link to
+    // the timeline's synthesized fallback card if these tools are live there.
+    const liveTools = liveAgentStore.byAgent.get(agent.id)?.toolExecutions;
+    if (liveTools && executions.some((e) => liveTools.has(e.toolCallId))) {
+      return FALLBACK_ACTION_ID;
+    }
+    return null;
+  });
 
   function jump() {
     if (actionId) timelineStore.focusAction(agent.id, actionId);

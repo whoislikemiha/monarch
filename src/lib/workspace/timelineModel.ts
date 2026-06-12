@@ -215,6 +215,10 @@ export function extractClientTarget(toolName: string, args: unknown): string | n
   return compact.length <= 200 ? compact : `${compact.slice(0, 197)}...`;
 }
 
+/** Card id of the synthesized "unnarrated session work" fallback card. Chat
+ * activity chips link here when their tool calls have no persisted record. */
+export const FALLBACK_ACTION_ID = "__fallback__";
+
 /** Minimal shape of a live tool execution (from liveAgentStore) we merge in. */
 export interface LiveToolExecution {
   toolCallId: string;
@@ -239,6 +243,14 @@ function liveToolToView(exec: LiveToolExecution): ToolCallView {
     completedAt: null,
     durationMs: exec.durationMs ?? null,
   };
+}
+
+/** Every live execution as a view row, finished ones included — feeds the
+ * unnarrated-work fallback card, where there is no persisted baseline. */
+export function mergeAllLiveTools(live: Iterable<LiveToolExecution>): ToolCallView[] {
+  return [...live]
+    .sort((a, b) => (a.startedAtMs ?? 0) - (b.startedAtMs ?? 0))
+    .map(liveToolToView);
 }
 
 /**
