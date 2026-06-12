@@ -17,6 +17,7 @@
     buildSegments,
     mergeAllLiveTools,
     mergeLiveTools,
+    META_TOOLS,
     relTime,
     type ActionView,
     type AskPayload,
@@ -123,10 +124,14 @@
     if (!live) return map;
     for (const item of live.items) {
       if (item.kind === "tool-group") {
-        for (const e of item.executions) map.set(e.toolCallId, e);
+        for (const e of item.executions) {
+          if (!META_TOOLS.has(e.toolName)) map.set(e.toolCallId, e);
+        }
       }
     }
-    for (const e of live.toolExecutions.values()) map.set(e.toolCallId, e);
+    for (const e of live.toolExecutions.values()) {
+      if (!META_TOOLS.has(e.toolName)) map.set(e.toolCallId, e);
+    }
     return map;
   });
 

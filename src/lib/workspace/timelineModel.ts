@@ -103,6 +103,21 @@ const str = (v: unknown): string | null => (typeof v === "string" && v.length ? 
 /** Tools whose `target` is a file path that was (potentially) modified. */
 const MUTATING_TOOLS = new Set(["write", "edit", "multi_edit", "apply_patch"]);
 
+/** Meta tools (narration / plan control) — frontend mirror of the backend's
+ * `is_narration_tool`. Their semantics land as coherent_action / plan_* events;
+ * the tool CALLS themselves are never work and never render as tool rows. */
+export const META_TOOLS = new Set([
+  "set_current_action",
+  "complete_action",
+  "record_decision",
+  "set_plan",
+  "update_plan",
+  "start_plan_item",
+  "complete_plan_item",
+  "skip_plan_item",
+  "block_plan_item",
+]);
+
 export function toToolCallView(row: ObjectiveEventRow): ToolCallView {
   const p = parsePayload(row);
   const status = p.status === "done" || p.status === "error" ? p.status : "running";

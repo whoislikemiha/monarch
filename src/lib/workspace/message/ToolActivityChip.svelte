@@ -8,6 +8,7 @@
    */
   import type { Agent, ToolExecution } from "$lib/types";
   import { timelineStore } from "../timelineStore.svelte";
+  import { META_TOOLS } from "../timelineModel";
   import EventIcon from "$lib/ui/EventIcon.svelte";
 
   interface Props {
@@ -15,11 +16,16 @@
     executions: ToolExecution[];
     turnComplete: boolean;
   }
-  let { agent, executions, turnComplete }: Props = $props();
+  let { agent, executions: allExecutions, turnComplete }: Props = $props();
+
+  /** Narration/plan meta tools aren't work — a turn that only narrates
+   * shows no activity chip at all. */
+  let executions = $derived(allExecutions.filter((e) => !META_TOOLS.has(e.toolName)));
 
   let running = $derived(!turnComplete || executions.some((e) => e.status === "running"));
   let errored = $derived(executions.some((e) => e.status === "error"));
   let actionId = $derived.by(() => {
+    if (executions.length === 0) return null;
     const persisted = timelineStore.findActionForToolCalls(
       agent.id,
       executions.map((e) => e.toolCallId),
@@ -29,7 +35,7 @@
     // tool rows once the feed is fully loaded, addressed `live:{toolCallId}`.
     const st = timelineStore.byAgent.get(agent.id);
     const feedComplete = !st || (!st.hasMore && !st.loading);
-    if (feedComplete && executions.length > 0) return `live:${executions[0].toolCallId}`;
+    if (feedComplete) return `live:${executions[0].toolCallId}`;
     return null;
   });
 
@@ -38,6 +44,7 @@
   }
 </script>
 
+{#if executions.length > 0}
 <button
   class="activity"
   class:linked={!!actionId}
@@ -54,6 +61,7 @@
   {#if running}<span class="pulse" aria-hidden="true"></span>{/if}
   {#if actionId}<span class="link">view in timeline</span>{/if}
 </button>
+{/if}
 
 <style>
   .activity {
