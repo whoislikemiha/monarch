@@ -12,7 +12,6 @@
   import Avatar from "$lib/ui/Avatar.svelte";
   import { gradeLetter } from "$lib/ui/grade";
   import ThinkingPicker from "$lib/ThinkingPicker.svelte";
-  import HistoryPanel from "$lib/HistoryPanel.svelte";
   import PromptEditor from "$lib/PromptEditor.svelte";
   import type { LiveBinding } from "./liveBinding.svelte";
 
@@ -34,7 +33,6 @@
   let liveStatus = $derived(streaming ? live?.activityStatus || "Working…" : "");
 
   let menuOpen = $state(false);
-  let showHistory = $state(false);
   let showPrompt = $state(false);
 
   function onThinking(level: string) {
@@ -102,21 +100,11 @@
         <button role="menuitem" onclick={() => { menuOpen = false; agentStore.newConversation(agent.id); }}>New session</button>
         <button role="menuitem" onclick={() => { menuOpen = false; binding.compact(agent); }}>Compact context</button>
         <button role="menuitem" onclick={() => { menuOpen = false; showPrompt = true; }}>Edit prompt</button>
-        <button role="menuitem" onclick={() => { menuOpen = false; showHistory = true; }}>Session history</button>
+        <button role="menuitem" onclick={() => { menuOpen = false; if (!layoutStore.isOpen("sessions")) layoutStore.toggle("sessions"); }}>Session history</button>
       </div>
     {/if}
   </div>
 </header>
-
-{#if showHistory}
-  <HistoryPanel
-    agentId={agent.id}
-    sessions={agent.sessions || []}
-    currentSessionId={agent.sessionId}
-    onload={(session) => { showHistory = false; agentStore.switchSession(agent.id, session.sessionId); }}
-    onclose={() => (showHistory = false)}
-  />
-{/if}
 
 {#if showPrompt}
   <PromptEditor

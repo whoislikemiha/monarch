@@ -83,6 +83,8 @@ interface SessionDbRow {
   totalTokens: number;
   totalCost: number;
   parentSessionId?: string | null;
+  /** MON-127: user-facing title; omitted = untitled (backend defaults to NULL). */
+  title?: string | null;
 }
 
 // --- Helpers ------------------------------------------------------------
@@ -531,31 +533,17 @@ class AgentStore {
       this.openTab(agentId);
       return;
     }
-    const previousSessionId = agent.sessionId;
     this.counter++;
     const newSessionId = `session-${Date.now()}-${this.counter}`;
     try {
-      const session: SessionDbRow = {
-        id: newSessionId,
-        agentId,
-        model: agent.model || null,
-        provider: agent.provider || null,
-        startedAt: new Date().toISOString(),
-        endedAt: null,
-        messageCount: 0,
-        totalTokens: 0,
-        totalCost: 0,
-        parentSessionId: previousSessionId || null,
-      };
-      await invoke("db_create_session", { session });
+      // MON-127: a new session is a clean slate — deliberately NO parent
+      // ancestry (chaining the parent made "new session" replay the entire
+      // old conversation). The backend ends the old session, inserts the
+      // fresh row, resets the live display state, and clears the sidecar's
+      // in-memory conversation.
+      await invoke("new_agent_session", { agentId, newSessionId, parentSessionId: null });
     } catch (e) {
-      console.error("Failed to create new conversation session:", e);
-      return;
-    }
-    try {
-      await invoke("switch_agent_session", { agentId, sessionId: newSessionId });
-    } catch (e) {
-      console.error("Failed to switch session:", e);
+      console.error("Failed to create new session:", e);
       return;
     }
     this.agents = this.agents.map((a) =>

@@ -14,6 +14,7 @@ import MemoryInspectorTool from "$lib/toolbox/tools/MemoryInspectorTool.svelte";
 import ContextInspectorTool from "$lib/toolbox/tools/ContextInspectorTool.svelte";
 import ShadowStatsTool from "$lib/toolbox/tools/ShadowStatsTool.svelte";
 import ArchitectPanel from "$lib/panels/ArchitectPanel.svelte";
+import SessionHistoryTool from "$lib/toolbox/tools/SessionHistoryTool.svelte";
 
 export interface PanelDef {
   id: string;
@@ -24,6 +25,13 @@ export interface PanelDef {
 }
 
 export const PANELS: PanelDef[] = [
+  {
+    id: "sessions",
+    title: "Sessions",
+    // clock-with-arrow history icon — session browser (MON-127)
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 9 8 9"/><polyline points="12 7 12 12 16 14"/></svg>`,
+    component: SessionHistoryTool,
+  },
   {
     id: "memory",
     title: "Memory",
