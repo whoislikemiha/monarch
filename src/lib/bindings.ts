@@ -979,6 +979,11 @@ export type SessionRow = {
 	 *  back to a snippet of the first user message.
 	 */
 	title?: string | null,
+	/**
+	 *  MON-128 (P3): which organ owns the session — `"executor"` (default,
+	 *  acts on the world) or `"chat"` (the chat-shadow).
+	 */
+	role?: string,
 };
 
 /**

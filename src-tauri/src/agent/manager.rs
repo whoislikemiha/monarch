@@ -22,7 +22,7 @@ use crate::db::{AgentRow, Database, MessageRow};
 use crate::error::MonarchError;
 use crate::memory::index::MemoryIndex;
 use crate::persistence::read_agent_prompt_file;
-use crate::sidecar_protocol::{KeeperConfig, LoadSessionMessage, ShadowConfig, SidecarCommand};
+use crate::sidecar_protocol::{KeeperConfig, LoadSessionMessage, SessionRole, ShadowConfig, SidecarCommand};
 use crate::util::chrono_now;
 
 use super::commands::{ExtensionUiResponseRequest, SpawnAgentRequest};
@@ -639,6 +639,7 @@ impl AgentManager {
                 total_cost: 0.0,
                 parent_session_id: None,
                 title: None,
+                role: crate::db::default_session_role(),
             })
             .await?;
             // MON-63: track session count
@@ -697,6 +698,7 @@ impl AgentManager {
             context_window: effective_context_window,
             captain_identity_payload: captain_payload,
             shadow_identity_payload: shadow_payload,
+            session_role: SessionRole::Executor,
         };
 
         self.send_to_sidecar(&serde_json::to_string(&cmd)?).await?;
@@ -831,6 +833,7 @@ impl AgentManager {
                 project_instructions: None,
                 captain_identity_payload: Some(payload.clone().unwrap_or_default()),
                 shadow_identity_payload: None,
+                session_role: SessionRole::Executor,
             };
             let _ = self.send_to_sidecar(&serde_json::to_string(&cmd)?).await;
         }
@@ -850,6 +853,7 @@ impl AgentManager {
             project_instructions: None,
             captain_identity_payload: None,
             shadow_identity_payload: Some(payload.unwrap_or_default()),
+            session_role: SessionRole::Executor,
         };
         let _ = self.send_to_sidecar(&serde_json::to_string(&cmd)?).await;
         Ok(())
@@ -858,6 +862,9 @@ impl AgentManager {
     pub async fn kill(&self, id: &str) -> Result<(), MonarchError> {
         let cmd = SidecarCommand::DestroySession {
             agent_id: id.to_string(),
+            // Executor on the wire today; once the chat organ exists (Slice C)
+            // kill() must tear down both roles.
+            session_role: SessionRole::Executor,
         };
         let _ = self.send_to_sidecar(&serde_json::to_string(&cmd)?).await;
 
@@ -906,6 +913,7 @@ impl AgentManager {
         let cmd = SidecarCommand::LoadSession {
             agent_id,
             messages: load_messages,
+            session_role: SessionRole::Executor,
         };
 
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
@@ -980,6 +988,7 @@ impl AgentManager {
             total_cost: 0.0,
             parent_session_id: valid_parent_session_id,
             title: None,
+            role: crate::db::default_session_role(),
         })
         .await?;
         // MON-63: track session count
@@ -1000,7 +1009,10 @@ impl AgentManager {
             .rebuild_state_from_session(app, db, &agent_id, None, "New session")
             .await;
 
-        let cmd = SidecarCommand::NewSession { agent_id };
+        let cmd = SidecarCommand::NewSession {
+            agent_id,
+            session_role: SessionRole::Executor,
+        };
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
             .await
     }
@@ -1049,7 +1061,10 @@ impl AgentManager {
             .rebuild_state_from_session(app, db, &agent_id, Some(&session_id), "Continued session")
             .await;
 
-        let cmd = SidecarCommand::NewSession { agent_id };
+        let cmd = SidecarCommand::NewSession {
+            agent_id,
+            session_role: SessionRole::Executor,
+        };
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
             .await
     }
@@ -1069,6 +1084,7 @@ impl AgentManager {
             agent_id,
             request_id,
             value,
+            session_role: SessionRole::Executor,
         };
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
             .await
@@ -1090,7 +1106,7 @@ mod tests {
     use crate::db::Database;
     use crate::memory::index::MemoryIndex;
     use crate::models::ModelCache;
-    use crate::sidecar_protocol::SidecarCommand;
+    use crate::sidecar_protocol::{SessionRole, SidecarCommand};
     use crate::websocket::{self, WsState};
     use super::super::keeper::render_keeper_slice;
     use super::super::objective_prompt::is_meaningful_objective_prompt;
@@ -1103,6 +1119,7 @@ mod tests {
             session_id: session_id.to_string(),
             create_cmd: SidecarCommand::NewSession {
                 agent_id: agent_id.to_string(),
+                session_role: SessionRole::Executor,
             },
         }
     }

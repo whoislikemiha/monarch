@@ -28,7 +28,7 @@ use tokio::sync::Mutex as TokioMutex;
 use crate::agent::state::{display_items_from_messages, DisplayItem};
 use crate::db::Database;
 use crate::error::MonarchError;
-use crate::sidecar_protocol::{LoadSessionMessage, SidecarCommand};
+use crate::sidecar_protocol::{LoadSessionMessage, SessionRole, SidecarCommand};
 
 use super::event_handler::{emit_state_event, handle_sidecar_event};
 use super::AgentManager;
@@ -354,6 +354,7 @@ impl AgentManager {
                 if !messages.is_empty() {
                     let load_cmd = SidecarCommand::LoadSession {
                         agent_id: agent_id.clone(),
+                        session_role: SessionRole::Executor,
                         messages: messages
                             .iter()
                             .filter(|m| {

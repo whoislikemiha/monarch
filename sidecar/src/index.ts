@@ -50,34 +50,34 @@ async function handleCommand(cmd: SidecarCommand): Promise<void> {
 			await manager.createSession(cmd);
 			break;
 		case "destroy_session":
-			await manager.destroySession(cmd.agentId);
+			await manager.destroySession(cmd.agentId, cmd.sessionRole);
 			break;
 		case "prompt":
-			await manager.prompt(cmd.agentId, cmd.message, cmd.classifier);
+			await manager.prompt(cmd.agentId, cmd.message, cmd.classifier, cmd.sessionRole);
 			break;
 		case "abort":
-			await manager.abort(cmd.agentId);
+			await manager.abort(cmd.agentId, cmd.sessionRole);
 			break;
 		case "set_model":
-			await manager.setModel(cmd.agentId, cmd.provider, cmd.modelId, cmd.contextWindow);
+			await manager.setModel(cmd.agentId, cmd.provider, cmd.modelId, cmd.contextWindow, cmd.sessionRole);
 			break;
 		case "set_thinking_level":
-			manager.setThinkingLevel(cmd.agentId, cmd.level);
+			manager.setThinkingLevel(cmd.agentId, cmd.level, cmd.sessionRole);
 			break;
 		case "new_session":
-			await manager.newSession(cmd.agentId);
+			manager.newSession(cmd.agentId, cmd.sessionRole);
 			break;
 		case "compact":
-			await manager.compact(cmd.agentId);
+			await manager.compact(cmd.agentId, cmd.sessionRole);
 			break;
 		case "load_session":
-			manager.loadSession(cmd.agentId, cmd.messages);
+			manager.loadSession(cmd.agentId, cmd.messages, cmd.sessionRole);
 			break;
 		case "extension_ui_response":
-			manager.handleUIResponse(cmd.agentId, cmd.requestId, cmd.value);
+			manager.handleUIResponse(cmd.agentId, cmd.requestId, cmd.value, cmd.sessionRole);
 			break;
 		case "set_custom_prompt":
-			manager.setCustomPrompt(cmd.agentId, cmd.prompt, cmd.projectInstructions, cmd.captainIdentityPayload, cmd.shadowIdentityPayload);
+			manager.setCustomPrompt(cmd.agentId, cmd.prompt, cmd.projectInstructions, cmd.captainIdentityPayload, cmd.shadowIdentityPayload, cmd.sessionRole);
 			break;
 		case "keeper_run":
 			// MON-100: don't await — the Keeper round trip can take seconds and

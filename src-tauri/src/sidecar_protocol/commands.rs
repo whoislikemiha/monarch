@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::memory::search::MemorySearchResult;
 
 use super::config::{ClassifierInvocation, KeeperConfig, LoadSessionMessage, ShadowConfig};
+use super::types::SessionRole;
 
 /// Commands the Rust backend sends to the Node sidecar over stdin. One
 /// variant per TS interface in `sidecar/src/protocol.ts`. Serialized via
@@ -36,9 +37,13 @@ pub enum SidecarCommand {
         captain_identity_payload: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         shadow_identity_payload: Option<String>,
+        #[serde(default, skip_serializing_if = "SessionRole::is_executor")]
+        session_role: SessionRole,
     },
     DestroySession {
         agent_id: String,
+        #[serde(default, skip_serializing_if = "SessionRole::is_executor")]
+        session_role: SessionRole,
     },
     Prompt {
         agent_id: String,
@@ -51,34 +56,50 @@ pub enum SidecarCommand {
         /// `None` when the classifier is disabled.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         classifier: Option<ClassifierInvocation>,
+        #[serde(default, skip_serializing_if = "SessionRole::is_executor")]
+        session_role: SessionRole,
     },
     Abort {
         agent_id: String,
+        #[serde(default, skip_serializing_if = "SessionRole::is_executor")]
+        session_role: SessionRole,
     },
     SetModel {
         agent_id: String,
         provider: String,
         model_id: String,
         context_window: Option<i32>,
+        #[serde(default, skip_serializing_if = "SessionRole::is_executor")]
+        session_role: SessionRole,
     },
     SetThinkingLevel {
         agent_id: String,
         level: String,
+        #[serde(default, skip_serializing_if = "SessionRole::is_executor")]
+        session_role: SessionRole,
     },
     NewSession {
         agent_id: String,
+        #[serde(default, skip_serializing_if = "SessionRole::is_executor")]
+        session_role: SessionRole,
     },
     Compact {
         agent_id: String,
+        #[serde(default, skip_serializing_if = "SessionRole::is_executor")]
+        session_role: SessionRole,
     },
     LoadSession {
         agent_id: String,
         messages: Vec<LoadSessionMessage>,
+        #[serde(default, skip_serializing_if = "SessionRole::is_executor")]
+        session_role: SessionRole,
     },
     ExtensionUiResponse {
         agent_id: String,
         request_id: String,
         value: serde_json::Value,
+        #[serde(default, skip_serializing_if = "SessionRole::is_executor")]
+        session_role: SessionRole,
     },
     SetCustomPrompt {
         agent_id: String,
@@ -88,6 +109,8 @@ pub enum SidecarCommand {
         captain_identity_payload: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         shadow_identity_payload: Option<String>,
+        #[serde(default, skip_serializing_if = "SessionRole::is_executor")]
+        session_role: SessionRole,
     },
     /// MON-100: continuous compaction. Rust dispatches one `KeeperRun` when
     /// the per-agent token counter crosses a threshold; sidecar makes a

@@ -25,6 +25,7 @@ import type {
 	LoadSessionCommand,
 	MemorySearchResult,
 	PromptContentPart,
+	SessionRole,
 } from "./protocol.js";
 import { classify } from "./classifier.js";
 import { runKeeper } from "./keeper.js";
@@ -34,12 +35,16 @@ import { createSuggestMemoryTool, formatRelevantMemories } from "./memory-tools.
 
 interface MemorySearchResolver {
 	agentId: string;
+	/** MON-128: owning session key — destroy clears only that session's resolvers. */
+	sessionKey: string;
 	resolve: (results: MemorySearchResult[]) => void;
 	timeout: NodeJS.Timeout;
 }
 
 interface ManagedSession {
 	session: AgentSession;
+	/** MON-128 (P3): which organ this session is — executor or chat-shadow. */
+	role: SessionRole;
 	unsubscribe: () => void;
 	uiResolvers: UIResolvers;
 	shadow?: CreateSessionCommand["shadow"];
@@ -69,6 +74,8 @@ const EMPTY_USAGE = {
 } as const;
 
 export class RuntimeManager {
+	/** MON-128: keyed by `sessionKey(agentId, role)` — one agent may host an
+	 * executor session and a chat-shadow session concurrently. */
 	private sessions = new Map<string, ManagedSession>();
 	private emit: EmitFn;
 	/**
@@ -83,6 +90,10 @@ export class RuntimeManager {
 
 	constructor(emit: EmitFn) {
 		this.emit = emit;
+	}
+
+	private sessionKey(agentId: string, role: SessionRole): string {
+		return `${agentId}::${role}`;
 	}
 
 	private pushPendingClassification(agentId: string, id: string): void {
@@ -103,8 +114,11 @@ export class RuntimeManager {
 	}
 
 	async createSession(cmd: CreateSessionCommand): Promise<void> {
-		if (this.sessions.has(cmd.agentId)) {
-			await this.destroySession(cmd.agentId, { silent: true });
+		const role: SessionRole = cmd.sessionRole ?? "executor";
+		if (this.sessions.has(this.sessionKey(cmd.agentId, role))) {
+			// Replace-before-recreate stays scoped to the same organ — creating
+			// a chat session must never tear down the running executor.
+			await this.destroySession(cmd.agentId, role, { silent: true });
 		}
 
 		// Monarch owns the system prompt. We feed it through the resource loader's
@@ -169,6 +183,7 @@ export class RuntimeManager {
 					type: "error",
 					agentId: cmd.agentId,
 					error: `Model setup warning: ${err instanceof Error ? err.message : String(err)}`,
+					// (sessionRole appended below)
 				});
 			}
 		} else {
@@ -176,6 +191,7 @@ export class RuntimeManager {
 				type: "error",
 				agentId: cmd.agentId,
 				error: `Model not found in registry: ${cmd.provider}/${cmd.model}`,
+				sessionRole: role,
 			});
 		}
 
@@ -215,6 +231,9 @@ export class RuntimeManager {
 		const emit = this.emit;
 
 		const listener: AgentSessionEventListener = (event) => {
+			// All per-session emits below carry `sessionRole` so Rust can route
+			// executor and chat-shadow streams independently (MON-128).
+
 			// MON-82: if Pi just echoed the user turn, pair it with the
 			// in-flight classification id so the persist pipeline on the
 			// Rust side can backfill `classifications.message_id` inline
@@ -224,6 +243,7 @@ export class RuntimeManager {
 				unknown
 			>;
 			if (
+				role === "executor" &&
 				forwarded.type === "message_end" &&
 				typeof forwarded.message === "object" &&
 				forwarded.message !== null &&
@@ -238,6 +258,7 @@ export class RuntimeManager {
 				type: "event",
 				agentId,
 				event: forwarded,
+				sessionRole: role,
 			});
 
 			// MON-51: retry exhaustion is the provider-unreachable path Pi
@@ -258,6 +279,7 @@ export class RuntimeManager {
 					error:
 						event.finalError ??
 						`Request failed after ${event.attempt} retries.`,
+					sessionRole: role,
 				});
 			}
 
@@ -295,6 +317,7 @@ export class RuntimeManager {
 								? `The model returned an error: ${msg.errorMessage}`
 								: "The model returned an empty response (no output). " +
 									"This usually clears on retry; if it persists, start a new session.",
+							sessionRole: role,
 						});
 					}
 				}
@@ -304,8 +327,9 @@ export class RuntimeManager {
 
 		const unsubscribe = session.subscribe(listener);
 
-		this.sessions.set(cmd.agentId, {
+		this.sessions.set(this.sessionKey(cmd.agentId, role), {
 			session,
+			role,
 			unsubscribe,
 			uiResolvers,
 			shadow: cmd.shadow,
@@ -320,6 +344,7 @@ export class RuntimeManager {
 			type: "session_ready",
 			agentId: cmd.agentId,
 			contextWindow: model?.contextWindow,
+			sessionRole: role,
 		});
 	}
 
@@ -330,31 +355,54 @@ export class RuntimeManager {
 	 * announcing it makes Rust/frontend treat a healthy respawning agent as
 	 * exited (false "stopped" status + error toast).
 	 */
-	async destroySession(agentId: string, opts?: { silent?: boolean }): Promise<void> {
-		const managed = this.sessions.get(agentId);
+	async destroySession(
+		agentId: string,
+		role?: SessionRole,
+		opts?: { silent?: boolean },
+	): Promise<void> {
+		// No role = tear down every organ of the agent (the kill path). A
+		// specific role scopes the teardown — replacing the chat session must
+		// not touch the executor and vice versa.
+		const keys = role
+			? [this.sessionKey(agentId, role)]
+			: [...this.sessions.keys()].filter((k) => k.startsWith(`${agentId}::`));
+		for (const key of keys) {
+			this.destroyByKey(key, agentId, opts);
+		}
+	}
+
+	private destroyByKey(
+		key: string,
+		agentId: string,
+		opts?: { silent?: boolean },
+	): void {
+		const managed = this.sessions.get(key);
 		if (!managed) return;
 
 		managed.unsubscribe();
 		managed.session.dispose();
 		managed.uiResolvers.clear();
 		for (const [requestId, resolver] of this.memorySearchResolvers) {
-			if (resolver.agentId === agentId) {
+			if (resolver.sessionKey === key) {
 				clearTimeout(resolver.timeout);
 				resolver.resolve([]);
 				this.memorySearchResolvers.delete(requestId);
 			}
 		}
-		this.sessions.delete(agentId);
+		this.sessions.delete(key);
 
-		if (!opts?.silent) this.emit({ type: "session_destroyed", agentId });
+		if (!opts?.silent) {
+			this.emit({ type: "session_destroyed", agentId, sessionRole: managed.role });
+		}
 	}
 
 	async prompt(
 		agentId: string,
 		message: string | PromptContentPart[],
 		classifier?: ClassifierInvocation | null,
+		role: SessionRole = "executor",
 	): Promise<void> {
-		const managed = this.getSession(agentId);
+		const managed = this.getSession(agentId, role);
 		if (!managed) return;
 
 		// MON-82: fork the classifier alongside the Pi turn. It resolves
@@ -402,7 +450,7 @@ export class RuntimeManager {
 		try {
 			const outboundMessage = managed.session.isStreaming
 				? message
-				: await this.withRelevantMemories(agentId, message);
+				: await this.withRelevantMemories(agentId, role, message);
 
 			if (typeof outboundMessage === "string") {
 				// Plain-text path — preserve existing behaviour exactly.
@@ -435,19 +483,21 @@ export class RuntimeManager {
 				type: "error",
 				agentId,
 				error: `Prompt error: ${err instanceof Error ? err.message : String(err)}`,
+				sessionRole: role,
 			});
 		}
 	}
 
 	private async withRelevantMemories(
 		agentId: string,
+		role: SessionRole,
 		message: string | PromptContentPart[],
 	): Promise<string | PromptContentPart[]> {
 		const query = extractPromptText(message).trim();
 		if (!query) return message;
 
 		const started = Date.now();
-		const results = await this.requestMemorySearch(agentId, query);
+		const results = await this.requestMemorySearch(agentId, role, query);
 		const elapsed = Date.now() - started;
 		if (elapsed > 200) {
 			process.stderr.write(
@@ -479,6 +529,7 @@ export class RuntimeManager {
 
 	private requestMemorySearch(
 		agentId: string,
+		role: SessionRole,
 		query: string,
 	): Promise<MemorySearchResult[]> {
 		return new Promise((resolve) => {
@@ -489,6 +540,7 @@ export class RuntimeManager {
 			}, 200);
 			this.memorySearchResolvers.set(requestId, {
 				agentId,
+				sessionKey: this.sessionKey(agentId, role),
 				resolve,
 				timeout,
 			});
@@ -501,8 +553,8 @@ export class RuntimeManager {
 		});
 	}
 
-	async abort(agentId: string): Promise<void> {
-		const managed = this.getSession(agentId);
+	async abort(agentId: string, role: SessionRole = "executor"): Promise<void> {
+		const managed = this.getSession(agentId, role);
 		if (!managed) return;
 		await managed.session.abort();
 	}
@@ -512,8 +564,9 @@ export class RuntimeManager {
 		provider: string,
 		modelId: string,
 		contextWindow?: number | null,
+		role: SessionRole = "executor",
 	): Promise<void> {
-		const managed = this.getSession(agentId);
+		const managed = this.getSession(agentId, role);
 		if (!managed) return;
 
 		if (provider === "lmstudio") {
@@ -526,36 +579,42 @@ export class RuntimeManager {
 				type: "error",
 				agentId,
 				error: `Model not found: ${provider}/${modelId}`,
+				sessionRole: role,
 			});
 			return;
 		}
 		await managed.session.setModel(model);
 	}
 
-	setThinkingLevel(agentId: string, level: string): void {
-		const managed = this.getSession(agentId);
+	setThinkingLevel(
+		agentId: string,
+		level: string,
+		role: SessionRole = "executor",
+	): void {
+		const managed = this.getSession(agentId, role);
 		if (!managed) return;
 		if (!isValidThinkingLevel(level)) {
 			this.emit({
 				type: "error",
 				agentId,
 				error: `Unknown thinking level: ${level}`,
+				sessionRole: role,
 			});
 			return;
 		}
 		managed.session.setThinkingLevel(level);
 	}
 
-	newSession(agentId: string): void {
-		const managed = this.getSession(agentId);
+	newSession(agentId: string, role: SessionRole = "executor"): void {
+		const managed = this.getSession(agentId, role);
 		if (!managed) return;
 		// Reset both the session manager (file/memory) and the agent's live message state
 		managed.session.sessionManager.newSession();
 		managed.session.agent.state.messages = [];
 	}
 
-	async compact(agentId: string): Promise<void> {
-		const managed = this.getSession(agentId);
+	async compact(agentId: string, role: SessionRole = "executor"): Promise<void> {
+		const managed = this.getSession(agentId, role);
 		if (!managed) return;
 		await managed.session.compact();
 	}
@@ -579,7 +638,8 @@ export class RuntimeManager {
 	 * mutating `state.messages` while Pi is mid-turn.
 	 */
 	async keeperRun(cmd: KeeperRunCommand): Promise<void> {
-		const managed = this.getSession(cmd.agentId);
+		// The Keeper distills executor work; chat sessions are never its input.
+		const managed = this.getSession(cmd.agentId, "executor");
 		if (!managed) return;
 
 		const result = await runKeeper(managed.session, cmd.slice, cmd.config);
@@ -614,8 +674,12 @@ export class RuntimeManager {
 	 * Load messages from SQLite into the agent's conversation context.
 	 * This replays past messages so the LLM has conversational continuity.
 	 */
-	loadSession(agentId: string, messages: LoadSessionCommand["messages"]): void {
-		const managed = this.getSession(agentId);
+	loadSession(
+		agentId: string,
+		messages: LoadSessionCommand["messages"],
+		role: SessionRole = "executor",
+	): void {
+		const managed = this.getSession(agentId, role);
 		if (!managed) return;
 
 		// Rebuild from a clean session state so restored/continued sessions don't
@@ -690,8 +754,9 @@ export class RuntimeManager {
 		agentId: string,
 		requestId: string,
 		value: Record<string, unknown>,
+		role: SessionRole = "executor",
 	): void {
-		const managed = this.sessions.get(agentId);
+		const managed = this.sessions.get(this.sessionKey(agentId, role));
 		if (!managed) return;
 
 		const resolver = managed.uiResolvers.get(requestId);
@@ -727,8 +792,9 @@ export class RuntimeManager {
 		projectInstructions?: string | null,
 		captainIdentityPayload?: string | null,
 		shadowIdentityPayload?: string | null,
+		role: SessionRole = "executor",
 	): void {
-		const managed = this.sessions.get(agentId);
+		const managed = this.sessions.get(this.sessionKey(agentId, role));
 		if (!managed) return;
 
 		if (projectInstructions !== undefined) {
@@ -755,19 +821,23 @@ export class RuntimeManager {
 	}
 
 	async disposeAll(): Promise<void> {
-		const ids = [...this.sessions.keys()];
-		for (const id of ids) {
-			await this.destroySession(id);
+		for (const key of [...this.sessions.keys()]) {
+			const agentId = key.slice(0, key.lastIndexOf("::"));
+			this.destroyByKey(key, agentId);
 		}
 	}
 
-	private getSession(agentId: string): ManagedSession | undefined {
-		const managed = this.sessions.get(agentId);
+	private getSession(
+		agentId: string,
+		role: SessionRole = "executor",
+	): ManagedSession | undefined {
+		const managed = this.sessions.get(this.sessionKey(agentId, role));
 		if (!managed) {
 			this.emit({
 				type: "error",
 				agentId,
 				error: "Session not found",
+				sessionRole: role,
 			});
 		}
 		return managed;

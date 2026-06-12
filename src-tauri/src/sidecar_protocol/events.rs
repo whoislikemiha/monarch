@@ -6,7 +6,7 @@ use crate::agent::state::{
     ToolStatus,
 };
 
-use super::types::{Message, ObjectiveReport};
+use super::types::{Message, ObjectiveReport, SessionRole};
 
 // ========================================================================
 // Inbound: SidecarEvent + InnerEvent
@@ -355,20 +355,35 @@ pub enum SidecarEvent {
     SessionReady {
         agent_id: String,
         context_window: Option<i64>,
+        /// MON-128 Slice B: carried but unrouted until Slice C.
+        #[allow(dead_code)]
+        session_role: SessionRole,
     },
     SessionDestroyed {
         agent_id: String,
+        /// MON-128 Slice B: carried but unrouted until Slice C.
+        #[allow(dead_code)]
+        session_role: SessionRole,
     },
     Event {
         agent_id: String,
         event: InnerEvent,
+        /// MON-128 Slice B: carried but unrouted until Slice C.
+        #[allow(dead_code)]
+        session_role: SessionRole,
     },
     ExtensionUiRequest {
         agent_id: String,
+        /// MON-128 Slice B: carried but unrouted until Slice C.
+        #[allow(dead_code)]
+        session_role: SessionRole,
     },
     Error {
         agent_id: String,
         error: String,
+        /// MON-128 Slice B: carried but unrouted until Slice C.
+        #[allow(dead_code)]
+        session_role: SessionRole,
     },
     /// MON-82: classifier output for a user turn. Emitted independently of
     /// the Pi turn (see runtime-manager). `complexity`/metrics populated on
@@ -439,20 +454,30 @@ enum KnownSidecarEvent {
         agent_id: String,
         #[serde(default)]
         context_window: Option<i64>,
+        #[serde(default)]
+        session_role: SessionRole,
     },
     SessionDestroyed {
         agent_id: String,
+        #[serde(default)]
+        session_role: SessionRole,
     },
     Event {
         agent_id: String,
         event: InnerEvent,
+        #[serde(default)]
+        session_role: SessionRole,
     },
     ExtensionUiRequest {
         agent_id: String,
+        #[serde(default)]
+        session_role: SessionRole,
     },
     Error {
         agent_id: String,
         error: String,
+        #[serde(default)]
+        session_role: SessionRole,
     },
     Classification {
         agent_id: String,
@@ -507,16 +532,44 @@ impl From<KnownSidecarEvent> for SidecarEvent {
             KnownSidecarEvent::SessionReady {
                 agent_id,
                 context_window,
+                session_role,
             } => Self::SessionReady {
                 agent_id,
                 context_window,
+                session_role,
             },
-            KnownSidecarEvent::SessionDestroyed { agent_id } => Self::SessionDestroyed { agent_id },
-            KnownSidecarEvent::Event { agent_id, event } => Self::Event { agent_id, event },
-            KnownSidecarEvent::ExtensionUiRequest { agent_id } => {
-                Self::ExtensionUiRequest { agent_id }
-            }
-            KnownSidecarEvent::Error { agent_id, error } => Self::Error { agent_id, error },
+            KnownSidecarEvent::SessionDestroyed {
+                agent_id,
+                session_role,
+            } => Self::SessionDestroyed {
+                agent_id,
+                session_role,
+            },
+            KnownSidecarEvent::Event {
+                agent_id,
+                event,
+                session_role,
+            } => Self::Event {
+                agent_id,
+                event,
+                session_role,
+            },
+            KnownSidecarEvent::ExtensionUiRequest {
+                agent_id,
+                session_role,
+            } => Self::ExtensionUiRequest {
+                agent_id,
+                session_role,
+            },
+            KnownSidecarEvent::Error {
+                agent_id,
+                error,
+                session_role,
+            } => Self::Error {
+                agent_id,
+                error,
+                session_role,
+            },
             KnownSidecarEvent::Classification {
                 agent_id,
                 id,

@@ -3,6 +3,35 @@ use serde_json::Value;
 
 use crate::agent::state::Usage;
 
+/// MON-128 (P3): which organ a session-addressed command targets or a
+/// session-tagged event came from. Mirrors `SessionRole` in
+/// `sidecar/src/protocol.ts`. Absent on the wire means `Executor` — the only
+/// role that existed pre-P3, so old sidecars and old events stay valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionRole {
+    #[default]
+    Executor,
+    Chat,
+}
+
+impl SessionRole {
+    /// MON-128 Slice B: unused until Slice C routes per-organ state.
+    #[allow(dead_code)]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SessionRole::Executor => "executor",
+            SessionRole::Chat => "chat",
+        }
+    }
+
+    /// `skip_serializing_if` predicate — executor is the wire default, so
+    /// executor-targeted commands serialize byte-identically to pre-P3.
+    pub fn is_executor(&self) -> bool {
+        matches!(self, SessionRole::Executor)
+    }
+}
+
 /// Typed `message` field carried by `message_start` / `message_update` /
 /// `message_end` inner events. `content` is kept as an opaque
 /// `serde_json::Value` because the per-block shape is owned by the Pi SDK

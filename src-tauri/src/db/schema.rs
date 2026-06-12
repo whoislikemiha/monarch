@@ -627,6 +627,15 @@ impl Database {
                 // UI derives a fallback from the first user message.
                 let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN title TEXT;");
 
+                // MON-128 (P3): which organ owns the session — 'executor'
+                // (acts on the world; the only role that existed pre-P3) or
+                // 'chat' (the chat-shadow). No CHECK constraint (same ALTER
+                // limitation as objective_nodes.kind); the allowed set is
+                // enforced in Rust at insert.
+                let _ = conn.execute_batch(
+                    "ALTER TABLE sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'executor';",
+                );
+
                 // FTS5 virtual table — separate batch because some SQLite
                 // builds don't have FTS5; we log the failure and continue.
                 let _ = conn.execute_batch(

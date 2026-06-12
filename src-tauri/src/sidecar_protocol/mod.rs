@@ -24,7 +24,7 @@ pub use config::{
     LoadSessionMessage, ShadowConfig,
 };
 pub use events::{apply_event, AtomicClaim, InnerEvent, SidecarEvent};
-pub use types::ObjectiveReport;
+pub use types::{ObjectiveReport, SessionRole};
 
 #[cfg(test)]
 mod tests {

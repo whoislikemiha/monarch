@@ -27,6 +27,14 @@ pub struct SessionRow {
     /// back to a snippet of the first user message.
     #[serde(default)]
     pub title: Option<String>,
+    /// MON-128 (P3): which organ owns the session — `"executor"` (default,
+    /// acts on the world) or `"chat"` (the chat-shadow).
+    #[serde(default = "default_session_role")]
+    pub role: String,
+}
+
+pub fn default_session_role() -> String {
+    "executor".to_string()
 }
 
 /// MON-127: one row in the session-history list. `SessionRow` plus a derived
@@ -102,6 +110,7 @@ pub(super) fn map_session(row: &Row<'_>) -> rusqlite::Result<SessionRow> {
         total_cost: row.get(9)?,
         parent_session_id: row.get(10)?,
         title: row.get(11)?,
+        role: row.get(12)?,
     })
 }
 
@@ -320,8 +329,8 @@ impl Database {
         self.conn
             .call(move |conn| {
                 conn.execute(
-                    "INSERT INTO sessions (id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id, title)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                    "INSERT INTO sessions (id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id, title, role)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                      ON CONFLICT(id) DO UPDATE SET
                        agent_id=excluded.agent_id,
                        model=excluded.model,
@@ -331,12 +340,13 @@ impl Database {
                        total_tokens=excluded.total_tokens,
                        total_cost=excluded.total_cost,
                        parent_session_id=excluded.parent_session_id,
-                       title=COALESCE(excluded.title, sessions.title)",
+                       title=COALESCE(excluded.title, sessions.title),
+                       role=excluded.role",
                     params![
                         session.id, session.agent_id, session.pi_session_file, session.model,
                         session.provider, session.started_at, session.ended_at,
                         session.message_count, session.total_tokens, session.total_cost,
-                        session.parent_session_id, session.title,
+                        session.parent_session_id, session.title, session.role,
                     ],
                 )?;
                 Ok(())
@@ -404,7 +414,7 @@ impl Database {
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id, title FROM sessions WHERE agent_id = ?1 ORDER BY started_at DESC",
+                    "SELECT id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id, title, role FROM sessions WHERE agent_id = ?1 ORDER BY started_at DESC",
                 )?;
                 let rows = stmt.query_map(params![agent_id], map_session)?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()

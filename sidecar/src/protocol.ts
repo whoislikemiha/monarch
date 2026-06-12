@@ -12,6 +12,13 @@ export interface ShadowConfig {
   id: string;
 }
 
+/**
+ * MON-128 (P3): which organ a session-addressed command targets / a
+ * session-tagged event came from. Absent on the wire means "executor" —
+ * the only role that existed pre-P3.
+ */
+export type SessionRole = "executor" | "chat";
+
 export interface CreateSessionCommand {
   type: "create_session";
   agentId: string;
@@ -28,11 +35,14 @@ export interface CreateSessionCommand {
   captainIdentityPayload?: string | null;
   /** MON-98: L1b shadow identity payload. Absent = no shadow identity section. */
   shadowIdentityPayload?: string | null;
+  sessionRole?: SessionRole;
 }
 
 export interface DestroySessionCommand {
   type: "destroy_session";
   agentId: string;
+  /** Absent on destroy = tear down every organ of the agent (kill path). */
+  sessionRole?: SessionRole;
 }
 
 export type PromptContentPart =
@@ -60,11 +70,13 @@ export interface PromptCommand {
   agentId: string;
   message: string | PromptContentPart[];
   classifier?: ClassifierInvocation | null;
+  sessionRole?: SessionRole;
 }
 
 export interface AbortCommand {
   type: "abort";
   agentId: string;
+  sessionRole?: SessionRole;
 }
 
 export interface SetModelCommand {
@@ -74,22 +86,26 @@ export interface SetModelCommand {
   modelId: string;
   /** User-supplied context window (tokens). Currently only honoured for lmstudio. */
   contextWindow?: number | null;
+  sessionRole?: SessionRole;
 }
 
 export interface SetThinkingLevelCommand {
   type: "set_thinking_level";
   agentId: string;
   level: string;
+  sessionRole?: SessionRole;
 }
 
 export interface NewSessionCommand {
   type: "new_session";
   agentId: string;
+  sessionRole?: SessionRole;
 }
 
 export interface CompactCommand {
   type: "compact";
   agentId: string;
+  sessionRole?: SessionRole;
 }
 
 export interface LoadSessionCommand {
@@ -100,6 +116,7 @@ export interface LoadSessionCommand {
     content: string;
     model?: string;
   }>;
+  sessionRole?: SessionRole;
 }
 
 export interface ExtensionUIResponseCommand {
@@ -107,6 +124,7 @@ export interface ExtensionUIResponseCommand {
   agentId: string;
   requestId: string;
   value: Record<string, unknown>;
+  sessionRole?: SessionRole;
 }
 
 export interface SetCustomPromptCommand {
@@ -118,6 +136,7 @@ export interface SetCustomPromptCommand {
   captainIdentityPayload?: string | null;
   /** MON-98: When present, replaces the stored shadow identity payload and rebuilds the prompt. */
   shadowIdentityPayload?: string | null;
+  sessionRole?: SessionRole;
 }
 
 // MON-100: Keeper run config + command. Rust resolves provider/model from
@@ -201,17 +220,20 @@ export interface SessionReadyEvent {
   type: "session_ready";
   agentId: string;
   contextWindow?: number;
+  sessionRole?: SessionRole;
 }
 
 export interface SessionDestroyedEvent {
   type: "session_destroyed";
   agentId: string;
+  sessionRole?: SessionRole;
 }
 
 export interface AgentEventEnvelope {
   type: "event";
   agentId: string;
   event: Record<string, unknown>;
+  sessionRole?: SessionRole;
 }
 
 export interface ExtensionUIRequestEvent {
@@ -219,6 +241,8 @@ export interface ExtensionUIRequestEvent {
   agentId: string;
   requestId: string;
   method: string;
+  sessionRole?: SessionRole;
+
   [key: string]: unknown;
 }
 
@@ -226,6 +250,7 @@ export interface SidecarErrorEvent {
   type: "error";
   agentId: string;
   error: string;
+  sessionRole?: SessionRole;
 }
 
 // MON-82: Classifier output. Emitted once per user turn, independently of

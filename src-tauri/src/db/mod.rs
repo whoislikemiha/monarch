@@ -32,7 +32,7 @@ pub use agents::{
 };
 
 // sessions
-pub use sessions::{MessageAttachmentRow, MessageRow, SessionRow};
+pub use sessions::{default_session_role, MessageAttachmentRow, MessageRow, SessionRow};
 #[allow(unused_imports)]
 pub use sessions::SessionSummary;
 pub use sessions::{

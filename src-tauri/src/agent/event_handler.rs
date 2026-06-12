@@ -133,6 +133,9 @@ pub(super) async fn handle_sidecar_event(
         SidecarEvent::SessionReady {
             agent_id,
             context_window,
+            // MON-128 Slice B: parsed but not yet routed on — Slice C splits
+            // executor/chat handling per organ.
+            session_role: _,
         } => {
             let event_name = format!("agent-event-{}", agent_id);
             let ready_event = serde_json::json!({
@@ -143,7 +146,10 @@ pub(super) async fn handle_sidecar_event(
             emit_event(app, ws_tx, &event_name, &ready_event.to_string());
         }
 
-        SidecarEvent::SessionDestroyed { agent_id } => {
+        SidecarEvent::SessionDestroyed {
+            agent_id,
+            session_role: _,
+        } => {
             let exit_event = format!("agent-exit-{}", agent_id);
             emit_event(
                 app,
@@ -175,6 +181,7 @@ pub(super) async fn handle_sidecar_event(
         SidecarEvent::Event {
             agent_id,
             event: inner_event,
+            session_role: _,
         } => {
             // Flip desync and stop here if the sidecar shipped an event type
             // the Rust side doesn't recognize. Pre-MON-32 this fell through
@@ -236,12 +243,19 @@ pub(super) async fn handle_sidecar_event(
             maybe_trigger_keeper(dispatch_tx, live_states, &agent_id, &inner_event).await;
         }
 
-        SidecarEvent::ExtensionUiRequest { agent_id } => {
+        SidecarEvent::ExtensionUiRequest {
+            agent_id,
+            session_role: _,
+        } => {
             let event_name = format!("agent-event-{}", agent_id);
             emit_event(app, ws_tx, &event_name, line);
         }
 
-        SidecarEvent::Error { agent_id, error } => {
+        SidecarEvent::Error {
+            agent_id,
+            error,
+            session_role: _,
+        } => {
             eprintln!("[monarch] Sidecar error for {}: {}", agent_id, error);
             let event_name = format!("agent-event-{}", agent_id);
             let error_event = serde_json::json!({
