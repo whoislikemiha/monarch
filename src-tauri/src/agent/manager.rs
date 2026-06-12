@@ -638,6 +638,7 @@ impl AgentManager {
                 total_tokens: 0,
                 total_cost: 0.0,
                 parent_session_id: None,
+                title: None,
             })
             .await?;
             // MON-63: track session count
@@ -978,6 +979,7 @@ impl AgentManager {
             total_tokens: 0,
             total_cost: 0.0,
             parent_session_id: valid_parent_session_id,
+            title: None,
         })
         .await?;
         // MON-63: track session count
@@ -985,8 +987,18 @@ impl AgentManager {
 
         {
             let mut inner = self.inner.lock();
-            inner.session_map.insert(agent_id.clone(), new_session_id);
+            inner.session_map.insert(agent_id.clone(), new_session_id.clone());
+            if let Some(agent) = inner.agents.get_mut(&agent_id) {
+                agent.session_id = new_session_id;
+            }
         }
+
+        // MON-127: a new session is a clean slate. Reset the assembled live
+        // state here (not in the frontend) so any later `get_agent_state`
+        // seed can't resurrect the previous conversation's display items.
+        let _ = self
+            .rebuild_state_from_session(app, db, &agent_id, None, "New session")
+            .await;
 
         let cmd = SidecarCommand::NewSession { agent_id };
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
@@ -1028,6 +1040,14 @@ impl AgentManager {
                 agent.session_id = session_id.clone();
             }
         }
+
+        // MON-127: switching displays the target session's history, not
+        // whatever the live cache last held. Rebuild walks ancestry — the
+        // chain is what the agent will remember once the caller replays
+        // context via `load_session_context`.
+        let _ = self
+            .rebuild_state_from_session(app, db, &agent_id, Some(&session_id), "Continued session")
+            .await;
 
         let cmd = SidecarCommand::NewSession { agent_id };
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)

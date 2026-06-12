@@ -23,6 +23,29 @@ pub struct SessionRow {
     pub total_tokens: i32,
     pub total_cost: f64,
     pub parent_session_id: Option<String>,
+    /// MON-127: user-facing session title. NULL = untitled; display falls
+    /// back to a snippet of the first user message.
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+/// MON-127: one row in the session-history list. `SessionRow` plus a derived
+/// `preview` (first user message snippet) so the browser can label untitled
+/// sessions without fetching full message bodies per session.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummary {
+    pub id: String,
+    pub model: Option<String>,
+    pub provider: Option<String>,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub message_count: i32,
+    pub total_tokens: i32,
+    pub total_cost: f64,
+    pub parent_session_id: Option<String>,
+    pub title: Option<String>,
+    pub preview: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -78,6 +101,42 @@ pub(super) fn map_session(row: &Row<'_>) -> rusqlite::Result<SessionRow> {
         total_tokens: row.get(8)?,
         total_cost: row.get(9)?,
         parent_session_id: row.get(10)?,
+        title: row.get(11)?,
+    })
+}
+
+/// MON-127: plain-text snippet of a stored user message. Stored content is
+/// either a raw string or a serialized content-block array (same drift the
+/// sidecar's `normalizeStoredUserContent` handles); take the text blocks.
+fn preview_from_stored_content(stored: &str) -> Option<String> {
+    let trimmed = stored.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let text = match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(serde_json::Value::String(s)) => s,
+        Ok(serde_json::Value::Array(blocks)) => blocks
+            .iter()
+            .filter_map(|b| {
+                if b.get("type").and_then(|t| t.as_str()) == Some("text") {
+                    b.get("text").and_then(|t| t.as_str()).map(String::from)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => trimmed.to_string(),
+    };
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.is_empty() {
+        return None;
+    }
+    Some(if text.chars().count() > 120 {
+        let cut: String = text.chars().take(120).collect();
+        format!("{}…", cut.trim_end())
+    } else {
+        text
     })
 }
 
@@ -98,6 +157,37 @@ pub(super) fn map_message(row: &Row<'_>) -> rusqlite::Result<MessageRow> {
         // sibling queries are easier to reason about than window joins.
         attachments: Vec::new(),
     })
+}
+
+/// MON-75: hydrate attachments per message in one pass. Only user rows are
+/// expected to have any, so scoping the loop to `role = 'user'` keeps it
+/// cheap; positions come back sorted so the UI renders them in send order.
+fn hydrate_attachments(
+    conn: &rusqlite::Connection,
+    messages: &mut [MessageRow],
+) -> rusqlite::Result<()> {
+    let mut att_stmt = conn.prepare(
+        "SELECT path, mime_type, position
+         FROM message_attachments
+         WHERE message_id = ?1
+         ORDER BY position ASC",
+    )?;
+    for msg in messages.iter_mut() {
+        if msg.role != "user" {
+            continue;
+        }
+        let rows = att_stmt.query_map(params![msg.id], |row| {
+            Ok(MessageAttachmentRow {
+                path: row.get(0)?,
+                mime_type: row.get(1)?,
+                position: row.get(2)?,
+            })
+        })?;
+        for att in rows {
+            msg.attachments.push(att?);
+        }
+    }
+    Ok(())
 }
 
 // ---- impl Database ----
@@ -230,8 +320,8 @@ impl Database {
         self.conn
             .call(move |conn| {
                 conn.execute(
-                    "INSERT INTO sessions (id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                    "INSERT INTO sessions (id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id, title)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                      ON CONFLICT(id) DO UPDATE SET
                        agent_id=excluded.agent_id,
                        model=excluded.model,
@@ -240,12 +330,13 @@ impl Database {
                        message_count=excluded.message_count,
                        total_tokens=excluded.total_tokens,
                        total_cost=excluded.total_cost,
-                       parent_session_id=excluded.parent_session_id",
+                       parent_session_id=excluded.parent_session_id,
+                       title=COALESCE(excluded.title, sessions.title)",
                     params![
                         session.id, session.agent_id, session.pi_session_file, session.model,
                         session.provider, session.started_at, session.ended_at,
                         session.message_count, session.total_tokens, session.total_cost,
-                        session.parent_session_id,
+                        session.parent_session_id, session.title,
                     ],
                 )?;
                 Ok(())
@@ -297,31 +388,7 @@ impl Database {
                     }
                 }
 
-                // MON-75: hydrate attachments per message in one pass. Only
-                // user rows are expected to have any, so scoping the query
-                // to `role = 'user'` keeps it cheap; positions come back
-                // sorted so the UI renders them in send order.
-                let mut att_stmt = conn.prepare(
-                    "SELECT path, mime_type, position
-                     FROM message_attachments
-                     WHERE message_id = ?1
-                     ORDER BY position ASC",
-                )?;
-                for msg in all_messages.iter_mut() {
-                    if msg.role != "user" {
-                        continue;
-                    }
-                    let rows = att_stmt.query_map(params![msg.id], |row| {
-                        Ok(MessageAttachmentRow {
-                            path: row.get(0)?,
-                            mime_type: row.get(1)?,
-                            position: row.get(2)?,
-                        })
-                    })?;
-                    for att in rows {
-                        msg.attachments.push(att?);
-                    }
-                }
+                hydrate_attachments(conn, &mut all_messages)?;
 
                 Ok(all_messages)
             })
@@ -337,7 +404,7 @@ impl Database {
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id FROM sessions WHERE agent_id = ?1 ORDER BY started_at DESC",
+                    "SELECT id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id, title FROM sessions WHERE agent_id = ?1 ORDER BY started_at DESC",
                 )?;
                 let rows = stmt.query_map(params![agent_id], map_session)?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -357,9 +424,78 @@ impl Database {
                     "SELECT id, session_id, role, content, model, tokens, cost, timestamp, duration_ms FROM messages WHERE session_id = ?1 ORDER BY id ASC",
                 )?;
                 let rows = stmt.query_map(params![session_id], map_message)?;
+                let mut messages = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+                // MON-127: hydrate attachments the same way the ancestry
+                // loader does, so per-session reads (read-only history view)
+                // render images too.
+                hydrate_attachments(conn, &mut messages)?;
+                Ok(messages)
+            })
+            .await?)
+    }
+
+    /// MON-127: per-agent session list with display metadata. One extra
+    /// correlated subquery pulls the first user message per session so the
+    /// browser can show a preview without loading message bodies; snippet
+    /// derivation happens in Rust because stored content is string-or-blocks.
+    pub async fn list_session_summaries_internal(
+        &self,
+        agent_id: &str,
+    ) -> Result<Vec<SessionSummary>, MonarchError> {
+        let agent_id = agent_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT s.id, s.model, s.provider, s.started_at, s.ended_at,
+                            s.message_count, s.total_tokens, s.total_cost,
+                            s.parent_session_id, s.title,
+                            (SELECT m.content FROM messages m
+                              WHERE m.session_id = s.id AND m.role = 'user'
+                              ORDER BY m.id ASC LIMIT 1)
+                     FROM sessions s
+                     WHERE s.agent_id = ?1
+                     ORDER BY s.started_at DESC",
+                )?;
+                let rows = stmt.query_map(params![agent_id], |row| {
+                    let first_user: Option<String> = row.get(10)?;
+                    Ok(SessionSummary {
+                        id: row.get(0)?,
+                        model: row.get(1)?,
+                        provider: row.get(2)?,
+                        started_at: row.get(3)?,
+                        ended_at: row.get(4)?,
+                        message_count: row.get(5)?,
+                        total_tokens: row.get(6)?,
+                        total_cost: row.get(7)?,
+                        parent_session_id: row.get(8)?,
+                        title: row.get(9)?,
+                        preview: first_user.as_deref().and_then(preview_from_stored_content),
+                    })
+                })?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()
             })
             .await?)
+    }
+
+    /// MON-127: rename a session. `None` clears the title back to derived.
+    pub async fn set_session_title_internal(
+        &self,
+        session_id: &str,
+        title: Option<&str>,
+    ) -> Result<(), MonarchError> {
+        let session_id = session_id.to_string();
+        let title = title.map(|t| t.to_string());
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE sessions SET title = ?1 WHERE id = ?2",
+                    params![title, session_id],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
     }
 
     /// MON-100: Messages across all of an agent's sessions newer than the
@@ -444,6 +580,28 @@ pub async fn db_get_sessions(
     agent_id: String,
 ) -> Result<Vec<SessionRow>, MonarchError> {
     db.get_sessions_internal(&agent_id).await
+}
+
+/// MON-127: per-agent session list with titles + first-user-message previews.
+#[tauri::command]
+#[specta::specta]
+pub async fn db_list_session_summaries(
+    db: tauri::State<'_, Arc<Database>>,
+    agent_id: String,
+) -> Result<Vec<SessionSummary>, MonarchError> {
+    db.list_session_summaries_internal(&agent_id).await
+}
+
+/// MON-127: rename a session (None clears back to the derived preview title).
+#[tauri::command]
+#[specta::specta]
+pub async fn db_set_session_title(
+    db: tauri::State<'_, Arc<Database>>,
+    session_id: String,
+    title: Option<String>,
+) -> Result<(), MonarchError> {
+    db.set_session_title_internal(&session_id, title.as_deref())
+        .await
 }
 
 // ---- Tauri Commands: Messages ----

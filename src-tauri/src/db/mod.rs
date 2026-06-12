@@ -32,10 +32,10 @@ pub use agents::{
 };
 
 // sessions
-pub use sessions::{MessageAttachmentRow, MessageRow, SessionRow};
+pub use sessions::{MessageAttachmentRow, MessageRow, SessionRow, SessionSummary};
 pub use sessions::{
     db_create_session, db_get_messages, db_get_messages_with_ancestry, db_get_sessions,
-    db_save_message,
+    db_list_session_summaries, db_save_message, db_set_session_title,
 };
 
 // projects
@@ -140,7 +140,8 @@ pub use reports::{
 #[allow(non_snake_case, unused_imports)]
 pub use sessions::{
     __cmd__db_create_session, __cmd__db_get_messages, __cmd__db_get_messages_with_ancestry,
-    __cmd__db_get_sessions, __cmd__db_save_message,
+    __cmd__db_get_sessions, __cmd__db_list_session_summaries, __cmd__db_save_message,
+    __cmd__db_set_session_title,
 };
 
 // ---- __specta__fn__ re-exports for specta collect_commands! ----
@@ -198,7 +199,8 @@ pub use reports::{
 pub use sessions::{
     __specta__fn__db_create_session, __specta__fn__db_get_messages,
     __specta__fn__db_get_messages_with_ancestry, __specta__fn__db_get_sessions,
-    __specta__fn__db_save_message,
+    __specta__fn__db_list_session_summaries, __specta__fn__db_save_message,
+    __specta__fn__db_set_session_title,
 };
 
 // ---- Database struct ----

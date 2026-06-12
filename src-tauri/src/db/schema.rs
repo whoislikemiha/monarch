@@ -623,6 +623,10 @@ impl Database {
                     "ALTER TABLE projects ADD COLUMN root_objective_id TEXT REFERENCES objective_nodes(id);",
                 );
 
+                // MON-127: user-facing session titles. NULL = untitled; the
+                // UI derives a fallback from the first user message.
+                let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN title TEXT;");
+
                 // FTS5 virtual table — separate batch because some SQLite
                 // builds don't have FTS5; we log the failure and continue.
                 let _ = conn.execute_batch(

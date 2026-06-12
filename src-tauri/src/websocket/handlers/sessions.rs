@@ -20,6 +20,42 @@ pub(crate) async fn db_get_sessions(state: &WsState, args: Value) -> Result<Valu
     serde_json::to_value(sessions).map_err(MonarchError::from)
 }
 
+/// MON-127: per-agent session list with titles + previews.
+pub(crate) async fn db_list_session_summaries(state: &WsState, args: Value) -> Result<Value, MonarchError> {
+    let agent_id = str_field(&args, "agentId")?;
+    let summaries = state.db.list_session_summaries_internal(&agent_id).await?;
+    serde_json::to_value(summaries).map_err(MonarchError::from)
+}
+
+/// MON-127: rename a session (null title clears it).
+pub(crate) async fn db_set_session_title(state: &WsState, args: Value) -> Result<Value, MonarchError> {
+    let session_id = str_field(&args, "sessionId")?;
+    let title = args
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    state
+        .db
+        .set_session_title_internal(&session_id, title.as_deref())
+        .await?;
+    Ok(Value::Null)
+}
+
+/// MON-127: read-only display items for one session (no ancestry).
+pub(crate) async fn get_session_display_items(state: &WsState, args: Value) -> Result<Value, MonarchError> {
+    let session_id = str_field(&args, "sessionId")?;
+    let messages = state.db.get_messages_internal(&session_id).await?;
+    let items: Vec<crate::agent::state::DisplayItem> = if messages.is_empty() {
+        Vec::new()
+    } else {
+        crate::agent::state::display_items_from_messages(&messages, "")
+            .into_iter()
+            .filter(|i| !matches!(i, crate::agent::state::DisplayItem::Status { .. }))
+            .collect()
+    };
+    serde_json::to_value(items).map_err(MonarchError::from)
+}
+
 // ---- DB: Messages ----
 
 pub(crate) async fn db_save_message(state: &WsState, args: Value) -> Result<Value, MonarchError> {
