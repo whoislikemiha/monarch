@@ -606,35 +606,42 @@ class AgentStore {
   }
 
   /**
-   * Wake a stopped agent. Default is *continuation with ancestry*: the new
-   * session chains to the previous one and history is replayed on
-   * `session_ready` (via `sourceSessionId`). With `fresh: true` (MON-127,
-   * "new session" on a sleeping agent) the session is parentless, nothing is
-   * replayed, and the live display state is reset.
+   * Wake a stopped agent. Default *continues the agent's current session in
+   * place*: the existing row is reused, its ancestry chain is replayed into
+   * the sidecar on `session_ready` (via `sourceSessionId`), and new messages
+   * append where the conversation left off — waking is a process-level
+   * detail, not a conversation boundary (MON-127). With `fresh: true` ("new
+   * session" on a sleeping agent) a parentless row is created instead,
+   * nothing is replayed, and the live display state is reset.
    */
   async spawnStoppedAgent(id: string, options?: { fresh?: boolean }): Promise<void> {
     const agent = this.getAgent(id);
     if (!agent || agent.status !== "stopped") return;
     const fresh = options?.fresh ?? false;
-    const previousSessionId = fresh ? undefined : agent.sessionId;
-    this.counter++;
-    const newSessionId = `session-${Date.now()}-${this.counter}`;
-    try {
-      const session: SessionDbRow = {
-        id: newSessionId,
-        agentId: id,
-        model: agent.model || null,
-        provider: agent.provider || null,
-        startedAt: new Date().toISOString(),
-        endedAt: null,
-        messageCount: 0,
-        totalTokens: 0,
-        totalCost: 0,
-        parentSessionId: previousSessionId || null,
-      };
-      await invoke("db_create_session", { session });
-    } catch (e) {
-      console.error("Failed to create session for lazy spawn:", e);
+    const reuseSessionId = !fresh && agent.sessionId ? agent.sessionId : undefined;
+    let sessionId: string;
+    if (reuseSessionId) {
+      sessionId = reuseSessionId;
+    } else {
+      this.counter++;
+      sessionId = `session-${Date.now()}-${this.counter}`;
+      try {
+        const session: SessionDbRow = {
+          id: sessionId,
+          agentId: id,
+          model: agent.model || null,
+          provider: agent.provider || null,
+          startedAt: new Date().toISOString(),
+          endedAt: null,
+          messageCount: 0,
+          totalTokens: 0,
+          totalCost: 0,
+          parentSessionId: null,
+        };
+        await invoke("db_create_session", { session });
+      } catch (e) {
+        console.error("Failed to create session for lazy spawn:", e);
+      }
     }
     if (fresh) {
       // Clear any cached display items so the remount can't seed the old
@@ -650,20 +657,23 @@ class AgentStore {
         ? {
             ...a,
             status: "running" as const,
-            sessionId: newSessionId,
-            sourceSessionId: previousSessionId,
+            sessionId,
+            // Reusing → replay this session's own chain after session_ready.
+            sourceSessionId: reuseSessionId,
             ...(fresh ? { viewKey: createViewKey(id) } : {}),
-            sessions: [
-              { sessionId: newSessionId, model: a.model, provider: a.provider, startedAt: new Date().toISOString(), messageCount: 0 },
-              ...a.sessions,
-            ],
+            sessions: reuseSessionId
+              ? a.sessions
+              : [
+                  { sessionId, model: a.model, provider: a.provider, startedAt: new Date().toISOString(), messageCount: 0 },
+                  ...a.sessions,
+                ],
           }
         : a,
     );
     try {
       await commands.spawnAgent({
         id,
-        sessionId: newSessionId,
+        sessionId,
         provider: agent.provider || null,
         model: agent.model || null,
         thinkingLevel: agent.thinkingLevel || null,
