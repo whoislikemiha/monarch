@@ -55,6 +55,16 @@ export interface ActionView {
   planItemId: string | null;
 }
 
+/** Payload of the "ask about this action" affordance on a timeline card. */
+export interface AskPayload {
+  id: string;
+  intent: string;
+  outcome?: string | null;
+  objectiveId: string;
+  /** True when a chat was already spawned from this action (don't re-record). */
+  spawned: boolean;
+}
+
 export type TimelineItem =
   | { kind: "action"; event: ObjectiveEventRow; action: ActionView }
   | { kind: "milestone"; event: ObjectiveEventRow; payload: Record<string, unknown> };
@@ -190,6 +200,77 @@ export function buildSegments(
     }
   }
   return segments;
+}
+
+/** Frontend mirror of the backend's target extraction, for live (not yet
+ * persisted) tool executions where we hold the full args. */
+export function extractClientTarget(toolName: string, args: unknown): string | null {
+  if (!args || typeof args !== "object") return null;
+  const o = args as Record<string, unknown>;
+  const pick = (k: string) => str(o[k]);
+  const path = pick("path") ?? pick("file_path") ?? pick("filePath") ?? pick("absolute_path");
+  const raw = toolName === "bash" ? (pick("command") ?? path) : (path ?? pick("command") ?? pick("url"));
+  if (!raw) return null;
+  const compact = raw.split(/\s+/).join(" ");
+  return compact.length <= 200 ? compact : `${compact.slice(0, 197)}...`;
+}
+
+/** Minimal shape of a live tool execution (from liveAgentStore) we merge in. */
+export interface LiveToolExecution {
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+  status: "running" | "done" | "error";
+  startedAtMs?: number | null;
+  durationMs?: number | null;
+}
+
+function liveToolToView(exec: LiveToolExecution): ToolCallView {
+  return {
+    eventId: `live:${exec.toolCallId}`,
+    toolCallId: exec.toolCallId,
+    toolName: exec.toolName,
+    target: extractClientTarget(exec.toolName, exec.args),
+    argsPreview: "",
+    resultPreview: null,
+    status: exec.status,
+    isError: exec.status === "error",
+    startedAt: exec.startedAtMs ? new Date(exec.startedAtMs).toISOString() : null,
+    completedAt: null,
+    durationMs: exec.durationMs ?? null,
+  };
+}
+
+/**
+ * Overlay live executions onto an action's persisted tool calls: a live exec
+ * matching a persisted `toolCallId` freshens its status/duration (the DB row
+ * wins once the objective-event ping re-fetches it as done); unmatched RUNNING
+ * execs append — they're this action's tools whose start event hasn't landed
+ * yet. Finished unmatched execs are ignored: they belong to older actions.
+ */
+export function mergeLiveTools(
+  persisted: ToolCallView[],
+  live: Iterable<LiveToolExecution>,
+): ToolCallView[] {
+  const byId = new Map(persisted.map((t) => [t.toolCallId, t]));
+  const merged = [...persisted];
+  for (const exec of live) {
+    const have = byId.get(exec.toolCallId);
+    if (have) {
+      if (have.status === "running" && exec.status !== "running") {
+        const i = merged.indexOf(have);
+        merged[i] = {
+          ...have,
+          status: exec.status,
+          isError: exec.status === "error",
+          durationMs: exec.durationMs ?? have.durationMs,
+        };
+      }
+    } else if (exec.status === "running") {
+      merged.push(liveToolToView(exec));
+    }
+  }
+  return merged;
 }
 
 /** Compact relative time ("8s", "4m", "2h", "3d"). */

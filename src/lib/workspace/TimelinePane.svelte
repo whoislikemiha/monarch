@@ -5,27 +5,38 @@
    * NOW + plan up top, then the stream of coherent actions (newest-first)
    * grouped into objective segments, paged from `db_list_agent_timeline`
    * (MON-124). ~20 entries preload; older pages lazy-load as the captain
-   * scrolls toward the past.
+   * scrolls toward the past. The active card live-merges running tools from
+   * the agent's in-flight state so the timeline never lags the work.
    */
   import { onMount } from "svelte";
   import type { Agent } from "$lib/types";
   import { objectiveStore } from "$lib/toolbox/objectiveStore.svelte";
   import { liveAgentStore } from "$lib/toolbox/liveAgentStore.svelte";
   import { timelineStore } from "./timelineStore.svelte";
-  import { buildSegments, relTime } from "./timelineModel";
+  import {
+    buildSegments,
+    mergeLiveTools,
+    relTime,
+    type ActionView,
+    type AskPayload,
+    type ToolCallView,
+  } from "./timelineModel";
   import NowStrip from "./NowStrip.svelte";
   import TimelineAction from "./TimelineAction.svelte";
 
   interface Props {
     agent: Agent;
     /** Open a chat scoped to a timeline action. */
-    onask?: (action: { id: string; intent: string; outcome?: string | null }) => void;
+    onask?: (action: AskPayload) => void;
+    /** Re-open / focus a chat previously spawned from an action. */
+    onopenchat?: (scopeId: string, label: string) => void;
   }
-  let { agent, onask }: Props = $props();
+  let { agent, onask, onopenchat }: Props = $props();
 
   let entry = $derived(objectiveStore.byAgent.get(agent.id));
   let workingMemory = $derived(entry?.workingMemory ?? null);
-  let streaming = $derived(!!liveAgentStore.byAgent.get(agent.id)?.isStreaming);
+  let live = $derived(liveAgentStore.byAgent.get(agent.id));
+  let streaming = $derived(!!live?.isStreaming);
 
   let planItems = $derived(
     workingMemory?.currentObjectiveId
@@ -38,7 +49,78 @@
     tl ? buildSegments(tl.entries, tl.childrenByParent, tl.objectivesById) : [],
   );
   let newestEntryId = $derived(tl?.entries[0]?.id ?? null);
-  let hasContent = $derived(segments.length > 0 || (planItems.length > 0 && !!workingMemory));
+
+  /** The in-flight action (newest entry, coherent_action, no outcome yet). */
+  let activeActionId = $derived.by(() => {
+    const first = segments[0]?.items[0];
+    if (!first || first.kind !== "action") return null;
+    const a = first.action;
+    return first.event.id === newestEntryId && !a.outcome && !a.completedAt ? a.eventId : null;
+  });
+
+  /** Tool calls already persisted as children anywhere in the loaded feed. */
+  let persistedToolCallIds = $derived.by(() => {
+    const ids = new Set<string>();
+    if (!tl) return ids;
+    for (const children of tl.childrenByParent.values()) {
+      for (const c of children) {
+        if (c.eventType !== "tool_call" || !c.payloadJson) continue;
+        try {
+          const p = JSON.parse(c.payloadJson) as { tool_call_id?: string };
+          if (p.tool_call_id) ids.add(p.tool_call_id);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return ids;
+  });
+
+  /** Live tools for the active card (persisted ⊕ in-flight, by toolCallId). */
+  function liveToolsFor(action: ActionView): ToolCallView[] {
+    if (action.eventId !== activeActionId || !live) return action.toolCalls;
+    return mergeLiveTools(action.toolCalls, live.toolExecutions.values());
+  }
+
+  /** Unnarrated fallback: running tools with no narrated action to live under.
+   * Work must never silently disappear from the timeline. */
+  let orphanTools = $derived.by(() => {
+    if (!live || activeActionId) return [];
+    const orphans = [...live.toolExecutions.values()].filter(
+      (t) => t.status === "running" && !persistedToolCallIds.has(t.toolCallId),
+    );
+    return orphans.length ? mergeLiveTools([], orphans) : [];
+  });
+  let fallbackAction = $derived.by((): ActionView | null => {
+    if (!orphanTools.length) return null;
+    return {
+      eventId: "__fallback__",
+      objectiveId: "",
+      intent: "working…",
+      startedAt: null,
+      outcome: null,
+      autoClosed: false,
+      completedAt: null,
+      toolCalls: orphanTools,
+      decisions: [],
+      chatsSpawned: [],
+      filesTouched: [],
+      planItemId: null,
+    };
+  });
+
+  let hasContent = $derived(
+    segments.length > 0 || !!fallbackAction || (planItems.length > 0 && !!workingMemory),
+  );
+
+  /** 1s wall clock driving the active card's elapsed timer and live durations. */
+  let nowMs = $state(Date.now());
+  $effect(() => {
+    if (!streaming && !activeActionId) return;
+    nowMs = Date.now();
+    const t = setInterval(() => (nowMs = Date.now()), 1000);
+    return () => clearInterval(t);
+  });
 
   onMount(() => {
     objectiveStore.ensure(agent.id);
@@ -105,6 +187,10 @@
     <div class="empty mono">Loading the work record…</div>
   {:else if hasContent}
     <div class="stream">
+      {#if fallbackAction}
+        <TimelineAction action={fallbackAction} phase="active" {nowMs} />
+      {/if}
+
       {#each segments as segment, si (segment.objectiveId + ":" + si)}
         <div class="segment">
           <div class="seg-head">
@@ -116,15 +202,22 @@
           {#each segment.items as item (item.event.id)}
             {#if item.kind === "action"}
               {@const a = item.action}
-              {@const active = !a.outcome && !a.completedAt && item.event.id === newestEntryId}
               <TimelineAction
-                intent={a.intent}
-                outcome={a.outcome}
-                state={active ? "active" : a.autoClosed ? "auto" : "done"}
-                time={relTime(a.completedAt ?? a.startedAt)}
+                action={a}
+                phase={a.eventId === activeActionId ? "active" : a.autoClosed ? "auto" : "done"}
+                tools={liveToolsFor(a)}
+                {nowMs}
                 onask={onask
-                  ? () => onask({ id: a.eventId, intent: a.intent, outcome: a.outcome })
+                  ? () =>
+                      onask({
+                        id: a.eventId,
+                        intent: a.intent,
+                        outcome: a.outcome,
+                        objectiveId: a.objectiveId,
+                        spawned: a.chatsSpawned.length > 0,
+                      })
                   : undefined}
+                {onopenchat}
               />
             {:else}
               <div class="mile">
