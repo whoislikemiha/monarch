@@ -302,7 +302,7 @@ There are exactly three session moves (MON-127), and they map one-to-one onto co
 |---|---|---|---|
 | **Fresh session** | `new_agent_session(parent: None)` | NULL | Clean slate. Old session is ended, live state reset, sidecar conversation cleared. No history carries over. |
 | **Continue in place** | `switch_agent_session(session_id)` | unchanged | Reactivate an existing session row; new messages append to it. Live state rebuilds from its ancestry; caller replays context via `load_session_context`. |
-| **Continuation with ancestry** | `new_agent_session(parent: Some)` | old session | New row chained to the old one — used by respawn/restore flows where the agent should remember prior context across a process boundary. |
+| **Continuation with ancestry** | `new_agent_session(parent: Some)` | old session | New row chained to the old one. Kept for explicit fork-like flows; note the standard wake-from-stopped path does **not** use it — waking reuses the agent's current session row (a process restart is not a conversation boundary). |
 
 The fresh-session reset happens **in Rust** (`new_session`/`switch_session` call `rebuild_state_from_session`), so a stale `get_agent_state` seed can never resurrect the previous conversation. The session-history browser (`SessionHistoryTool`, the "Sessions" dock panel) shows **per-session** messages via `get_session_display_items` (no ancestry walk) — what actually happened in that window, not the flattened chain.
 
