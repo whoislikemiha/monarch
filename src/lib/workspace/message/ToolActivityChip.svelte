@@ -28,7 +28,12 @@
     );
     if (persisted) return persisted;
     // No persisted record (project-less agent / unnarrated work) — link to
-    // the timeline's synthesized fallback card if these tools are live there.
+    // the timeline's synthesized fallback card. These executions come from
+    // the agent's chat history, which is exactly what feeds that card once
+    // the feed is fully loaded; mid-turn tools are in the live map too.
+    const st = timelineStore.byAgent.get(agent.id);
+    const feedComplete = !st || (!st.hasMore && !st.loading);
+    if (feedComplete) return FALLBACK_ACTION_ID;
     const liveTools = liveAgentStore.byAgent.get(agent.id)?.toolExecutions;
     if (liveTools && executions.some((e) => liveTools.has(e.toolCallId))) {
       return FALLBACK_ACTION_ID;
