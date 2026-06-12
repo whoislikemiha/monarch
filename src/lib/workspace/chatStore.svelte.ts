@@ -139,6 +139,14 @@ class ChatStore {
     return id;
   }
 
+  /** True when a pane scoped to this work id is currently open. */
+  hasScopedPane(agentId: string, scopeId: string): boolean {
+    const panes = this.panesByAgent.get(agentId);
+    if (!panes) return false;
+    for (const p of panes.values()) if (p.scope?.id === scopeId) return true;
+    return false;
+  }
+
   /** Open (or focus) a tile scoped to a piece of work. */
   openScopedPane(agentId: string, scope: ChatScope): string {
     this.ensure(agentId);

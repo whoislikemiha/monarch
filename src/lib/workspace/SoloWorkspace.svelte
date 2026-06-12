@@ -9,8 +9,10 @@
    */
   import { onMount, onDestroy } from "svelte";
   import type { Agent } from "$lib/types";
+  import { invoke } from "$lib/api";
   import ShadowHeader from "./ShadowHeader.svelte";
   import TimelinePane from "./TimelinePane.svelte";
+  import type { AskPayload } from "./timelineModel";
   import ChatThread from "./ChatThread.svelte";
   import { LiveBinding } from "./liveBinding.svelte";
   import { chatStore } from "./chatStore.svelte";
@@ -40,13 +42,37 @@
   });
   onDestroy(() => binding.destroy());
 
-  /** Timeline action → open a chat tile scoped to that piece of work. */
-  function askAbout(action: { id: string; intent: string; outcome?: string | null }) {
+  /** Timeline action → open a chat tile scoped to that piece of work, and
+   * record a durable `chat_spawned` event under the action so "the captain
+   * intervened here" stays on the work record (MON-124) — chips on the card
+   * outlive the pane. Recording is best-effort and never blocks the chat. */
+  function askAbout(action: AskPayload) {
     const ctx =
       `[The captain is asking about this piece of your work: "${action.intent}"` +
       (action.outcome ? ` (outcome: ${action.outcome})` : "") +
       `. Answer with that context in mind.]`;
+    const wasOpen = chatStore.hasScopedPane(agent.id, action.id);
     chatStore.openScopedPane(agent.id, { id: action.id, kind: "action", label: action.intent, context: ctx });
+    if (!wasOpen && !action.spawned && action.objectiveId) {
+      invoke("db_record_objective_event", {
+        payload: {
+          objectiveId: action.objectiveId,
+          eventType: "chat_spawned",
+          actor: "captain",
+          author: "captain",
+          parentEventId: action.id,
+          payloadJson: JSON.stringify({ scope_id: action.id, label: action.intent }),
+        },
+      }).catch(() => {});
+    }
+  }
+
+  /** Chat chip on a card → re-open / focus that scoped conversation. */
+  function reopenChat(scopeId: string, label: string) {
+    const ctx =
+      `[The captain re-opened the conversation about this piece of your work: "${label}". ` +
+      `Answer with that context in mind.]`;
+    chatStore.openScopedPane(agent.id, { id: scopeId, kind: "action", label, context: ctx });
   }
 </script>
 
@@ -70,7 +96,7 @@
     {#snippet body(id)}
       {#if chatStore.isTimeline(id)}
         <div class="tl-scroll">
-          <TimelinePane {agent} onask={askAbout} />
+          <TimelinePane {agent} onask={askAbout} onopenchat={reopenChat} />
         </div>
       {:else}
         {@const pane = chatStore.pane(agent.id, id)}
