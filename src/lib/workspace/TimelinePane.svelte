@@ -10,7 +10,7 @@
    */
   import { onMount } from "svelte";
   import type { Agent } from "$lib/types";
-  import { objectiveStore } from "$lib/toolbox/objectiveStore.svelte";
+  import { objectiveStore, type ObjectiveReportView } from "$lib/toolbox/objectiveStore.svelte";
   import { liveAgentStore } from "$lib/toolbox/liveAgentStore.svelte";
   import { timelineStore } from "./timelineStore.svelte";
   import {
@@ -23,7 +23,8 @@
   } from "./timelineModel";
   import NowStrip from "./NowStrip.svelte";
   import TimelineAction from "./TimelineAction.svelte";
-  import EventIcon from "$lib/ui/EventIcon.svelte";
+  import TimelineMilestone from "./TimelineMilestone.svelte";
+  import TimelineReportCard from "./TimelineReportCard.svelte";
 
   interface Props {
     agent: Agent;
@@ -166,33 +167,43 @@
     return status.replace(/_/g, " ");
   }
 
-  /** Human label for milestone rows — slice 6 gives these full treatment. */
-  function milestoneLabel(eventType: string, payload: Record<string, unknown>): string {
-    switch (eventType) {
-      case "status_change":
-        return `status: ${payload.from ?? "?"} → ${payload.to ?? "?"}`;
-      case "plan_created":
-        return "plan set";
-      case "plan_changed":
-        return "plan changed";
-      case "plan_item_started":
-        return "plan step started";
-      case "plan_item_completed":
-        return "plan step completed";
-      case "plan_item_skipped":
-        return "plan step skipped";
-      case "plan_item_blocked":
-        return "plan step blocked";
-      case "note":
-      case "blocker":
-      case "blocker_resolved":
-      case "question":
-      case "answer":
-        return `${eventType.replace(/_/g, " ")}${typeof payload.text === "string" && payload.text ? `: ${payload.text}` : ""}`;
-      default:
-        return eventType.replace(/_/g, " ");
+  /** Best-effort plan-item title lookup across the cached plan slices. */
+  function resolvePlanTitle(itemId: string): string | null {
+    for (const items of entry?.planItemsByObjective.values() ?? []) {
+      const hit = items.find((i) => i.id === itemId);
+      if (hit) return hit.title;
     }
+    return null;
   }
+
+  const TERMINAL = new Set(["done", "verified", "claimed_done", "abandoned"]);
+
+  /** Lazily pull reports for closed objectives that entered the feed. */
+  $effect(() => {
+    const state = timelineStore.byAgent.get(agent.id);
+    if (!state) return;
+    for (const obj of state.objectivesById.values()) {
+      if (TERMINAL.has(obj.status)) timelineStore.loadReport(agent.id, obj.id).catch(() => {});
+    }
+  });
+
+  /** Segment index → report, for the NEWEST segment of each closed objective
+   * (the close lives at the top of that segment in a newest-first stream). */
+  let reportBySegment = $derived.by(() => {
+    const map = new Map<number, ObjectiveReportView>();
+    const state = timelineStore.byAgent.get(agent.id);
+    if (!state) return map;
+    const seen = new Set<string>();
+    segments.forEach((segment, i) => {
+      if (seen.has(segment.objectiveId)) return;
+      seen.add(segment.objectiveId);
+      const obj = segment.objective;
+      if (!obj || !TERMINAL.has(obj.status)) return;
+      const report = state.reportsByObjective.get(segment.objectiveId);
+      if (report) map.set(i, report);
+    });
+    return map;
+  });
 </script>
 
 <div class="timeline">
@@ -214,6 +225,9 @@
               <span class="seg-status mono">{statusLabel(segment.objective.status)}</span>
             {/if}
           </div>
+          {#if reportBySegment.has(si)}
+            <TimelineReportCard report={reportBySegment.get(si)!} />
+          {/if}
           {#each segment.items as item (item.event.id)}
             {#if item.kind === "action"}
               {@const a = item.action}
@@ -235,18 +249,11 @@
                 {onopenchat}
               />
             {:else}
-              <div class="mile">
-                <span class="mile-mark">
-                  <EventIcon
-                    kind={item.event.eventType}
-                    size={11}
-                    tone={item.event.eventType === "blocker" ? "warning" : "neutral"}
-                    muted={item.event.eventType !== "blocker"}
-                  />
-                </span>
-                <span class="mile-label">{milestoneLabel(item.event.eventType, item.payload)}</span>
-                <span class="mile-time mono">{relTime(item.event.createdAt)}</span>
-              </div>
+              <TimelineMilestone
+                event={item.event}
+                payload={item.payload}
+                resolveTitle={resolvePlanTitle}
+              />
             {/if}
           {/each}
         </div>
@@ -301,23 +308,6 @@
     min-width: 0;
   }
   .seg-status { font-size: 9.5px; color: var(--text-muted); flex: none; margin-left: auto; }
-
-  .mile {
-    display: flex;
-    align-items: baseline;
-    gap: var(--s2);
-    padding: 3px var(--s2) 3px 3px;
-    min-width: 0;
-  }
-  .mile-mark {
-    flex: none; align-self: center;
-    display: inline-flex; width: 14px; justify-content: center;
-  }
-  .mile-label {
-    font-size: 11px; color: var(--text-muted); line-height: 1.5;
-    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .mile-time { font-size: 9.5px; color: var(--text-muted); margin-left: auto; flex: none; }
 
   .more, .end {
     display: flex; justify-content: center;
