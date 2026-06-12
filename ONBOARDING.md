@@ -147,7 +147,8 @@ CREATE TABLE sessions (
   message_count     INTEGER DEFAULT 0,
   total_tokens      INTEGER DEFAULT 0,
   total_cost        REAL    DEFAULT 0.0,
-  parent_session_id TEXT REFERENCES sessions(id)  -- ancestry chain
+  parent_session_id TEXT REFERENCES sessions(id), -- ancestry chain
+  title             TEXT                          -- MON-127: user-facing name; NULL = derived from first user message
 );
 
 CREATE TABLE messages (
@@ -282,9 +283,9 @@ CREATE INDEX idx_messages_objective             ON messages(objective_id);
 
 ### Session ancestry — the key concept
 
-When the user **continues** a conversation, Monarch creates a **new session row** with `parent_session_id` pointing at the old one. `db::get_messages_with_ancestry(session_id)` walks the parent chain to the root and returns the full flattened history. This is used for:
+`db::get_messages_with_ancestry(session_id)` walks the `parent_session_id` chain to the root and returns the full flattened history. This is used for:
 
-- **UI display** — the agent view shows the full conversation across ancestor sessions.
+- **Active-conversation display** — switching to / continuing a session rebuilds the live state from the full chain (that's what the agent remembers).
 - **Sidecar rehydration** — on restore or crash recovery, Rust replays all ancestor messages into the Pi session with a `load_session` command.
 
 ```
@@ -294,6 +295,16 @@ session-A ──► session-B ──► session-C          (parent_session_id ch
                     ▼
          [A.msgs..., B.msgs..., C.msgs...]
 ```
+
+There are exactly three session moves (MON-127), and they map one-to-one onto commands:
+
+| Move | Command | `parent_session_id` | Meaning |
+|---|---|---|---|
+| **Fresh session** | `new_agent_session(parent: None)` | NULL | Clean slate. Old session is ended, live state reset, sidecar conversation cleared. No history carries over. |
+| **Continue in place** | `switch_agent_session(session_id)` | unchanged | Reactivate an existing session row; new messages append to it. Live state rebuilds from its ancestry; caller replays context via `load_session_context`. |
+| **Continuation with ancestry** | `new_agent_session(parent: Some)` | old session | New row chained to the old one — used by respawn/restore flows where the agent should remember prior context across a process boundary. |
+
+The fresh-session reset happens **in Rust** (`new_session`/`switch_session` call `rebuild_state_from_session`), so a stale `get_agent_state` seed can never resurrect the previous conversation. The session-history browser (`SessionHistoryTool`, the "Sessions" dock panel) shows **per-session** messages via `get_session_display_items` (no ancestry walk) — what actually happened in that window, not the flattened chain.
 
 ### Legacy fields
 
@@ -471,7 +482,6 @@ App.svelte                       — root: agents[], activeId, session restore, 
 │   └── SpawnForm.svelte         — form body (shadow identity, cwd, save-as-template)
 │       ├── TemplateSelector.svelte — load/apply/delete AgentTemplateRow chips
 │       └── ModelSelector.svelte    — provider, model picker, LM Studio ctx, thinking
-├── HistoryPanel.svelte          — session browser for a saved agent
 ├── AgentView.svelte             — main workspace per active agent
 │   ├── AgentHeader.svelte       — name, model, shadow grade
 │   ├── AgentControls.svelte     — thinking level, token/cost counter, abort
@@ -749,7 +759,7 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `lib/TemplateSelector.svelte` | Template chip row, loads via `db_list_agent_templates`. |
 | `lib/ModelSelector.svelte` | Provider, model picker, auth status, thinking level, LM Studio context — reusable. |
 | `lib/providers.ts` | `PROVIDERS`, `REFRESHABLE_PROVIDERS`, `THINKING_LEVELS` catalogue. |
-| `lib/HistoryPanel.svelte` | Session browser. |
+| `lib/toolbox/tools/SessionHistoryTool.svelte` | Session-history dock panel: list, read-only view, rename, continue, new session (MON-127). |
 | `lib/AgentView.svelte` | Per-agent workspace + event listeners. |
 | `lib/AgentHeader.svelte` | Name / model / grade header. |
 | `lib/AgentControls.svelte` | Thinking level, token counter, abort. |
