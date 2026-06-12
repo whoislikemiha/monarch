@@ -134,5 +134,7 @@
     font-size: 14px; line-height: 1; cursor: pointer; flex: none;
   }
   .close:hover { background: var(--bg-raised); color: var(--status-error); }
-  .tl-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s4); }
+  /* MON-124: the timeline owns its scrolling (bottom-anchored like the
+   * chat); this wrapper just sizes it. */
+  .tl-scroll { flex: 1; min-height: 0; display: flex; padding: var(--s4); }
 </style>
