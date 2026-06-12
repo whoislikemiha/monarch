@@ -9,7 +9,7 @@
    * the agent's in-flight state so the timeline never lags the work.
    */
   import { onMount } from "svelte";
-  import type { Agent } from "$lib/types";
+  import type { Agent, ToolExecution } from "$lib/types";
   import { objectiveStore, type ObjectiveReportView } from "$lib/toolbox/objectiveStore.svelte";
   import { liveAgentStore } from "$lib/toolbox/liveAgentStore.svelte";
   import { timelineStore } from "./timelineStore.svelte";
@@ -100,16 +100,35 @@
     return mergeLiveTools(action.toolCalls, live.toolExecutions.values());
   }
 
-  /** Unnarrated fallback: session tool executions with no persisted record —
-   * no objective (project-less agent) or no narrated action to live under.
-   * Running AND finished ones both render: work must never silently
-   * disappear from the timeline. (Live-state only — vanishes on restart;
-   * durable recording needs an objective, per the P1 ephemeral rule.) */
+  /** Every tool execution this agent's loaded history knows about: restored
+   * chat-history tool groups first (durable — the messages table is written
+   * project or not), overlaid by the live map (fresh status mid-turn, and
+   * cleared on restore). This is what makes project-less work a real part of
+   * the record: it rides the agent's chat history, not objective_events. */
+  let sessionToolExecutions = $derived.by(() => {
+    const map = new Map<string, ToolExecution>();
+    if (!live) return map;
+    for (const item of live.items) {
+      if (item.kind === "tool-group") {
+        for (const e of item.executions) map.set(e.toolCallId, e);
+      }
+    }
+    for (const e of live.toolExecutions.values()) map.set(e.toolCallId, e);
+    return map;
+  });
+
+  /** Unnarrated fallback: tool executions with no persisted objective_events
+   * record — no objective (project-less agent) or no narrated action to live
+   * under. Running AND finished ones both render: work must never silently
+   * disappear from the timeline. History-sourced executions are only safe to
+   * classify as unrecorded once the feed is fully loaded (a partially-loaded
+   * feed can't prove an old tool call wasn't narrated on a deeper page) —
+   * until then, only the live in-flight map feeds the card. */
   let orphanTools = $derived.by(() => {
     if (!live || activeActionId) return [];
-    const orphans = [...live.toolExecutions.values()].filter(
-      (t) => !persistedToolCallIds.has(t.toolCallId),
-    );
+    const feedComplete = !tl || (!tl.hasMore && !tl.loading);
+    const source = feedComplete ? sessionToolExecutions.values() : live.toolExecutions.values();
+    const orphans = [...source].filter((t) => !persistedToolCallIds.has(t.toolCallId));
     return orphans.length ? mergeAllLiveTools(orphans) : [];
   });
   let fallbackAction = $derived.by((): ActionView | null => {
@@ -119,7 +138,7 @@
     return {
       eventId: FALLBACK_ACTION_ID,
       objectiveId: "",
-      intent: running ? "working…" : "unnarrated work · this session",
+      intent: running ? "working…" : "unnarrated work",
       startedAt: null,
       outcome: running
         ? null
