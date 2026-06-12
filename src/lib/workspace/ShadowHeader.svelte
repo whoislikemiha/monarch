@@ -18,9 +18,8 @@
   interface Props {
     agent: Agent;
     binding: LiveBinding;
-    onnewchat?: () => void;
   }
-  let { agent, binding, onnewchat }: Props = $props();
+  let { agent, binding }: Props = $props();
 
   let live = $derived(liveAgentStore.byAgent.get(agent.id));
   let streaming = $derived(!!live?.isStreaming);
@@ -68,8 +67,12 @@
 
   <span class="sep" aria-hidden="true"></span>
 
-  <button class="hbtn" title="New chat" aria-label="New chat" onclick={() => onnewchat?.()}>
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10v6H7l-3 2.5V10H3z"/></svg>
+  <!-- MON-127: this used to add another chat pane on the SAME live session
+       (which reads as "new chat that remembers everything"). It now starts a
+       real fresh session; scoped parallel chats stay reachable from the
+       timeline's ask-about flow. -->
+  <button class="hbtn" title="New session" aria-label="New session" onclick={() => agentStore.newConversation(agent.id)}>
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10v6H7l-3 2.5V10H3z"/><path d="M8 5.5v3M6.5 7h3"/></svg>
   </button>
   <button
     class="hbtn"
@@ -97,7 +100,6 @@
     {#if menuOpen}
       <button class="menu-scrim" aria-label="Close menu" onclick={() => (menuOpen = false)}></button>
       <div class="menu" role="menu">
-        <button role="menuitem" onclick={() => { menuOpen = false; agentStore.newConversation(agent.id); }}>New session</button>
         <button role="menuitem" onclick={() => { menuOpen = false; binding.compact(agent); }}>Compact context</button>
         <button role="menuitem" onclick={() => { menuOpen = false; showPrompt = true; }}>Edit prompt</button>
         <button role="menuitem" onclick={() => { menuOpen = false; if (!layoutStore.isOpen("sessions")) layoutStore.toggle("sessions"); }}>Session history</button>

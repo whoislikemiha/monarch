@@ -77,7 +77,7 @@
 </script>
 
 <div class="solo">
-  <ShadowHeader {agent} {binding} onnewchat={() => chatStore.addPane(agent.id)} />
+  <ShadowHeader {agent} {binding} />
 
   <TileStack ids={tiles} axis={orient} onreorder={reorder} {size} {setSize}>
     {#snippet header(id)}
