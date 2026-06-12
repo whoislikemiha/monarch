@@ -104,7 +104,7 @@ export class RuntimeManager {
 
 	async createSession(cmd: CreateSessionCommand): Promise<void> {
 		if (this.sessions.has(cmd.agentId)) {
-			await this.destroySession(cmd.agentId);
+			await this.destroySession(cmd.agentId, { silent: true });
 		}
 
 		// Monarch owns the system prompt. We feed it through the resource loader's
@@ -323,7 +323,14 @@ export class RuntimeManager {
 		});
 	}
 
-	async destroySession(agentId: string): Promise<void> {
+	/**
+	 * Tear down an agent's in-memory session. `silent` suppresses the
+	 * `session_destroyed` event for the replace-before-recreate path inside
+	 * `createSession` (MON-127): that destroy is an implementation detail, and
+	 * announcing it makes Rust/frontend treat a healthy respawning agent as
+	 * exited (false "stopped" status + error toast).
+	 */
+	async destroySession(agentId: string, opts?: { silent?: boolean }): Promise<void> {
 		const managed = this.sessions.get(agentId);
 		if (!managed) return;
 
@@ -339,7 +346,7 @@ export class RuntimeManager {
 		}
 		this.sessions.delete(agentId);
 
-		this.emit({ type: "session_destroyed", agentId });
+		if (!opts?.silent) this.emit({ type: "session_destroyed", agentId });
 	}
 
 	async prompt(

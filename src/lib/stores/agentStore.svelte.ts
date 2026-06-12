@@ -706,8 +706,13 @@ class AgentStore {
       this.agents = this.agents.map((a) =>
         a.id === id ? { ...a, status: "stopped" as const } : a,
       );
-      const code = event.payload;
-      if (code != null && code !== 0) {
+      // The wire payload is a JSON string ("null" or a number) — the
+      // `session_destroyed` path always sends "null". Coercing the string
+      // "null" through the old `!= null` guard produced phantom
+      // "Sidecar exited (code null)" toasts (MON-127).
+      const raw = event.payload as unknown;
+      const code = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+      if (Number.isFinite(code) && code !== 0) {
         notificationsStore.add({
           level: "error",
           message: `Sidecar exited (code ${code})`,
