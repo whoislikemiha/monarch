@@ -57,7 +57,7 @@
   <div class="now-line">
     <span class="tag" class:live={streaming}>NOW</span>
     {#if current}
-      <span class="intent">{current.intent}</span>
+      <span class="intent" title={current.intent}>{current.intent}</span>
     {:else if streaming}
       <span class="intent idle">Working</span>
     {:else}
@@ -142,7 +142,10 @@
     color: var(--text-muted); flex: none;
   }
   .tag.live { color: var(--status-info); }
-  .intent { font-size: 12.5px; color: var(--text-primary); font-weight: 500; min-width: 0; }
+  .intent {
+    font-size: 12.5px; color: var(--text-primary); font-weight: 500; min-width: 0;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
   .intent.idle { color: var(--text-muted); font-weight: 400; }
   .pulse {
     width: 7px; height: 7px; border-radius: var(--r-full);

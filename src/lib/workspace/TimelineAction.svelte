@@ -54,13 +54,13 @@
       class="headline"
       onclick={toggle}
       aria-expanded={expanded}
-      title={expanded ? "Collapse" : "Expand"}
+      title={action.intent}
     >
       <span class="intent">{action.intent}</span>
       {#if time}<span class="time mono" class:live={phase === "active"}>{time}</span>{/if}
     </button>
 
-    {#if action.outcome}
+    {#if action.outcome && !action.autoClosed}
       <div class="outcome">{action.outcome}</div>
     {/if}
 
@@ -183,6 +183,11 @@
   .intent {
     font-size: 12.5px; color: var(--text-primary); font-weight: 500; line-height: 1.45;
     min-width: 0;
+    /* Headlines are headlines — clamp; full text lives in the title attr. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
   .time { font-size: 9.5px; color: var(--text-muted); margin-left: auto; flex: none; }
   .time.live { color: var(--status-info); font-variant-numeric: tabular-nums; }
