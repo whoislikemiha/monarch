@@ -155,12 +155,21 @@ export class LiveBinding {
           this.sessionReadyResolve();
           this.sessionReadyResolve = null;
         }
-        if (this.pendingSourceSessionId) {
-          const sourceSessionId = this.pendingSourceSessionId;
+        {
+          // The bind-time capture misses the wake-after-restart path:
+          // spawnStoppedAgent sets sourceSessionId on the store AFTER this
+          // binding mounted, so read the live store too — otherwise the new
+          // session never replays history and the LLM starts blank while the
+          // UI shows the full conversation.
+          const fromStore = agentStore.getAgent(targetAgentId)?.sourceSessionId;
+          const sourceSessionId = this.pendingSourceSessionId ?? fromStore;
           this.pendingSourceSessionId = undefined;
-          invoke("load_session_context", { agentId: targetAgentId, sourceSessionId }).catch((e) =>
-            console.error("Failed to load session context:", e),
-          );
+          if (sourceSessionId) {
+            invoke("load_session_context", { agentId: targetAgentId, sourceSessionId }).catch((e) =>
+              console.error("Failed to load session context:", e),
+            );
+            agentStore.updateAgent(targetAgentId, (a) => ({ ...a, sourceSessionId: undefined }));
+          }
         }
         break;
       case "sidecar_error":
