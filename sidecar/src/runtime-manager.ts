@@ -13,7 +13,9 @@ import {
 import { randomUUID } from "node:crypto";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import { type ImageContent } from "@mariozechner/pi-ai";
-import { buildSystemPrompt } from "./shadow-oath.js";
+import { buildChatShadowPrompt, buildSystemPrompt } from "./shadow-oath.js";
+import { createPauseGate, type PauseGateControls } from "./pause-gate.js";
+import { createChatTools } from "./chat-tools.js";
 import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
 import { createNarrationTools } from "./narration-tools.js";
 import { createPlanTools } from "./plan-tools.js";
@@ -56,6 +58,9 @@ interface ManagedSession {
 	shadowIdentityPayload?: string | null;
 	/** Live system prompt. Mutated by setCustomPrompt; the loader override closes over this ref. */
 	promptRef: { current: string };
+	/** MON-128 (P3): pause gate — executor sessions only. MUST be released
+	 * before any abort/dispose (see pause-gate.ts sharp edge). */
+	pauseGate?: PauseGateControls;
 }
 
 const EMPTY_USAGE = {
@@ -87,6 +92,11 @@ export class RuntimeManager {
 	 */
 	private pendingClassifications = new Map<string, string[]>();
 	private memorySearchResolvers = new Map<string, MemorySearchResolver>();
+	/** MON-128: pending recall_actions bridges (chat tool → Rust → response). */
+	private recallResolvers = new Map<
+		string,
+		{ agentId: string; resolve: (text: string) => void; timeout: NodeJS.Timeout }
+	>();
 
 	constructor(emit: EmitFn) {
 		this.emit = emit;
@@ -124,12 +134,19 @@ export class RuntimeManager {
 		// Monarch owns the system prompt. We feed it through the resource loader's
 		// systemPromptOverride so Pi's _baseSystemPrompt IS our prompt from the first
 		// byte — survives every tool/extension rebuild and any before_agent_start reset.
+		// MON-128: the chat organ gets its own prompt — same identity head,
+		// conversational behavior, no work-narration ceremony.
+		const buildPrompt = role === "chat" ? buildChatShadowPrompt : buildSystemPrompt;
 		const initialPrompt =
 			cmd.customPrompt?.trim() ||
 			(cmd.shadow
-				? buildSystemPrompt(cmd.shadow, cmd.cwd, cmd.projectInstructions, cmd.captainIdentityPayload, cmd.shadowIdentityPayload)
+				? buildPrompt(cmd.shadow, cmd.cwd, cmd.projectInstructions, cmd.captainIdentityPayload, cmd.shadowIdentityPayload)
 				: cmd.projectInstructions?.trim() || "");
 		const promptRef = { current: initialPrompt };
+
+		// MON-128 (P3): executor sessions carry the pause gate — a tool_call
+		// extension handler that parks at tool boundaries while paused.
+		const pauseGate = role === "executor" ? createPauseGate() : undefined;
 
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: cmd.cwd,
@@ -143,6 +160,7 @@ export class RuntimeManager {
 			noSkills: true,
 			noPromptTemplates: true,
 			noThemes: true,
+			...(pauseGate ? { extensionFactories: [pauseGate.factory] } : {}),
 		});
 		// Required: DefaultResourceLoader only materializes systemPromptOverride
 		// (and extension factories) inside reload(). createAgentSession skips its
@@ -155,17 +173,44 @@ export class RuntimeManager {
 			cmd.thinkingLevel && isValidThinkingLevel(cmd.thinkingLevel)
 				? cmd.thinkingLevel
 				: "off";
+		// MON-128: per-organ toolsets. The executor keeps the full world-
+		// mutation set + narration; the chat organ is read/direct/control only
+		// — read-only built-ins (no bash/edit/write, decision 5) plus the chat
+		// control tools. `tools` is an allowlist, so custom tool names must be
+		// listed alongside the built-ins they ride with.
+		const chatTools =
+			role === "chat"
+				? createChatTools(cmd.agentId, this.emit, {
+						pauseExecutor: (reason) => this.pauseExecutor(cmd.agentId, reason, "chat"),
+						resumeExecutor: () => this.resumeExecutor(cmd.agentId, "chat"),
+						stopExecutor: (reason) => this.stopExecutor(cmd.agentId, reason, "chat"),
+						recallActions: (limit) => this.requestRecallActions(cmd.agentId, limit),
+						memorySearch: async (query) => {
+							const results = await this.requestMemorySearch(cmd.agentId, "chat", query);
+							return results.length
+								? formatRelevantMemories(results)
+								: "(no relevant memories found)";
+						},
+					})
+				: [];
 		const { session } = await createAgentSession({
 			cwd: cmd.cwd,
 			thinkingLevel: initialLevel,
 			sessionManager: SessionManager.inMemory(cmd.cwd),
 			resourceLoader,
-			customTools: [
-				createSuggestMemoryTool(cmd.agentId, this.emit),
-				...createNarrationTools(cmd.agentId, this.emit),
-				...createPlanTools(cmd.agentId, this.emit),
-				...createReportTools(cmd.agentId, this.emit),
-			],
+			...(role === "chat"
+				? {
+						tools: ["read", "grep", "find", "ls", ...chatTools.map((t) => t.name)],
+						customTools: chatTools,
+					}
+				: {
+						customTools: [
+							createSuggestMemoryTool(cmd.agentId, this.emit),
+							...createNarrationTools(cmd.agentId, this.emit),
+							...createPlanTools(cmd.agentId, this.emit),
+							...createReportTools(cmd.agentId, this.emit),
+						],
+					}),
 		});
 
 		if (cmd.provider === "lmstudio") {
@@ -331,6 +376,7 @@ export class RuntimeManager {
 			session,
 			role,
 			unsubscribe,
+			pauseGate: pauseGate?.controls,
 			uiResolvers,
 			shadow: cmd.shadow,
 			cwd: cmd.cwd,
@@ -380,6 +426,8 @@ export class RuntimeManager {
 		if (!managed) return;
 
 		managed.unsubscribe();
+		// Spike finding: parked tool calls must be released before teardown.
+		managed.pauseGate?.release();
 		managed.session.dispose();
 		managed.uiResolvers.clear();
 		for (const [requestId, resolver] of this.memorySearchResolvers) {
@@ -556,7 +604,107 @@ export class RuntimeManager {
 	async abort(agentId: string, role: SessionRole = "executor"): Promise<void> {
 		const managed = this.getSession(agentId, role);
 		if (!managed) return;
+		// Spike finding: a parked tool_call handler blocks turn settlement —
+		// abort() alone would hang. Release (without disengaging) first.
+		managed.pauseGate?.release();
 		await managed.session.abort();
+	}
+
+	/**
+	 * MON-128 (P3): pause the executor at its next tool boundary. `by`
+	 * distinguishes the chat organ from the captain's UI for the recorded
+	 * event. Emits an `executor_paused` inner event on the EXECUTOR stream —
+	 * pause state is a fact about the executor, whoever requested it.
+	 */
+	pauseExecutor(agentId: string, reason?: string, by: "chat" | "captain" = "captain"): string {
+		const managed = this.sessions.get(this.sessionKey(agentId, "executor"));
+		if (!managed?.pauseGate) return "Executor is not running — nothing to pause.";
+		if (managed.pauseGate.paused()) return "Executor is already paused.";
+		managed.pauseGate.pause(reason);
+		this.emit({
+			type: "event",
+			agentId,
+			sessionRole: "executor",
+			event: { type: "executor_paused", reason: reason ?? null, by },
+		});
+		const streaming = managed.session.isStreaming;
+		return streaming
+			? "Pause engaged — the executor will halt after its current tool call."
+			: "Pause engaged — the executor is idle; it will hold at the first tool call of its next turn.";
+	}
+
+	resumeExecutor(agentId: string, by: "chat" | "captain" = "captain"): string {
+		const managed = this.sessions.get(this.sessionKey(agentId, "executor"));
+		if (!managed?.pauseGate) return "Executor is not running.";
+		if (!managed.pauseGate.paused()) return "Executor is not paused.";
+		managed.pauseGate.resume();
+		this.emit({
+			type: "event",
+			agentId,
+			sessionRole: "executor",
+			event: { type: "executor_resumed", by },
+		});
+		return "Executor resumed.";
+	}
+
+	async stopExecutor(
+		agentId: string,
+		reason?: string,
+		by: "chat" | "captain" = "captain",
+	): Promise<string> {
+		const managed = this.sessions.get(this.sessionKey(agentId, "executor"));
+		if (!managed) return "Executor is not running.";
+		// Release-then-abort (spike finding) — also clears a paused gate so
+		// the stopped executor isn't left holding state.
+		managed.pauseGate?.resume();
+		await managed.session.abort();
+		this.emit({
+			type: "event",
+			agentId,
+			sessionRole: "executor",
+			event: { type: "executor_stopped", reason: reason ?? null, by },
+		});
+		return "Executor stopped — its in-flight turn was aborted.";
+	}
+
+	/**
+	 * MON-128: chat tool bridge — ask Rust for the executor's working memory
+	 * + recent timeline events. Resolves to a formatted text block; times out
+	 * to a safe placeholder so a slow DB can never wedge the chat turn.
+	 */
+	private requestRecallActions(agentId: string, limit?: number): Promise<string> {
+		return new Promise((resolve) => {
+			const requestId = randomUUID();
+			const timeout = setTimeout(() => {
+				this.recallResolvers.delete(requestId);
+				resolve("(recent activity unavailable right now)");
+			}, 2000);
+			this.recallResolvers.set(requestId, { agentId, resolve, timeout });
+			this.emit({
+				type: "recall_actions_request",
+				agentId,
+				requestId,
+				limit: limit ?? null,
+			});
+		});
+	}
+
+	/** MON-128: Rust's answer to a recall_actions_request. */
+	handleRecallActionsResponse(
+		agentId: string,
+		requestId: string,
+		payload?: string | null,
+		error?: string | null,
+	): void {
+		const resolver = this.recallResolvers.get(requestId);
+		if (!resolver || resolver.agentId !== agentId) return;
+		clearTimeout(resolver.timeout);
+		this.recallResolvers.delete(requestId);
+		if (error || !payload) {
+			resolver.resolve("(recent activity unavailable right now)");
+			return;
+		}
+		resolver.resolve(payload);
 	}
 
 	async setModel(

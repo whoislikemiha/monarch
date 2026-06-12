@@ -447,6 +447,73 @@ pub(crate) fn build_persist_commands(
                 agent_id: agent_id.to_string(),
             });
         }
+        // MON-128 (P3): executor control plane + chat observations land as
+        // first-class timeline rows under the current (or scratch) objective.
+        InnerEvent::ExecutorPaused { reason, by }
+        | InnerEvent::ExecutorStopped { reason, by } => {
+            if let Some(objective_id) = current_objective_id {
+                let stopped = matches!(event, InnerEvent::ExecutorStopped { .. });
+                let event_type = match (stopped, by.as_str()) {
+                    (false, "chat") => "paused_by_chat",
+                    (false, _) => "paused_by_captain",
+                    (true, "chat") => "stopped_by_chat",
+                    (true, _) => "stopped_by_captain",
+                };
+                let payload_json = serde_json::json!({ "reason": reason }).to_string();
+                cmds.push(PersistCommand::RecordObjectiveEvent {
+                    payload: RecordObjectiveEventPayload {
+                        objective_id,
+                        event_type: event_type.to_string(),
+                        actor: Some(agent_id.to_string()),
+                        author: Some(if by == "chat" {
+                            "chat_shadow".to_string()
+                        } else {
+                            "captain".to_string()
+                        }),
+                        payload_json: Some(payload_json),
+                        ..Default::default()
+                    },
+                });
+            }
+        }
+        InnerEvent::ExecutorResumed { by } => {
+            if let Some(objective_id) = current_objective_id {
+                let event_type = if by == "chat" {
+                    "resumed_by_chat"
+                } else {
+                    "resumed_by_captain"
+                };
+                cmds.push(PersistCommand::RecordObjectiveEvent {
+                    payload: RecordObjectiveEventPayload {
+                        objective_id,
+                        event_type: event_type.to_string(),
+                        actor: Some(agent_id.to_string()),
+                        author: Some(if by == "chat" {
+                            "chat_shadow".to_string()
+                        } else {
+                            "captain".to_string()
+                        }),
+                        ..Default::default()
+                    },
+                });
+            }
+        }
+        InnerEvent::ChatObservation { observation } => {
+            if let Some(objective_id) = current_objective_id {
+                let payload_json =
+                    serde_json::json!({ "observation": observation }).to_string();
+                cmds.push(PersistCommand::RecordObjectiveEvent {
+                    payload: RecordObjectiveEventPayload {
+                        objective_id,
+                        event_type: "observation".to_string(),
+                        actor: Some(agent_id.to_string()),
+                        author: Some("chat_shadow".to_string()),
+                        payload_json: Some(payload_json),
+                        ..Default::default()
+                    },
+                });
+            }
+        }
         InnerEvent::MemorySuggestion {
             title,
             summary,

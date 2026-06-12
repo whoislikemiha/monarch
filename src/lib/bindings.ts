@@ -48,6 +48,14 @@ export const commands = {
 	 */
 	desynced: boolean,
 	/**
+	 *  MON-128 (P3): true while the executor's pause gate is engaged (it
+	 *  halts at the next tool boundary and holds until resume). Set by the
+	 *  `executor_paused` / `executor_resumed` / `executor_stopped` events.
+	 */
+	executorPaused?: boolean,
+	// MON-128: optional human-readable reason supplied with the pause.
+	executorPauseReason?: string | null,
+	/**
 	 *  Monotonically increasing per-agent. The frontend reconciles by dropping
 	 *  any incoming snapshot whose version is <= its current entry version.
 	 */
@@ -99,6 +107,14 @@ export const commands = {
 	 *  event it could not reconcile. Reset to false on the next `message_start`.
 	 */
 	desynced: boolean,
+	/**
+	 *  MON-128 (P3): true while the executor's pause gate is engaged (it
+	 *  halts at the next tool boundary and holds until resume). Set by the
+	 *  `executor_paused` / `executor_resumed` / `executor_stopped` events.
+	 */
+	executorPaused?: boolean,
+	// MON-128: optional human-readable reason supplied with the pause.
+	executorPauseReason?: string | null,
 	/**
 	 *  Monotonically increasing per-agent. The frontend reconciles by dropping
 	 *  any incoming snapshot whose version is <= its current entry version.
@@ -680,6 +696,14 @@ export type LiveAgentState = {
 	 *  event it could not reconcile. Reset to false on the next `message_start`.
 	 */
 	desynced: boolean,
+	/**
+	 *  MON-128 (P3): true while the executor's pause gate is engaged (it
+	 *  halts at the next tool boundary and holds until resume). Set by the
+	 *  `executor_paused` / `executor_resumed` / `executor_stopped` events.
+	 */
+	executorPaused?: boolean,
+	// MON-128: optional human-readable reason supplied with the pause.
+	executorPauseReason?: string | null,
 	/**
 	 *  Monotonically increasing per-agent. The frontend reconciles by dropping
 	 *  any incoming snapshot whose version is <= its current entry version.

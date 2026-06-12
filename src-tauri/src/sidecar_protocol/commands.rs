@@ -126,6 +126,25 @@ pub enum SidecarCommand {
         slice: String,
         config: KeeperConfig,
     },
+    /// MON-128 (P3): captain-side executor control. The sidecar owns the
+    /// pause gate; this is the same machinery the chat organ's tools use.
+    ExecutorControl {
+        agent_id: String,
+        /// "pause" | "resume" | "stop"
+        action: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    /// MON-128: Rust response to a sidecar `recall_actions_request` (chat
+    /// organ's recall_actions tool). `payload` is a pre-formatted text block.
+    RecallActionsResponse {
+        agent_id: String,
+        request_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        payload: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     /// MON-101: Rust response to a sidecar `memory_search_request`. The
     /// sidecar blocks the user turn briefly waiting for this, then proceeds
     /// without injection on timeout or error.

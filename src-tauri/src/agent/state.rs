@@ -177,6 +177,14 @@ pub struct LiveAgentState {
     /// Set to true when the reader hit a parse failure or an out-of-order
     /// event it could not reconcile. Reset to false on the next `message_start`.
     pub desynced: bool,
+    /// MON-128 (P3): true while the executor's pause gate is engaged (it
+    /// halts at the next tool boundary and holds until resume). Set by the
+    /// `executor_paused` / `executor_resumed` / `executor_stopped` events.
+    #[serde(default)]
+    pub executor_paused: bool,
+    /// MON-128: optional human-readable reason supplied with the pause.
+    #[serde(default)]
+    pub executor_pause_reason: Option<String>,
     /// Monotonically increasing per-agent. The frontend reconciles by dropping
     /// any incoming snapshot whose version is <= its current entry version.
     pub state_version: u64,

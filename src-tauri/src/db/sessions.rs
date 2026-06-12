@@ -381,6 +381,70 @@ impl Database {
             .await?)
     }
 
+    /// MON-128 (P3): handoff watermark — highest message id already relayed
+    /// from this chat session to the executor.
+    pub async fn get_handoff_watermark_internal(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<i64>, MonarchError> {
+        let session_id = session_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let v: Option<i64> = conn
+                    .query_row(
+                        "SELECT last_handoff_message_id FROM sessions WHERE id = ?1",
+                        params![session_id],
+                        |row| row.get(0),
+                    )
+                    .ok()
+                    .flatten();
+                Ok(v)
+            })
+            .await?)
+    }
+
+    pub async fn set_handoff_watermark_internal(
+        &self,
+        session_id: &str,
+        message_id: i64,
+    ) -> Result<(), MonarchError> {
+        let session_id = session_id.to_string();
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE sessions SET last_handoff_message_id = ?1 WHERE id = ?2",
+                    params![message_id, session_id],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// MON-128: dialogue rows (user/assistant only) after a watermark id —
+    /// the verbatim handoff slice source.
+    pub async fn list_dialogue_after_internal(
+        &self,
+        session_id: &str,
+        after_id: i64,
+    ) -> Result<Vec<MessageRow>, MonarchError> {
+        let session_id = session_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT id, session_id, role, content, model, tokens, cost, timestamp, duration_ms
+                     FROM messages
+                     WHERE session_id = ?1 AND id > ?2 AND role IN ('user', 'assistant')
+                     ORDER BY id ASC",
+                )?;
+                let rows = stmt.query_map(params![session_id, after_id], map_message)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .await?)
+    }
+
     /// Get the full message chain for a session, following parent_session_id links.
     /// Returns messages from oldest ancestor to current, in chronological order.
     pub async fn get_messages_with_ancestry(

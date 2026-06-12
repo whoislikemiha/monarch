@@ -635,6 +635,12 @@ impl Database {
                 let _ = conn.execute_batch(
                     "ALTER TABLE sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'executor';",
                 );
+                // MON-128 (P3): handoff watermark on chat sessions — highest
+                // message id already relayed to the executor. Nothing is ever
+                // injected twice.
+                let _ = conn.execute_batch(
+                    "ALTER TABLE sessions ADD COLUMN last_handoff_message_id INTEGER;",
+                );
 
                 // FTS5 virtual table — separate batch because some SQLite
                 // builds don't have FTS5; we log the failure and continue.

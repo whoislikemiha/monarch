@@ -87,6 +87,20 @@ async function handleCommand(cmd: SidecarCommand): Promise<void> {
 		case "memory_search_response":
 			manager.handleMemorySearchResponse(cmd.agentId, cmd.requestId, cmd.results, cmd.error);
 			break;
+		case "executor_control":
+			// MON-128: captain-side pause/resume/stop — same machinery as the
+			// chat organ's control tools.
+			if (cmd.action === "pause") {
+				manager.pauseExecutor(cmd.agentId, cmd.reason ?? undefined, "captain");
+			} else if (cmd.action === "resume") {
+				manager.resumeExecutor(cmd.agentId, "captain");
+			} else {
+				await manager.stopExecutor(cmd.agentId, cmd.reason ?? undefined, "captain");
+			}
+			break;
+		case "recall_actions_response":
+			manager.handleRecallActionsResponse(cmd.agentId, cmd.requestId, cmd.payload, cmd.error);
+			break;
 		default:
 			process.stderr.write(
 				`[sidecar] Unknown command type: ${(cmd as any).type}\n`,

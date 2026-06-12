@@ -113,6 +113,24 @@ pub(super) fn chat_state_key(agent_id: &str) -> String {
     format!("{agent_id}::chat")
 }
 
+/// MON-128: plain text from a stored message `content` value — either a raw
+/// string or a serialized content-block array (text blocks joined; thinking
+/// and tool blocks skipped). Used to build the verbatim handoff slice.
+fn stored_content_to_text(stored: &str) -> String {
+    let trimmed = stored.trim();
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(serde_json::Value::String(s)) => s,
+        Ok(serde_json::Value::Array(blocks)) => blocks
+            .iter()
+            .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join("
+"),
+        _ => trimmed.to_string(),
+    }
+}
+
 #[derive(Default)]
 pub struct AgentStateInner {
     pub state: LiveAgentState,
@@ -140,6 +158,9 @@ pub(crate) enum InternalDispatch {
     /// Send a manager-originated command to the sidecar. Used by inbound
     /// request/response bridges that originate in `event_handler.rs`.
     SendSidecarCommand { command: SidecarCommand },
+    /// MON-128 (P3): the chat organ requested a handoff — build the verbatim
+    /// conversation slice and inject it into the executor.
+    ChatHandoff { agent_id: String },
 }
 
 /// MON-100 / MON-103: Keeper runs share plumbing but differ in why they
@@ -302,6 +323,14 @@ impl AgentManager {
                                 }
                             }
                             Err(e) => eprintln!("[monarch] sidecar response encode failed: {}", e),
+                        }
+                    }
+                    InternalDispatch::ChatHandoff { agent_id } => {
+                        if let Err(e) = mgr.hand_to_executor(&db, &agent_id).await {
+                            eprintln!(
+                                "[monarch] chat handoff failed for {}: {:?}",
+                                agent_id, e
+                            );
                         }
                     }
                 }
@@ -1056,6 +1085,104 @@ impl AgentManager {
             session_role: SessionRole::Chat,
         };
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
+            .await
+    }
+
+    /// MON-128 (P3, plan decision 1): deliver the verbatim conversation
+    /// slice since the last handoff watermark to the executor. The chat
+    /// organ decides WHEN (its no-payload `hand_to_executor` tool); this
+    /// mechanism decides WHAT — the captain's words are never paraphrased
+    /// by a model. Delivery rides the normal Prompt path, which already
+    /// queues via followUp when the executor is mid-turn. Each handoff
+    /// advances the watermark and records a `dispatched_to_executor`
+    /// timeline event so routing failures are observable.
+    pub(crate) async fn hand_to_executor(
+        &self,
+        db: &Arc<Database>,
+        agent_id: &str,
+    ) -> Result<(), MonarchError> {
+        let chat_session_id = {
+            let inner = self.inner.lock();
+            inner.chat_session_map.get(agent_id).cloned()
+        };
+        let Some(chat_session_id) = chat_session_id else {
+            return Err(MonarchError::not_found(format!(
+                "no live chat session for agent {agent_id} — handoff dropped"
+            )));
+        };
+
+        let watermark = db
+            .get_handoff_watermark_internal(&chat_session_id)
+            .await?
+            .unwrap_or(0);
+        let messages = db
+            .list_dialogue_after_internal(&chat_session_id, watermark)
+            .await?;
+        if messages.is_empty() {
+            return Ok(());
+        }
+
+        let mut slice = String::from(
+            "[Relay from your chat organ — the conversation with the captain since the last handoff, verbatim. The captain's words are authoritative; proceed with the work they imply.]
+",
+        );
+        for m in &messages {
+            let voice = if m.role == "user" { "Captain" } else { "You (chat)" };
+            let text = stored_content_to_text(&m.content);
+            if text.trim().is_empty() {
+                continue;
+            }
+            slice.push_str(&format!("
+{voice}: {text}
+"));
+        }
+        slice.push_str("
+[End of relay.]");
+
+        // Watermark BEFORE delivery: a failed send can be retried by the
+        // captain, but double-injecting the same words mid-work is worse
+        // than dropping a slice.
+        let max_id = messages.iter().map(|m| m.id).max().unwrap_or(watermark);
+        db.set_handoff_watermark_internal(&chat_session_id, max_id)
+            .await?;
+
+        // Observable handoff: a timeline row under the current (or scratch)
+        // objective.
+        let objective_id = match db
+            .get_agent_current_objective_id_internal(agent_id)
+            .await
+            .ok()
+            .flatten()
+        {
+            Some(oid) => Some(oid),
+            None => db.ensure_scratch_objective_internal(agent_id).await.ok(),
+        };
+        if let Some(objective_id) = objective_id {
+            let payload_json = serde_json::json!({
+                "messageCount": messages.len(),
+                "chars": slice.len(),
+            })
+            .to_string();
+            let _ = db
+                .record_objective_event_internal(&crate::db::RecordObjectiveEventPayload {
+                    objective_id,
+                    event_type: "dispatched_to_executor".to_string(),
+                    actor: Some(agent_id.to_string()),
+                    author: Some("chat_shadow".to_string()),
+                    payload_json: Some(payload_json),
+                    ..Default::default()
+                })
+                .await;
+        }
+
+        let app = self.get_app_handle()?;
+        let cmd = SidecarCommand::Prompt {
+            agent_id: agent_id.to_string(),
+            message: serde_json::Value::String(slice),
+            classifier: None,
+            session_role: SessionRole::Executor,
+        };
+        self.send_with_recovery(&app, db, &serde_json::to_string(&cmd)?)
             .await
     }
 

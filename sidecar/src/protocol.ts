@@ -199,6 +199,25 @@ export interface MemorySearchResponseCommand {
   error?: string | null;
 }
 
+/** MON-128 (P3): captain-side executor control — same machinery the chat
+ * organ's pause/resume/stop tools use, addressable from Rust/UI. */
+export interface ExecutorControlCommand {
+  type: "executor_control";
+  agentId: string;
+  action: "pause" | "resume" | "stop";
+  reason?: string | null;
+}
+
+/** MON-128: Rust's answer to a recall_actions_request (chat tool bridge). */
+export interface RecallActionsResponseCommand {
+  type: "recall_actions_response";
+  agentId: string;
+  requestId: string;
+  /** Pre-formatted text block (working memory + recent events). */
+  payload?: string | null;
+  error?: string | null;
+}
+
 export type SidecarCommand =
   | CreateSessionCommand
   | DestroySessionCommand
@@ -212,7 +231,9 @@ export type SidecarCommand =
   | ExtensionUIResponseCommand
   | SetCustomPromptCommand
   | KeeperRunCommand
-  | MemorySearchResponseCommand;
+  | MemorySearchResponseCommand
+  | ExecutorControlCommand
+  | RecallActionsResponseCommand;
 
 // ── Events (Sidecar → Rust via stdout) ──
 
@@ -311,6 +332,23 @@ export interface KeeperResultEvent {
   error?: string;
 }
 
+/** MON-128 (P3): the chat organ requested a handoff — Rust builds the
+ * verbatim conversation slice since the last watermark and injects it into
+ * the executor (prompt when idle, followUp when streaming). */
+export interface ChatHandoffRequestEvent {
+  type: "chat_handoff_request";
+  agentId: string;
+}
+
+/** MON-128: chat tool bridge — ask Rust for working memory + recent
+ * timeline events. Rust answers with recall_actions_response. */
+export interface RecallActionsRequestEvent {
+  type: "recall_actions_request";
+  agentId: string;
+  requestId: string;
+  limit?: number | null;
+}
+
 export interface MemorySearchRequestEvent {
   type: "memory_search_request";
   agentId: string;
@@ -334,4 +372,6 @@ export type SidecarEvent =
   | SidecarErrorEvent
   | ClassificationEvent
   | KeeperResultEvent
-  | MemorySearchRequestEvent;
+  | MemorySearchRequestEvent
+  | ChatHandoffRequestEvent
+  | RecallActionsRequestEvent;

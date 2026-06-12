@@ -451,6 +451,41 @@ pub(super) async fn handle_sidecar_event(
             }
         }
 
+        // MON-128 (P3): chat organ requested a handoff — heavy lifting
+        // (slice build + injection) runs on the manager via the dispatcher.
+        SidecarEvent::ChatHandoffRequest { agent_id } => {
+            if dispatch_tx
+                .send(InternalDispatch::ChatHandoff { agent_id })
+                .await
+                .is_err()
+            {
+                eprintln!("[monarch] dispatcher closed, dropping chat handoff");
+            }
+        }
+
+        // MON-128: chat organ's recall_actions tool — answer with working
+        // memory + recent timeline events, formatted as a text block.
+        SidecarEvent::RecallActionsRequest {
+            agent_id,
+            request_id,
+            limit,
+        } => {
+            let payload = build_recall_payload(db, &agent_id, limit.unwrap_or(20)).await;
+            let command = SidecarCommand::RecallActionsResponse {
+                agent_id,
+                request_id,
+                payload: Some(payload),
+                error: None,
+            };
+            if dispatch_tx
+                .send(InternalDispatch::SendSidecarCommand { command })
+                .await
+                .is_err()
+            {
+                eprintln!("[monarch] dispatcher closed, dropping recall response");
+            }
+        }
+
         SidecarEvent::Unknown { raw } => {
             // Envelope-level unknown — the sidecar shipped a top-level
             // message type the Rust side doesn't recognize. Flip desync for
@@ -502,7 +537,15 @@ async fn current_objective_for_event(
         // MON-124: tool calls and decisions with no current objective land on
         // the agent's scratch objective instead of being dropped — unscoped
         // work is still part of the record.
-        InnerEvent::ToolExecutionStart { .. } | InnerEvent::ExecutorDecision { .. } => {
+        // MON-128: control-plane + chat observations follow the same
+        // scratch-fallback rule — a pause/stop/observation on unscoped work
+        // is still part of the record.
+        InnerEvent::ToolExecutionStart { .. }
+        | InnerEvent::ExecutorDecision { .. }
+        | InnerEvent::ExecutorPaused { .. }
+        | InnerEvent::ExecutorResumed { .. }
+        | InnerEvent::ExecutorStopped { .. }
+        | InnerEvent::ChatObservation { .. } => {
             match db
                 .get_agent_current_objective_id_internal(agent_id)
                 .await
@@ -745,4 +788,66 @@ async fn mark_desynced_for_role(
     drop(guard);
 
     emit_state_event(app, ws_tx, &entry.topic, &snapshot);
+}
+
+/// MON-128 (P3): format the chat organ's view of "what is the executor
+/// doing" — L2 working memory plus recent top-level timeline events. Plain
+/// text, newest-last, bounded; consumed verbatim as a tool result.
+async fn build_recall_payload(db: &Arc<Database>, agent_id: &str, limit: u32) -> String {
+    let mut out = String::new();
+
+    match db.get_working_memory_internal(agent_id).await {
+        Ok(Some(wm)) => {
+            out.push_str("## Working memory\n");
+            if !wm.current_objective_path.is_empty() {
+                out.push_str(&format!(
+                    "Objective: {}\n",
+                    wm.current_objective_path.join(" › ")
+                ));
+            }
+            match &wm.current_action {
+                Some(action) => out.push_str(&format!("Current action: {}\n", action.intent)),
+                None => out.push_str("Current action: (none — between actions or idle)\n"),
+            }
+            for recent in wm.recent_actions.iter().take(5) {
+                let outcome = if recent.outcome.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — {}", recent.outcome)
+                };
+                out.push_str(&format!("Recent: {}{}\n", recent.intent, outcome));
+            }
+        }
+        _ => out.push_str("## Working memory\n(none recorded)\n"),
+    }
+
+    match db
+        .list_agent_timeline_internal(agent_id, None, limit.clamp(1, 50))
+        .await
+    {
+        Ok(page) if !page.entries.is_empty() => {
+            out.push_str("\n## Recent timeline events (newest first)\n");
+            for event in page.entries.iter() {
+                let detail = event
+                    .payload_json
+                    .as_deref()
+                    .and_then(|p| serde_json::from_str::<serde_json::Value>(p).ok())
+                    .and_then(|v| {
+                        ["intent", "outcome", "decision", "observation", "summary"]
+                            .iter()
+                            .find_map(|k| {
+                                v.get(k).and_then(|s| s.as_str()).map(|s| s.to_string())
+                            })
+                    })
+                    .unwrap_or_default();
+                out.push_str(&format!(
+                    "- [{}] {} {}\n",
+                    event.created_at, event.event_type, detail
+                ));
+            }
+        }
+        _ => out.push_str("\n## Recent timeline events\n(none)\n"),
+    }
+
+    out
 }

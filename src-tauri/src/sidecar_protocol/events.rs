@@ -54,6 +54,25 @@ pub enum InnerEvent {
         summary: String,
         content: String,
     },
+    /// MON-128 (P3): executor control plane. Emitted on the EXECUTOR stream
+    /// by the sidecar's pause-gate machinery — `by` says who requested it
+    /// (`"chat"` organ or `"captain"` UI).
+    ExecutorPaused {
+        reason: Option<String>,
+        by: String,
+    },
+    ExecutorResumed {
+        by: String,
+    },
+    ExecutorStopped {
+        reason: Option<String>,
+        by: String,
+    },
+    /// MON-128 (P3): durable observation surfaced from the chat organ onto
+    /// the work timeline (`surface_observation` tool).
+    ChatObservation {
+        observation: String,
+    },
     ActionTransition {
         intent: String,
         previous_outcome: Option<String>,
@@ -164,6 +183,25 @@ enum KnownInnerEvent {
         summary: String,
         content: String,
     },
+    ExecutorPaused {
+        #[serde(default)]
+        reason: Option<String>,
+        #[serde(default)]
+        by: String,
+    },
+    ExecutorResumed {
+        #[serde(default)]
+        by: String,
+    },
+    ExecutorStopped {
+        #[serde(default)]
+        reason: Option<String>,
+        #[serde(default)]
+        by: String,
+    },
+    ChatObservation {
+        observation: String,
+    },
     ActionTransition {
         intent: String,
         #[serde(default)]
@@ -264,6 +302,12 @@ impl From<KnownInnerEvent> for InnerEvent {
                 summary,
                 content,
             },
+            KnownInnerEvent::ExecutorPaused { reason, by } => Self::ExecutorPaused { reason, by },
+            KnownInnerEvent::ExecutorResumed { by } => Self::ExecutorResumed { by },
+            KnownInnerEvent::ExecutorStopped { reason, by } => Self::ExecutorStopped { reason, by },
+            KnownInnerEvent::ChatObservation { observation } => {
+                Self::ChatObservation { observation }
+            }
             KnownInnerEvent::ActionTransition {
                 intent,
                 previous_outcome,
@@ -315,6 +359,10 @@ const KNOWN_INNER_TAGS: &[&str] = &[
     "tool_execution_start",
     "tool_execution_end",
     "memory_suggestion",
+    "executor_paused",
+    "executor_resumed",
+    "executor_stopped",
+    "chat_observation",
     "action_transition",
     "action_complete",
     "executor_decision",
@@ -423,6 +471,19 @@ pub enum SidecarEvent {
         query: String,
         top_k: Option<u32>,
     },
+    /// MON-128 (P3): the chat organ called `hand_to_executor` — Rust builds
+    /// the verbatim conversation slice since the last watermark and injects
+    /// it into the executor session.
+    ChatHandoffRequest {
+        agent_id: String,
+    },
+    /// MON-128: chat organ's `recall_actions` tool asks for working memory +
+    /// recent timeline events. Answered with `RecallActionsResponse`.
+    RecallActionsRequest {
+        agent_id: String,
+        request_id: String,
+        limit: Option<u32>,
+    },
     Unknown {
         raw: Value,
     },
@@ -523,6 +584,15 @@ enum KnownSidecarEvent {
         query: String,
         #[serde(default)]
         top_k: Option<u32>,
+    },
+    ChatHandoffRequest {
+        agent_id: String,
+    },
+    RecallActionsRequest {
+        agent_id: String,
+        request_id: String,
+        #[serde(default)]
+        limit: Option<u32>,
     },
 }
 
@@ -625,6 +695,18 @@ impl From<KnownSidecarEvent> for SidecarEvent {
                 query,
                 top_k,
             },
+            KnownSidecarEvent::ChatHandoffRequest { agent_id } => {
+                Self::ChatHandoffRequest { agent_id }
+            }
+            KnownSidecarEvent::RecallActionsRequest {
+                agent_id,
+                request_id,
+                limit,
+            } => Self::RecallActionsRequest {
+                agent_id,
+                request_id,
+                limit,
+            },
         }
     }
 }
@@ -638,6 +720,8 @@ const KNOWN_SIDECAR_TAGS: &[&str] = &[
     "classification",
     "keeper_result",
     "memory_search_request",
+    "chat_handoff_request",
+    "recall_actions_request",
 ];
 
 impl<'de> Deserialize<'de> for SidecarEvent {
@@ -929,6 +1013,25 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
         InnerEvent::QueueUpdate => ApplyOutcome::NoOp,
         InnerEvent::ToolExecutionUpdate => ApplyOutcome::NoOp,
         InnerEvent::MemorySuggestion { .. } => ApplyOutcome::NoOp,
+        // MON-128 (P3): executor control plane → paused flag on live state.
+        // The pause engages at the next tool boundary sidecar-side; the flag
+        // here drives the NOW-strip affordance and chat-shadow status reads.
+        InnerEvent::ExecutorPaused { reason, .. } => {
+            state.executor_paused = true;
+            state.executor_pause_reason = reason.clone();
+            ApplyOutcome::EmitNow
+        }
+        InnerEvent::ExecutorResumed { .. } => {
+            state.executor_paused = false;
+            state.executor_pause_reason = None;
+            ApplyOutcome::EmitNow
+        }
+        InnerEvent::ExecutorStopped { .. } => {
+            state.executor_paused = false;
+            state.executor_pause_reason = None;
+            ApplyOutcome::EmitNow
+        }
+        InnerEvent::ChatObservation { .. } => ApplyOutcome::NoOp,
         InnerEvent::ActionTransition { .. } => ApplyOutcome::NoOp,
         InnerEvent::ActionComplete { .. } => ApplyOutcome::NoOp,
         InnerEvent::ExecutorDecision { .. } => ApplyOutcome::NoOp,
