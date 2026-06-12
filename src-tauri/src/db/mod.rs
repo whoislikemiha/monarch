@@ -32,7 +32,9 @@ pub use agents::{
 };
 
 // sessions
-pub use sessions::{MessageAttachmentRow, MessageRow, SessionRow, SessionSummary};
+pub use sessions::{MessageAttachmentRow, MessageRow, SessionRow};
+#[allow(unused_imports)]
+pub use sessions::SessionSummary;
 pub use sessions::{
     db_create_session, db_get_messages, db_get_messages_with_ancestry, db_get_sessions,
     db_list_session_summaries, db_save_message, db_set_session_title,
