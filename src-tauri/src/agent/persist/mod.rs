@@ -35,7 +35,7 @@ use super::event_handler::mark_agent_desynced;
 use super::manager::AgentStateEntry;
 use super::WsBroadcast;
 
-pub(crate) use messages::{build_persist_commands, harvest_narration_intent, EventDurations};
+pub(crate) use messages::{build_persist_commands, EventDurations};
 
 /// MON-75: raw image content extracted from a user `message_end`,
 /// awaiting the parent message's DB id before it can be written to disk

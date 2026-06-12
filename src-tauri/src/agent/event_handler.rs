@@ -451,14 +451,6 @@ async fn current_objective_for_event(
         InnerEvent::ActionTransition { intent, .. } => {
             resolve_narration_objective(app, ws_tx, db, agent_id, intent).await
         }
-        // MON-124: a working assistant turn (text + real tool calls) harvests
-        // its trailing sentence as narration — resolve the objective the same
-        // way explicit narration does so the ActionTransition command built
-        // from this MessageEnd has somewhere to land.
-        InnerEvent::MessageEnd { message, .. } if message.role == "assistant" => {
-            let intent = crate::agent::persist::harvest_narration_intent(message.content.as_ref())?;
-            resolve_narration_objective(app, ws_tx, db, agent_id, &intent).await
-        }
         InnerEvent::ActionComplete { .. } => None,
         _ => None,
     }

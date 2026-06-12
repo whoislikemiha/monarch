@@ -62,67 +62,6 @@ pub(super) fn extract_image_attachments(
     (Some(serde_json::Value::Array(kept)), attachments)
 }
 
-/// MON-124: auto-harvested narration. When an assistant message contains
-/// process-talk text followed by real (non-meta) tool calls, that text IS
-/// the narration — the agent saying "now I'll check the auth handler" before
-/// acting, exactly how a person follows an agent's work. Returns the intent
-/// headline, or `None` when the message has no world-mutating/reading tool
-/// calls, no text, or narrates explicitly (`set_current_action` /
-/// `complete_action` win over the harvest).
-pub(crate) fn harvest_narration_intent(content: Option<&serde_json::Value>) -> Option<String> {
-    let blocks = content?.as_array()?;
-    let mut has_world_tool = false;
-    let mut last_text: Option<&str> = None;
-    for block in blocks {
-        match block.get("type").and_then(|t| t.as_str()) {
-            Some("text") => {
-                if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
-                    if !t.trim().is_empty() {
-                        last_text = Some(t);
-                    }
-                }
-            }
-            Some("toolCall") => {
-                let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                if matches!(name, "set_current_action" | "complete_action") {
-                    return None;
-                }
-                if !is_narration_tool(name) {
-                    has_world_tool = true;
-                }
-            }
-            _ => {}
-        }
-    }
-    if !has_world_tool {
-        return None;
-    }
-    // The last non-empty line of the trailing text block sits closest to the
-    // tool calls it introduces — that's the headline candidate. Questions are
-    // dialogue, not narration (surface routing: question → chat), so a line
-    // ending in "?" never becomes a headline; better no harvest than a chat
-    // sentence on the timeline.
-    let line = last_text?
-        .lines()
-        .rev()
-        .map(|l| l.trim().trim_start_matches(['-', '*', '#', '>']).trim())
-        .find(|l| !l.is_empty() && !l.ends_with('?'))?;
-    // A headline is one sentence, not a paragraph.
-    let sentence = match line.find(". ") {
-        Some(i) => &line[..i + 1],
-        None => line,
-    };
-    let sentence = sentence.trim_end_matches(':').trim();
-    if sentence.is_empty() {
-        return None;
-    }
-    Some(if sentence.chars().count() <= 120 {
-        sentence.to_string()
-    } else {
-        format!("{}…", sentence.chars().take(119).collect::<String>())
-    })
-}
-
 /// MON-71: wall-clock durations pre-computed against the live state snapshot
 /// from before the event was applied. `turn_duration_ms` is the finalized
 /// turn duration at `MessageEnd`; `tool_duration_ms` is the finalized tool
@@ -219,25 +158,6 @@ pub(crate) fn build_persist_commands(
             } else {
                 None
             };
-
-            // MON-124: harvest the trailing process sentence of a working
-            // assistant turn as the current action's intent, so the timeline
-            // narrates even when the model never calls set_current_action.
-            // The objective was resolved upstream (current → auto-create →
-            // scratch) by `current_objective_for_event`.
-            if role == "assistant" {
-                if let (Some(intent), Some(objective_id)) = (
-                    harvest_narration_intent(content_value.as_ref()),
-                    current_objective_id.clone(),
-                ) {
-                    cmds.push(PersistCommand::ActionTransition {
-                        agent_id: agent_id.to_string(),
-                        objective_id,
-                        intent,
-                        previous_outcome: None,
-                    });
-                }
-            }
 
             cmds.push(PersistCommand::SaveAssistantMessage {
                 agent_id: agent_id.to_string(),
