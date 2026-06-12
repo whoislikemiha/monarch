@@ -98,21 +98,28 @@ pub(crate) fn harvest_narration_intent(content: Option<&serde_json::Value>) -> O
         return None;
     }
     // The last non-empty line of the trailing text block sits closest to the
-    // tool calls it introduces — that's the headline, not the whole essay.
+    // tool calls it introduces — that's the headline candidate. Questions are
+    // dialogue, not narration (surface routing: question → chat), so a line
+    // ending in "?" never becomes a headline; better no harvest than a chat
+    // sentence on the timeline.
     let line = last_text?
         .lines()
         .rev()
-        .map(str::trim)
-        .find(|l| !l.is_empty())?
-        .trim_start_matches(['-', '*', '#', '>'])
-        .trim();
-    if line.is_empty() {
+        .map(|l| l.trim().trim_start_matches(['-', '*', '#', '>']).trim())
+        .find(|l| !l.is_empty() && !l.ends_with('?'))?;
+    // A headline is one sentence, not a paragraph.
+    let sentence = match line.find(". ") {
+        Some(i) => &line[..i + 1],
+        None => line,
+    };
+    let sentence = sentence.trim_end_matches(':').trim();
+    if sentence.is_empty() {
         return None;
     }
-    Some(if line.chars().count() <= 160 {
-        line.to_string()
+    Some(if sentence.chars().count() <= 120 {
+        sentence.to_string()
     } else {
-        format!("{}…", line.chars().take(159).collect::<String>())
+        format!("{}…", sentence.chars().take(119).collect::<String>())
     })
 }
 
