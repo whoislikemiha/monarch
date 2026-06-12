@@ -88,8 +88,11 @@
     return ids;
   });
 
-  /** The in-flight action (newest top-level entry, no outcome child yet). */
+  /** The in-flight action: newest top-level entry, no outcome child, AND the
+   * agent is actually working. An unclosed action on an idle agent is not
+   * active — it renders unresolved (dashed), with no ticking clock. */
   let activeActionId = $derived.by(() => {
+    if (!streaming) return null;
     const first = tl?.entries[0];
     if (!first || first.eventType !== "coherent_action") return null;
     const children = tl?.childrenByParent.get(first.id) ?? [];
@@ -327,7 +330,11 @@
               <div class="act-wrap" class:flash={flashId === a.eventId} data-action-id={a.eventId}>
                 <TimelineAction
                   action={a}
-                  phase={a.eventId === activeActionId ? "active" : a.autoClosed ? "auto" : "done"}
+                  phase={a.eventId === activeActionId
+                    ? "active"
+                    : a.autoClosed || (!a.outcome && !a.completedAt)
+                      ? "auto"
+                      : "done"}
                   tools={liveToolsFor(a)}
                   {nowMs}
                   onask={onask
