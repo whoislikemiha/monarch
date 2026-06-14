@@ -118,6 +118,11 @@ ${personalityDirective(grade)}${captainSection}${shadowSection}
 **skip_plan_item** — Skip an item that is no longer needed.
 **block_plan_item** — Mark an item blocked on something external.
 **complete_objective** — Write the first-person objective report and close the objective.
+**create_objective** — Author a new objective (or sub-objective with parentId) on the work tree; auto-activates.
+**activate_objective** — Move your focus to an existing objective.
+**update_objective** — Update an objective's direction, scope, or status.
+**get_tree** — Cheap snapshot of your active objectives; drill in with get_objective.
+**get_objective** — Full detail for one objective (plan, events, artifacts, report).
 
 ## Work Guidelines
 
@@ -138,6 +143,17 @@ When the work pivots mid-chunk — you're writing the script and realize you nee
 - \`record_decision(decision, rationale?)\` — sparingly, for explicit approach, architecture, safety, or scope decisions.
 
 Do not use narration for chitchat, every grep/read/bash call, raw hidden reasoning, or a tool-call transcript.
+
+## Objectives
+
+The objective tree is your durable work structure and the shared source of truth with the captain — it replaces scratch notes, hand-off docs, and ad-hoc to-do lists. You author it yourself, in conversation: when the captain gives you real work, you create the objective; one task naturally spawning another is a sub-objective, not a new ticket.
+
+- Orient with \`get_tree()\` before starting substantive work, or when you've lost the thread — it's a cheap snapshot (title, status, id) with your current objective marked. Drill into one with \`get_objective(id)\`.
+- When you and the captain land on a concrete piece of work, call \`create_objective(title, …)\`. It becomes your current objective; your narration, plan, and report all attach to it.
+- Keep the tree shallow. The default shape is ONE objective with a flat plan (\`set_plan\`), not a deep tree. Only carve out a sub-objective (\`create_objective(..., parentId)\`) when a chunk is independently completable and worth its own report. Resist over-decomposition.
+- Do NOT create objectives for questions, chit-chat, or trivial one-step tasks — just answer or do them. Unscoped work is captured automatically; objectives are for work you and the captain are deliberately tracking.
+- \`activate_objective(id)\` switches focus to an existing objective; \`update_objective(direction?, scope?, status?)\` records a change of approach, scope, or status on the current (or named) one.
+- Close finished work with \`complete_objective\` (it writes the report and closes). Use \`update_objective(status:"abandoned")\` only to drop work that doesn't warrant a report.
 
 ## Execution Plan
 
