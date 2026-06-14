@@ -386,6 +386,40 @@ pub(super) async fn handle_sidecar_event(
             }
         }
 
+        SidecarEvent::ObjectiveQueryRequest {
+            agent_id,
+            request_id,
+            kind,
+            objective_id,
+        } => {
+            let (text, error) =
+                match build_objective_query_payload(db, &agent_id, &kind, objective_id.as_deref())
+                    .await
+                {
+                    Ok(text) => (text, None),
+                    Err(e) => {
+                        eprintln!(
+                            "[monarch] objective query failed for {} request {}: {:?}",
+                            agent_id, request_id, e
+                        );
+                        (String::new(), Some(e.to_string()))
+                    }
+                };
+            let command = SidecarCommand::ObjectiveQueryResponse {
+                agent_id,
+                request_id,
+                text,
+                error,
+            };
+            if dispatch_tx
+                .send(InternalDispatch::SendSidecarCommand { command })
+                .await
+                .is_err()
+            {
+                eprintln!("[monarch] dispatcher closed, dropping objective query response");
+            }
+        }
+
         SidecarEvent::Unknown { raw } => {
             // Envelope-level unknown — the sidecar shipped a top-level
             // message type the Rust side doesn't recognize. Flip desync for
@@ -509,6 +543,155 @@ async fn resolve_narration_objective(
             None
         }
     }
+}
+
+/// MON-129: answer a sidecar navigation read. `kind` is `"detail"` (drill-down
+/// for `objective_id`) or `"tree"` (the cheap snapshot). Result is formatted
+/// text the chat model reads directly.
+async fn build_objective_query_payload(
+    db: &Arc<Database>,
+    agent_id: &str,
+    kind: &str,
+    objective_id: Option<&str>,
+) -> Result<String, crate::error::MonarchError> {
+    match kind {
+        "detail" => match objective_id {
+            Some(id) => build_objective_detail(db, id).await,
+            None => Ok("get_objective requires an objective_id.".to_string()),
+        },
+        _ => build_tree_snapshot(db, agent_id).await,
+    }
+}
+
+/// MON-129: cheap tree snapshot — active objectives only (terminal nodes drop
+/// out, except the current one), indented by depth, current marked with `→`.
+/// Reuses the campaign-tree fetch and projects to title/status/id so the model
+/// can drill in with get_objective(id).
+async fn build_tree_snapshot(
+    db: &Arc<Database>,
+    agent_id: &str,
+) -> Result<String, crate::error::MonarchError> {
+    let current = db.get_agent_current_objective_id_internal(agent_id).await?;
+    // Root = the current objective's tree root, else the agent's campaign root.
+    let root_id: Option<String> = if let Some(cur) = &current {
+        db.get_objective_internal(cur).await?.map(|o| o.root_id)
+    } else {
+        db.get_campaign_root_for_agent_internal(agent_id)
+            .await?
+            .map(|o| o.id)
+    };
+    let nodes = match &root_id {
+        Some(r) => db.get_objective_tree_for_root_internal(r).await?,
+        None => db.list_objectives_for_agent_internal(agent_id).await?,
+    };
+
+    let is_terminal =
+        |s: &str| matches!(s, "done" | "verified" | "abandoned" | "superseded");
+    let by_id: std::collections::HashMap<&str, &crate::db::ObjectiveRow> =
+        nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    // Depth = number of non-campaign ancestors (campaign root is not rendered).
+    let depth = |n: &crate::db::ObjectiveRow| -> usize {
+        let mut d = 0usize;
+        let mut cur = n.parent_id.as_deref();
+        while let Some(pid) = cur {
+            match by_id.get(pid) {
+                Some(p) if p.kind != "campaign" => {
+                    d += 1;
+                    cur = p.parent_id.as_deref();
+                }
+                _ => break,
+            }
+        }
+        d
+    };
+
+    let mut out =
+        String::from("Active objectives (→ = current; drill in with get_objective(id)):\n");
+    let mut shown = 0usize;
+    for n in &nodes {
+        if n.kind == "campaign" {
+            continue;
+        }
+        let is_current = current.as_deref() == Some(n.id.as_str());
+        if is_terminal(&n.status) && !is_current {
+            continue;
+        }
+        let indent = "  ".repeat(depth(n));
+        let marker = if is_current { "→" } else { "-" };
+        out.push_str(&format!(
+            "{indent}{marker} {} — {}  id={}\n",
+            n.title, n.status, n.id
+        ));
+        shown += 1;
+    }
+    if shown == 0 {
+        return Ok(
+            "No active objectives yet. Plan with the captain, then call create_objective to start one."
+                .to_string(),
+        );
+    }
+    Ok(out)
+}
+
+/// MON-129: objective drill-down — node metadata + plan + recent events +
+/// artifacts + report, composed from the existing readers.
+async fn build_objective_detail(
+    db: &Arc<Database>,
+    objective_id: &str,
+) -> Result<String, crate::error::MonarchError> {
+    let Some(node) = db.get_objective_internal(objective_id).await? else {
+        return Ok(format!("No objective with id={objective_id}."));
+    };
+    let mut out = format!(
+        "# {}\nid={}  status={}  kind={}\n",
+        node.title, node.id, node.status, node.kind
+    );
+    if let Some(d) = node.current_direction.as_deref().filter(|s| !s.trim().is_empty()) {
+        out.push_str(&format!("Direction: {d}\n"));
+    }
+    if let Some(s) = node.scope.as_deref().filter(|s| !s.trim().is_empty()) {
+        out.push_str(&format!("Scope: {s}\n"));
+    }
+    if let Some(r) = node.rationale.as_deref().filter(|s| !s.trim().is_empty()) {
+        out.push_str(&format!("Rationale: {r}\n"));
+    }
+    if let Some(desc) = node.description.as_deref().filter(|s| !s.trim().is_empty()) {
+        out.push_str(&format!("Description: {desc}\n"));
+    }
+
+    let items = db.list_plan_items_internal(objective_id).await?;
+    if !items.is_empty() {
+        out.push_str("\nPlan:\n");
+        for it in &items {
+            out.push_str(&format!("  [{}] {}\n", it.status, it.title));
+        }
+    }
+
+    let events = db.list_objective_events_internal(objective_id).await?;
+    if !events.is_empty() {
+        out.push_str("\nRecent events (newest first):\n");
+        for e in events.iter().rev().take(12) {
+            out.push_str(&format!("  {} {}\n", e.created_at, e.event_type));
+        }
+    }
+
+    let refs = db.list_objective_refs_internal(objective_id).await?;
+    if !refs.is_empty() {
+        out.push_str("\nArtifacts:\n");
+        for r in &refs {
+            let label = r.label.clone().unwrap_or_else(|| r.ref_type.clone());
+            out.push_str(&format!("  {} → {}\n", label, r.target));
+        }
+    }
+
+    if let Some(report) = db
+        .get_objective_report_by_objective_internal(objective_id)
+        .await?
+    {
+        out.push_str(&format!("\nReport:\n{}\n", report.payload));
+    }
+
+    Ok(out)
 }
 
 /// MON-30: body of the debounce task, factored out so it can be unit-tested

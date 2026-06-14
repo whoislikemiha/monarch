@@ -113,4 +113,14 @@ pub enum SidecarCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    /// MON-129: Rust response to a sidecar `objective_query_request`. `text`
+    /// is the formatted tree snapshot or objective detail; the sidecar returns
+    /// it to the model as the tool result.
+    ObjectiveQueryResponse {
+        agent_id: String,
+        request_id: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
 }

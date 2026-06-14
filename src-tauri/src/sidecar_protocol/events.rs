@@ -495,6 +495,15 @@ pub enum SidecarEvent {
         query: String,
         top_k: Option<u32>,
     },
+    /// MON-129: sidecar navigation read. `kind` is `"tree"` (cheap snapshot)
+    /// or `"detail"` (drill-down for `objective_id`). Rust formats the result
+    /// and answers with `ObjectiveQueryResponse`.
+    ObjectiveQueryRequest {
+        agent_id: String,
+        request_id: String,
+        kind: String,
+        objective_id: Option<String>,
+    },
     Unknown {
         raw: Value,
     },
@@ -586,6 +595,13 @@ enum KnownSidecarEvent {
         #[serde(default)]
         top_k: Option<u32>,
     },
+    ObjectiveQueryRequest {
+        agent_id: String,
+        request_id: String,
+        kind: String,
+        #[serde(default)]
+        objective_id: Option<String>,
+    },
 }
 
 impl From<KnownSidecarEvent> for SidecarEvent {
@@ -659,6 +675,17 @@ impl From<KnownSidecarEvent> for SidecarEvent {
                 query,
                 top_k,
             },
+            KnownSidecarEvent::ObjectiveQueryRequest {
+                agent_id,
+                request_id,
+                kind,
+                objective_id,
+            } => Self::ObjectiveQueryRequest {
+                agent_id,
+                request_id,
+                kind,
+                objective_id,
+            },
         }
     }
 }
@@ -672,6 +699,7 @@ const KNOWN_SIDECAR_TAGS: &[&str] = &[
     "classification",
     "keeper_result",
     "memory_search_request",
+    "objective_query_request",
 ];
 
 impl<'de> Deserialize<'de> for SidecarEvent {
