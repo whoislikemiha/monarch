@@ -208,7 +208,7 @@ pub(super) async fn handle_sidecar_event(
             // ToolExecution — peeking after would see the mutation.
             let durations = compute_event_durations(live_states, &agent_id, &inner_event).await;
             let current_objective_id =
-                current_objective_for_event(app, ws_tx, db, &agent_id, &inner_event).await;
+                current_objective_for_event(db, &agent_id, &inner_event).await;
             for cmd in build_persist_commands(
                 &agent_id,
                 session_id,
@@ -456,8 +456,6 @@ pub(super) async fn push_status_for_agent(
 }
 
 async fn current_objective_for_event(
-    app: &AppHandle,
-    ws_tx: &broadcast::Sender<WsBroadcast>,
     db: &Arc<Database>,
     agent_id: &str,
     event: &InnerEvent,
@@ -482,24 +480,19 @@ async fn current_objective_for_event(
                 None => db.ensure_scratch_objective_internal(agent_id).await.ok(),
             }
         }
-        InnerEvent::ActionTransition { intent, .. } => {
-            resolve_narration_objective(app, ws_tx, db, agent_id, intent).await
+        InnerEvent::ActionTransition { .. } => {
+            resolve_narration_objective(db, agent_id).await
         }
         InnerEvent::ActionComplete { .. } => None,
         _ => None,
     }
 }
 
-/// Narration needs an objective: the agent's current one, else auto-create
-/// from the intent (project agents, MON-105), else the per-agent scratch
-/// objective (project-less — MON-124).
-async fn resolve_narration_objective(
-    app: &AppHandle,
-    ws_tx: &broadcast::Sender<WsBroadcast>,
-    db: &Arc<Database>,
-    agent_id: &str,
-    intent: &str,
-) -> Option<String> {
+/// Narration needs an objective: the agent's current one — which the agent
+/// sets itself via create_objective / activate_objective (MON-129) — else the
+/// per-agent scratch objective so unscoped work is still recorded (MON-124).
+/// Objectives are no longer auto-created from the turn; the agent authors them.
+async fn resolve_narration_objective(db: &Arc<Database>, agent_id: &str) -> Option<String> {
     if let Some(qid) = db
         .get_agent_current_objective_id_internal(agent_id)
         .await
@@ -508,41 +501,7 @@ async fn resolve_narration_objective(
     {
         return Some(qid);
     }
-    let title = intent.trim();
-    if title.is_empty() {
-        return None;
-    }
-    match db
-        .auto_create_current_objective_internal(agent_id, title, None)
-        .await
-    {
-        Ok(Some(qid)) => {
-            let payload = serde_json::json!({ "id": qid, "agentId": agent_id });
-            emit_event(
-                app,
-                ws_tx,
-                &format!("objective-created-{}", qid),
-                &payload.to_string(),
-            );
-            emit_event(
-                app,
-                ws_tx,
-                &format!("objective-created-for-agent-{}", agent_id),
-                &payload.to_string(),
-            );
-            Some(qid)
-        }
-        // No project → no campaign to branch under: the scratch objective is
-        // the durable home for unscoped narration.
-        Ok(None) => db.ensure_scratch_objective_internal(agent_id).await.ok(),
-        Err(e) => {
-            eprintln!(
-                "[monarch] P4 action narration could not create objective for {}: {:?}",
-                agent_id, e
-            );
-            None
-        }
-    }
+    db.ensure_scratch_objective_internal(agent_id).await.ok()
 }
 
 /// MON-129: answer a sidecar navigation read. `kind` is `"detail"` (drill-down

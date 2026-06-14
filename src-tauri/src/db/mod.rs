@@ -1020,68 +1020,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auto_create_branches_under_campaign_root_and_skips_projectless() {
-        let db = Database::new_in_memory().await.expect("db");
-        let now = crate::util::chrono_now();
-
-        // Project-less agent → ephemeral, no objective created.
-        let a0 = test_agent("a0");
-        db.upsert_agent_internal(&a0).await.expect("a0");
-        let none = db
-            .auto_create_current_objective_internal("a0", "do a thing here", None)
-            .await
-            .expect("call");
-        assert_eq!(none, None, "project-less agent stays ephemeral");
-
-        // Agent inside a project.
-        let project_id = db
-            .ensure_project_internal(&crate::db::ProjectRow {
-                id: "p1".into(),
-                name: "Aurora".into(),
-                root_path: "/tmp/aurora".into(),
-                instructions: None,
-                created_at: now.clone(),
-                updated_at: now,
-                root_objective_id: None,
-            })
-            .await
-            .expect("project");
-        let mut a1 = test_agent("a1");
-        a1.project_id = Some(project_id);
-        db.upsert_agent_internal(&a1).await.expect("a1");
-
-        let created = db
-            .auto_create_current_objective_internal("a1", "migrate the auth module", None)
-            .await
-            .expect("call")
-            .expect("created");
-        let row = db
-            .get_objective_internal(&created)
-            .await
-            .expect("get")
-            .expect("row");
-        let campaign = db
-            .get_project_by_path_internal("/tmp/aurora")
-            .await
-            .expect("p")
-            .expect("row")
-            .root_objective_id
-            .expect("campaign root");
-        assert_eq!(row.kind, "objective");
-        assert_eq!(row.parent_id.as_deref(), Some(campaign.as_str()), "branch under campaign");
-        assert_eq!(row.root_id, campaign, "root_id is the campaign, not self");
-        assert_ne!(row.root_id, created, "not a fresh per-turn root");
-        assert_eq!(row.assignee_shadow_id.as_deref(), Some("a1"));
-
-        // A live current objective → second call is a no-op.
-        let again = db
-            .auto_create_current_objective_internal("a1", "another thing entirely", None)
-            .await
-            .expect("call");
-        assert_eq!(again, None, "no second objective while current is live");
-    }
-
-    #[tokio::test]
     async fn get_campaign_root_for_agent_resolves_via_project() {
         let db = Database::new_in_memory().await.expect("db");
         let now = crate::util::chrono_now();

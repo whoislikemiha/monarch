@@ -26,13 +26,10 @@ use crate::sidecar_protocol::{KeeperConfig, LoadSessionMessage, ShadowConfig, Si
 use crate::util::chrono_now;
 
 use super::commands::{ExtensionUiResponseRequest, SpawnAgentRequest};
-use super::event_handler::{emit_event, emit_state_event};
+use super::event_handler::emit_state_event;
 use super::keeper::render_keeper_slice;
 use super::persist::{run_persist_consumer, PersistCommand};
-use super::objective_prompt::{
-    extract_text_from_stored_content, is_meaningful_objective_prompt, prompt_text,
-    objective_description_from_prompt, objective_title_from_prompt, rehydrate_user_content,
-};
+use super::objective_prompt::{extract_text_from_stored_content, rehydrate_user_content};
 use super::sidecar::SidecarProcess;
 use super::{TaskHandle, WsBroadcast};
 
@@ -761,55 +758,8 @@ impl AgentManager {
                 }
             }
         }
-        if let SidecarCommand::Prompt { message, .. } = &cmd {
-            self.maybe_auto_create_objective_for_prompt(app, db, &id, message)
-                .await;
-        }
         self.send_with_recovery(app, db, &serde_json::to_string(&cmd)?)
             .await
-    }
-
-    async fn maybe_auto_create_objective_for_prompt(
-        &self,
-        app: &AppHandle,
-        db: &Arc<Database>,
-        agent_id: &str,
-        message: &serde_json::Value,
-    ) {
-        let text = prompt_text(message);
-        if !is_meaningful_objective_prompt(&text) {
-            return;
-        }
-        let title = objective_title_from_prompt(&text)
-            .unwrap_or_else(|| format!("Task from {}", crate::util::chrono_now()));
-        let description = objective_description_from_prompt(&text);
-        match db
-            .auto_create_current_objective_internal(agent_id, &title, description.as_deref())
-            .await
-        {
-            Ok(Some(objective_id)) => {
-                let payload = serde_json::json!({ "id": objective_id, "agentId": agent_id });
-                emit_event(
-                    app,
-                    &self.ws_broadcast,
-                    &format!("objective-created-{}", objective_id),
-                    &payload.to_string(),
-                );
-                emit_event(
-                    app,
-                    &self.ws_broadcast,
-                    &format!("objective-created-for-agent-{}", agent_id),
-                    &payload.to_string(),
-                );
-            }
-            Ok(None) => {}
-            Err(e) => {
-                eprintln!(
-                    "[monarch] auto objective creation failed for {}: {:?}",
-                    agent_id, e
-                );
-            }
-        }
     }
 
     /// MON-98: Push an updated captain identity payload to all live agent
@@ -1093,7 +1043,6 @@ mod tests {
     use crate::sidecar_protocol::SidecarCommand;
     use crate::websocket::{self, WsState};
     use super::super::keeper::render_keeper_slice;
-    use super::super::objective_prompt::is_meaningful_objective_prompt;
     use tokio::sync::broadcast;
 
     fn seeded_agent_state(agent_id: &str, session_id: &str) -> AgentState {
@@ -1136,26 +1085,6 @@ mod tests {
         // string should not produce a header above nothing.
         let slice = render_keeper_slice(None, &[], &[], Some("   \n   "));
         assert!(!slice.contains("## OBJECTIVE REPORT"));
-    }
-
-    #[test]
-    fn auto_objective_heuristic_ignores_chitchat() {
-        assert!(!is_meaningful_objective_prompt("thanks"));
-        assert!(!is_meaningful_objective_prompt("how are you?"));
-        assert!(!is_meaningful_objective_prompt("ok"));
-    }
-
-    #[test]
-    fn auto_objective_heuristic_accepts_task_prompts() {
-        assert!(is_meaningful_objective_prompt(
-            "fix the failing memory retrieval test"
-        ));
-        assert!(is_meaningful_objective_prompt(
-            "let's set up the auto objective ticket first"
-        ));
-        assert!(is_meaningful_objective_prompt(
-            "Please inspect the Rust sidecar protocol and update the roadmap notes."
-        ));
     }
 
     #[tokio::test]

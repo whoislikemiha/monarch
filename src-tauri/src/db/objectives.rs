@@ -1586,107 +1586,15 @@ impl Database {
         Ok(())
     }
 
-    /// MON-105 / P1: on a meaningful user turn, create an objective as a BRANCH
-    /// under the agent's project campaign root and set it as the agent's current
-    /// objective — but only if there is no active current objective. Returns
-    /// `Some(new_id)` when one was created.
-    ///
-    /// Project-less agents stay ephemeral: no project → no campaign → `Ok(None)`
-    /// (the seam where a future per-captain scratch campaign would hook in —
-    /// roadmap-v2 P1 defers it).
-    pub async fn auto_create_current_objective_internal(
-        &self,
-        agent_id: &str,
-        title: &str,
-        description: Option<&str>,
-    ) -> Result<Option<String>, MonarchError> {
-        let agent_id = agent_id.to_string();
-        let title = title.to_string();
-        let description = description.map(|s| s.to_string());
-        Ok(self
-            .conn
-            .call(move |conn| {
-                let tx = conn.unchecked_transaction()?;
-                // Current objective + project, in one query. `None` row = no
-                // such agent.
-                let row: Option<(Option<String>, Option<String>, Option<String>)> = tx
-                    .query_row(
-                        "SELECT a.current_objective_id, o.status, a.project_id
-                         FROM agents a
-                         LEFT JOIN objective_nodes o ON o.id = a.current_objective_id
-                         WHERE a.id = ?1",
-                        params![agent_id],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                    )
-                    .optional()?;
-                let (current_id, status, project_id) = match row {
-                    Some(t) => t,
-                    None => {
-                        tx.commit()?;
-                        return Ok(None);
-                    }
-                };
-                // A live (non-terminal) current objective → keep it.
-                if let (Some(_), Some(st)) = (&current_id, &status) {
-                    let terminal =
-                        matches!(st.as_str(), "done" | "verified" | "abandoned" | "superseded");
-                    if !terminal {
-                        tx.commit()?;
-                        return Ok(None);
-                    }
-                }
-                // Project-less agents stay ephemeral (no auto-objective).
-                let project_id = match project_id {
-                    Some(p) => p,
-                    None => {
-                        tx.commit()?;
-                        return Ok(None);
-                    }
-                };
-
-                let campaign_root = ensure_campaign_root_tx(&tx, &project_id)?;
-                let id = crate::util::uuid_v4_simple();
-                let event_id = crate::util::uuid_v4_simple();
-                let now = crate::util::chrono_now();
-                // Branch UNDER the campaign root: root_id = parent_id = campaign
-                // (so get_objective_tree_for_root(campaign) returns the whole tree).
-                tx.execute(
-                    "INSERT INTO objective_nodes (
-                        id, root_id, parent_id, title, description,
-                        status, grade, exec_hint, assignee_shadow_id,
-                        created_by, created_at, started_at, kind
-                    ) VALUES (?1, ?2, ?2, ?3, ?4, 'in_progress', 'C', 'in_context', ?5, 'monarch', ?6, ?6, 'objective')",
-                    params![id, campaign_root, title, description, agent_id, now],
-                )?;
-                let event_payload = serde_json::json!({
-                    "from": null,
-                    "to": "in_progress",
-                    "autoCreated": true,
-                })
-                .to_string();
-                tx.execute(
-                    "INSERT INTO objective_events (id, objective_id, event_type, actor, payload_json, created_at)
-                     VALUES (?1, ?2, 'status_change', 'monarch', ?3, ?4)",
-                    params![event_id, id, event_payload, now],
-                )?;
-                tx.execute(
-                    "UPDATE agents SET current_objective_id = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?2",
-                    params![id, agent_id],
-                )?;
-                tx.commit()?;
-                Ok(Some(id))
-            })
-            .await?)
-    }
 }
 
 /// P1: get-or-create a project's campaign root within an existing transaction.
 /// The campaign root is an `objective_nodes` row with `kind='campaign'`,
 /// `parent_id=NULL`, `root_id=self`; never closed/graded/reported. Returns the
 /// existing root when `projects.root_objective_id` points at a live node (the
-/// JOIN guards a dangling pointer), otherwise creates one and links it. Shared
-/// by `ensure_campaign_root_internal` and `auto_create_current_objective_internal`
-/// so both stay atomic with their surrounding work.
+/// JOIN guards a dangling pointer), otherwise creates one and links it. Used by
+/// `ensure_campaign_root_internal` so the campaign-root resolution stays atomic
+/// with its surrounding work.
 fn ensure_campaign_root_tx(
     tx: &rusqlite::Transaction<'_>,
     project_id: &str,
