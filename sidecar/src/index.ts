@@ -87,6 +87,9 @@ async function handleCommand(cmd: SidecarCommand): Promise<void> {
 		case "memory_search_response":
 			manager.handleMemorySearchResponse(cmd.agentId, cmd.requestId, cmd.results, cmd.error);
 			break;
+		case "objective_query_response":
+			manager.handleObjectiveQueryResponse(cmd.agentId, cmd.requestId, cmd.text, cmd.error);
+			break;
 		default:
 			process.stderr.write(
 				`[sidecar] Unknown command type: ${(cmd as any).type}\n`,

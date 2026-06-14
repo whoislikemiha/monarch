@@ -180,6 +180,15 @@ export interface MemorySearchResponseCommand {
   error?: string | null;
 }
 
+/** MON-129: Rust answer to an `objective_query_request` — formatted text. */
+export interface ObjectiveQueryResponseCommand {
+  type: "objective_query_response";
+  agentId: string;
+  requestId: string;
+  text: string;
+  error?: string | null;
+}
+
 export type SidecarCommand =
   | CreateSessionCommand
   | DestroySessionCommand
@@ -193,7 +202,8 @@ export type SidecarCommand =
   | ExtensionUIResponseCommand
   | SetCustomPromptCommand
   | KeeperRunCommand
-  | MemorySearchResponseCommand;
+  | MemorySearchResponseCommand
+  | ObjectiveQueryResponseCommand;
 
 // ── Events (Sidecar → Rust via stdout) ──
 
@@ -294,6 +304,15 @@ export interface MemorySearchRequestEvent {
   topK?: number | null;
 }
 
+/** MON-129: sidecar navigation read; `kind` is `"tree"` or `"detail"`. */
+export interface ObjectiveQueryRequestEvent {
+  type: "objective_query_request";
+  agentId: string;
+  requestId: string;
+  kind: "tree" | "detail";
+  objectiveId?: string | null;
+}
+
 export interface MemorySuggestionInnerEvent {
   type: "memory_suggestion";
   title: string;
@@ -309,4 +328,5 @@ export type SidecarEvent =
   | SidecarErrorEvent
   | ClassificationEvent
   | KeeperResultEvent
-  | MemorySearchRequestEvent;
+  | MemorySearchRequestEvent
+  | ObjectiveQueryRequestEvent;

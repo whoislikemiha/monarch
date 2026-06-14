@@ -18,6 +18,7 @@ import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
 import { createNarrationTools } from "./narration-tools.js";
 import { createPlanTools } from "./plan-tools.js";
 import { createReportTools } from "./report-tools.js";
+import { createObjectiveTools } from "./objective-tools.js";
 import type {
 	ClassifierInvocation,
 	CreateSessionCommand,
@@ -35,6 +36,12 @@ import { createSuggestMemoryTool, formatRelevantMemories } from "./memory-tools.
 interface MemorySearchResolver {
 	agentId: string;
 	resolve: (results: MemorySearchResult[]) => void;
+	timeout: NodeJS.Timeout;
+}
+
+interface ObjectiveQueryResolver {
+	agentId: string;
+	resolve: (text: string) => void;
 	timeout: NodeJS.Timeout;
 }
 
@@ -80,6 +87,7 @@ export class RuntimeManager {
 	 */
 	private pendingClassifications = new Map<string, string[]>();
 	private memorySearchResolvers = new Map<string, MemorySearchResolver>();
+	private objectiveQueryResolvers = new Map<string, ObjectiveQueryResolver>();
 
 	constructor(emit: EmitFn) {
 		this.emit = emit;
@@ -151,6 +159,9 @@ export class RuntimeManager {
 				...createNarrationTools(cmd.agentId, this.emit),
 				...createPlanTools(cmd.agentId, this.emit),
 				...createReportTools(cmd.agentId, this.emit),
+					...createObjectiveTools(cmd.agentId, this.emit, (kind, objectiveId) =>
+						this.requestObjectiveQuery(cmd.agentId, kind, objectiveId),
+					),
 			],
 		});
 
@@ -344,6 +355,13 @@ export class RuntimeManager {
 				this.memorySearchResolvers.delete(requestId);
 			}
 		}
+		for (const [requestId, resolver] of this.objectiveQueryResolvers) {
+			if (resolver.agentId === agentId) {
+				clearTimeout(resolver.timeout);
+				resolver.resolve("(session closed)");
+				this.objectiveQueryResolvers.delete(requestId);
+			}
+		}
 		this.sessions.delete(agentId);
 
 		if (!opts?.silent) this.emit({ type: "session_destroyed", agentId });
@@ -497,6 +515,31 @@ export class RuntimeManager {
 				agentId,
 				requestId,
 				query,
+			});
+		});
+	}
+
+	/** MON-129: ask Rust for an objective navigation read; resolves to the
+	 * formatted text Rust returns. Longer timeout than memory search — these
+	 * touch multiple tables and are not on the user-turn critical path. */
+	private requestObjectiveQuery(
+		agentId: string,
+		kind: "tree" | "detail",
+		objectiveId?: string,
+	): Promise<string> {
+		return new Promise((resolve) => {
+			const requestId = randomUUID();
+			const timeout = setTimeout(() => {
+				this.objectiveQueryResolvers.delete(requestId);
+				resolve("(objective read timed out)");
+			}, 3000);
+			this.objectiveQueryResolvers.set(requestId, { agentId, resolve, timeout });
+			this.emit({
+				type: "objective_query_request",
+				agentId,
+				requestId,
+				kind,
+				objectiveId: objectiveId ?? null,
 			});
 		});
 	}
@@ -698,6 +741,26 @@ export class RuntimeManager {
 		if (resolver) {
 			resolver(value);
 		}
+	}
+
+	handleObjectiveQueryResponse(
+		agentId: string,
+		requestId: string,
+		text: string,
+		error?: string | null,
+	): void {
+		const resolver = this.objectiveQueryResolvers.get(requestId);
+		if (!resolver || resolver.agentId !== agentId) return;
+		clearTimeout(resolver.timeout);
+		this.objectiveQueryResolvers.delete(requestId);
+		if (error) {
+			process.stderr.write(
+				`[sidecar] objective query ${requestId} for ${agentId}: ${error}\n`,
+			);
+			resolver.resolve(`(objective read failed: ${error})`);
+			return;
+		}
+		resolver.resolve(text);
 	}
 
 	handleMemorySearchResponse(
