@@ -4,7 +4,9 @@ use tauri::AppHandle;
 use tokio::sync::broadcast;
 
 use crate::agent::WsBroadcast;
-use crate::db::{Database, MessageRow, RecordObjectiveEventPayload, SetPlanPayload};
+use crate::db::{
+    Database, MessageRow, RecordObjectiveEventPayload, SetPlanPayload, UpdateObjectivePayload,
+};
 use crate::error::MonarchError;
 use crate::memory::index::MemoryIndex;
 use crate::persistence::write_attachment_bytes;
@@ -312,6 +314,50 @@ pub(crate) fn build_persist_commands(
                         items: items.clone(),
                         created_by: Some("executor".to_string()),
                         rationale: rationale.clone(),
+                    },
+                });
+            }
+        }
+        InnerEvent::ObjectiveCreated {
+            id,
+            title,
+            description,
+            parent_id,
+            direction,
+            activate,
+        } => {
+            cmds.push(PersistCommand::CreateObjective {
+                agent_id: agent_id.to_string(),
+                id: id.clone(),
+                title: title.clone(),
+                description: description.clone(),
+                parent_id: parent_id.clone(),
+                direction: direction.clone(),
+                activate: *activate,
+            });
+        }
+        InnerEvent::ObjectiveActivated { objective_id } => {
+            cmds.push(PersistCommand::ActivateObjective {
+                agent_id: agent_id.to_string(),
+                objective_id: objective_id.clone(),
+            });
+        }
+        InnerEvent::ObjectiveUpdated {
+            objective_id,
+            direction,
+            scope,
+            status,
+        } => {
+            // Target the explicit id, else the agent's current objective.
+            if let Some(id) = objective_id.clone().or(current_objective_id) {
+                cmds.push(PersistCommand::UpdateObjective {
+                    agent_id: agent_id.to_string(),
+                    payload: UpdateObjectivePayload {
+                        id,
+                        current_direction: direction.clone(),
+                        scope: scope.clone(),
+                        status: status.clone(),
+                        ..Default::default()
                     },
                 });
             }

@@ -112,7 +112,7 @@ pub struct CreateObjectivePayload {
 /// Payload for `db_update_objective`. Only non-`None` fields are written.
 /// Lifecycle timestamps (`started_at` / `completed_at` / `abandoned_at`)
 /// can be set explicitly by the caller; the Steward owns this in Slice 4+.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateObjectivePayload {
     pub id: String,
@@ -1560,6 +1560,30 @@ impl Database {
             })
             .await?;
         Ok(id_for_return)
+    }
+
+    /// MON-129: set the agent's current objective — the activation primitive
+    /// agents drive directly (`activate_objective` / `create_objective`).
+    /// `current_objective_id` is durable on the agents row, so focus persists
+    /// across turns until the agent moves it. Extracted from the (now-retired)
+    /// auto-create heuristic so activation is agent-owned, not guessed.
+    pub async fn set_agent_current_objective_internal(
+        &self,
+        agent_id: &str,
+        objective_id: &str,
+    ) -> Result<(), MonarchError> {
+        let agent_id = agent_id.to_string();
+        let objective_id = objective_id.to_string();
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE agents SET current_objective_id = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?2",
+                    params![objective_id, agent_id],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
     }
 
     /// MON-105 / P1: on a meaningful user turn, create an objective as a BRANCH

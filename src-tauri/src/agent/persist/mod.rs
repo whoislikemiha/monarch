@@ -25,7 +25,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::db::{
     Database, InsertMemoryPayload, MessageRow, RecordObjectiveEventPayload, SaveClassificationPayload,
-    SetPlanPayload, WriteObjectiveReportPayload,
+    SetPlanPayload, UpdateObjectivePayload, WriteObjectiveReportPayload,
 };
 use crate::error::MonarchError;
 use crate::memory::index::MemoryIndex;
@@ -237,6 +237,29 @@ pub(super) enum PersistCommand {
         item_id: Option<String>,
         reason: String,
     },
+    /// MON-129: agent authored a new objective — a sub-objective when
+    /// `parent_id` is set, else a branch under the agent's campaign root.
+    /// `id` is minted sidecar-side; auto-activates when `activate`.
+    CreateObjective {
+        agent_id: String,
+        id: String,
+        title: String,
+        description: Option<String>,
+        parent_id: Option<String>,
+        direction: Option<String>,
+        activate: bool,
+    },
+    /// MON-129: agent moved focus to an existing objective.
+    ActivateObjective {
+        agent_id: String,
+        objective_id: String,
+    },
+    /// MON-129: agent updated an objective's direction / scope / status.
+    /// `payload.id` is resolved upstream (explicit id, else current objective).
+    UpdateObjective {
+        agent_id: String,
+        payload: UpdateObjectivePayload,
+    },
     /// MON-100: full-rebuild the per-agent HNSW index from current DB
     /// embeddings. Runs last in a Keeper-tick burst so the index is
     /// consistent before the next read. P3d (MON-97) replaces this with
@@ -267,6 +290,9 @@ impl PersistCommand {
             | Self::PlanItemComplete { agent_id, .. }
             | Self::PlanItemSkip { agent_id, .. }
             | Self::PlanItemBlock { agent_id, .. }
+            | Self::CreateObjective { agent_id, .. }
+            | Self::ActivateObjective { agent_id, .. }
+            | Self::UpdateObjective { agent_id, .. }
             | Self::CompleteObjective { agent_id, .. }
             | Self::AttributeObjectiveReport { agent_id, .. } => agent_id,
             Self::SaveClassification { payload } => &payload.agent_id,
@@ -454,6 +480,27 @@ impl PersistCommand {
                 item_id,
                 reason,
             } => objectives::apply_plan_item_block(db, app, ws_tx, agent_id, item_id, reason).await,
+            Self::CreateObjective {
+                agent_id,
+                id,
+                title,
+                description,
+                parent_id,
+                direction,
+                activate,
+            } => {
+                objectives::apply_create_objective(
+                    db, app, ws_tx, agent_id, id, title, description, parent_id, direction, activate,
+                )
+                .await
+            }
+            Self::ActivateObjective {
+                agent_id,
+                objective_id,
+            } => objectives::apply_activate_objective(db, agent_id, objective_id).await,
+            Self::UpdateObjective { payload, .. } => {
+                objectives::apply_update_objective(db, payload).await
+            }
             Self::RebuildHnsw { agent_id } => {
                 messages::apply_rebuild_hnsw(db, memory_index, agent_id).await
             }

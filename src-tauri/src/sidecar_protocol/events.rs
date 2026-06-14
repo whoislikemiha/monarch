@@ -71,6 +71,30 @@ pub enum InnerEvent {
         items: Vec<crate::db::PlanItemInput>,
         rationale: Option<String>,
     },
+    /// MON-129: agent authored a new objective — a sub-objective when
+    /// `parent_id` is set, else a branch under the agent's campaign root.
+    /// `id` is minted sidecar-side; `activate` (default true) makes it the
+    /// agent's current objective.
+    ObjectiveCreated {
+        id: String,
+        title: String,
+        description: Option<String>,
+        parent_id: Option<String>,
+        direction: Option<String>,
+        activate: bool,
+    },
+    /// MON-129: agent moved focus to an existing objective.
+    ObjectiveActivated {
+        objective_id: String,
+    },
+    /// MON-129: agent updated an objective's direction / scope / status.
+    /// `objective_id` None = the agent's current objective.
+    ObjectiveUpdated {
+        objective_id: Option<String>,
+        direction: Option<String>,
+        scope: Option<String>,
+        status: Option<String>,
+    },
     /// P4b: mark a plan item active. The previously active item on the
     /// same objective (if any) is silently reset to pending.
     PlanItemStart {
@@ -182,6 +206,31 @@ enum KnownInnerEvent {
         #[serde(default)]
         rationale: Option<String>,
     },
+    ObjectiveCreated {
+        id: String,
+        title: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        parent_id: Option<String>,
+        #[serde(default)]
+        direction: Option<String>,
+        #[serde(default = "default_true")]
+        activate: bool,
+    },
+    ObjectiveActivated {
+        objective_id: String,
+    },
+    ObjectiveUpdated {
+        #[serde(default)]
+        objective_id: Option<String>,
+        #[serde(default)]
+        direction: Option<String>,
+        #[serde(default)]
+        scope: Option<String>,
+        #[serde(default)]
+        status: Option<String>,
+    },
     PlanItemStart {
         item_id: String,
     },
@@ -280,6 +329,35 @@ impl From<KnownInnerEvent> for InnerEvent {
                 rationale,
             },
             KnownInnerEvent::PlanSet { items, rationale } => Self::PlanSet { items, rationale },
+            KnownInnerEvent::ObjectiveCreated {
+                id,
+                title,
+                description,
+                parent_id,
+                direction,
+                activate,
+            } => Self::ObjectiveCreated {
+                id,
+                title,
+                description,
+                parent_id,
+                direction,
+                activate,
+            },
+            KnownInnerEvent::ObjectiveActivated { objective_id } => {
+                Self::ObjectiveActivated { objective_id }
+            }
+            KnownInnerEvent::ObjectiveUpdated {
+                objective_id,
+                direction,
+                scope,
+                status,
+            } => Self::ObjectiveUpdated {
+                objective_id,
+                direction,
+                scope,
+                status,
+            },
             KnownInnerEvent::PlanItemStart { item_id } => Self::PlanItemStart { item_id },
             KnownInnerEvent::PlanItemComplete { outcome } => Self::PlanItemComplete { outcome },
             KnownInnerEvent::PlanItemSkip { item_id, reason } => {
@@ -304,6 +382,12 @@ impl From<KnownInnerEvent> for InnerEvent {
 /// through `Unknown` (benign: desync indicator flips), and a stale tag
 /// here can't cause typed deserialization to misfire because the second
 /// pass does a strict decode anyway.
+/// serde default for `ObjectiveCreated::activate` — create auto-activates
+/// unless the agent explicitly passes `activate: false`.
+fn default_true() -> bool {
+    true
+}
+
 const KNOWN_INNER_TAGS: &[&str] = &[
     "agent_start",
     "agent_end",
@@ -319,6 +403,9 @@ const KNOWN_INNER_TAGS: &[&str] = &[
     "action_complete",
     "executor_decision",
     "plan_set",
+    "objective_created",
+    "objective_activated",
+    "objective_updated",
     "plan_item_start",
     "plan_item_complete",
     "plan_item_skip",
@@ -887,6 +974,9 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
         InnerEvent::PlanItemComplete { .. } => ApplyOutcome::NoOp,
         InnerEvent::PlanItemSkip { .. } => ApplyOutcome::NoOp,
         InnerEvent::PlanItemBlock { .. } => ApplyOutcome::NoOp,
+        InnerEvent::ObjectiveCreated { .. } => ApplyOutcome::NoOp,
+        InnerEvent::ObjectiveActivated { .. } => ApplyOutcome::NoOp,
+        InnerEvent::ObjectiveUpdated { .. } => ApplyOutcome::NoOp,
         // P6 Slice B: the objective report drives persistence + a objective-status
         // transition but does not mutate the chat-side LiveAgentState.
         InnerEvent::ObjectiveReport { .. } => ApplyOutcome::NoOp,

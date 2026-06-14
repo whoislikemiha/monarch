@@ -5,8 +5,8 @@ use tokio::sync::broadcast;
 
 use crate::agent::WsBroadcast;
 use crate::db::{
-    Database, ObjectiveEventNotification, RecordObjectiveEventPayload, UpdateObjectivePayload,
-    WriteObjectiveReportPayload,
+    CreateObjectivePayload, Database, ObjectiveEventNotification, RecordObjectiveEventPayload,
+    UpdateObjectivePayload, WriteObjectiveReportPayload,
 };
 use crate::error::MonarchError;
 use crate::sidecar_protocol::ObjectiveReport;
@@ -34,6 +34,35 @@ pub(super) fn emit_objective_notifications(
             &serde_json::json!({ "id": note.event_id, "eventType": note.event_type }).to_string(),
         );
     }
+}
+
+/// MON-129: notify the frontend that an objective was created so the timeline
+/// and objective store refresh live — mirrors the topics the retired
+/// auto-create path emitted (`objective-created-{id}` /
+/// `objective-created-for-agent-{agentId}`).
+fn emit_objective_created(
+    app: &Arc<PlMutex<Option<AppHandle>>>,
+    ws_tx: &broadcast::Sender<WsBroadcast>,
+    agent_id: &str,
+    objective_id: &str,
+) {
+    let app_opt = app.lock().clone();
+    let Some(app) = app_opt else {
+        return;
+    };
+    let payload = serde_json::json!({ "id": objective_id, "agentId": agent_id }).to_string();
+    emit_event(
+        &app,
+        ws_tx,
+        &format!("objective-created-{}", objective_id),
+        &payload,
+    );
+    emit_event(
+        &app,
+        ws_tx,
+        &format!("objective-created-for-agent-{}", agent_id),
+        &payload,
+    );
 }
 
 // ---- apply arms: objective / plan / report ----
@@ -294,6 +323,82 @@ pub(super) async fn apply_plan_set(
 ) -> Result<(), MonarchError> {
     let notes = db.set_plan_internal(&payload).await?;
     emit_objective_notifications(app, ws_tx, notes);
+    Ok(())
+}
+
+/// MON-129: persist an agent-authored objective. Placement: an explicit
+/// `parent_id` wins; otherwise it branches under the agent's campaign root;
+/// project-less agents get a standalone root. Authored objectives are
+/// `created_by = 'architect'` (the shadow planning for itself) and assigned to
+/// the authoring agent. Auto-activates (status `in_progress` + current
+/// objective) unless `activate` is false, in which case it lands `pending`.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn apply_create_objective(
+    db: &Database,
+    app: &Arc<PlMutex<Option<AppHandle>>>,
+    ws_tx: &broadcast::Sender<WsBroadcast>,
+    agent_id: String,
+    id: String,
+    title: String,
+    description: Option<String>,
+    parent_id: Option<String>,
+    direction: Option<String>,
+    activate: bool,
+) -> Result<(), MonarchError> {
+    let parent_id = match parent_id {
+        Some(p) => Some(p),
+        None => db
+            .get_campaign_root_for_agent_internal(&agent_id)
+            .await?
+            .map(|root| root.id),
+    };
+    let status = if activate { "in_progress" } else { "pending" };
+    db.create_objective_internal(&CreateObjectivePayload {
+        id: Some(id.clone()),
+        parent_id,
+        title,
+        description,
+        status: Some(status.to_string()),
+        grade: None,
+        exec_hint: None,
+        assignee_shadow_id: Some(agent_id.clone()),
+        created_by: Some("architect".to_string()),
+        kind: None,
+    })
+    .await?;
+    if direction.is_some() {
+        db.update_objective_internal(&UpdateObjectivePayload {
+            id: id.clone(),
+            current_direction: direction,
+            ..Default::default()
+        })
+        .await?;
+    }
+    if activate {
+        db.set_agent_current_objective_internal(&agent_id, &id)
+            .await?;
+    }
+    emit_objective_created(app, ws_tx, &agent_id, &id);
+    Ok(())
+}
+
+/// MON-129: move the agent's focus to an existing objective.
+pub(super) async fn apply_activate_objective(
+    db: &Database,
+    agent_id: String,
+    objective_id: String,
+) -> Result<(), MonarchError> {
+    db.set_agent_current_objective_internal(&agent_id, &objective_id)
+        .await?;
+    Ok(())
+}
+
+/// MON-129: patch an objective's direction / scope / status.
+pub(super) async fn apply_update_objective(
+    db: &Database,
+    payload: UpdateObjectivePayload,
+) -> Result<(), MonarchError> {
+    db.update_objective_internal(&payload).await?;
     Ok(())
 }
 

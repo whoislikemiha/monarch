@@ -18,6 +18,9 @@ pub(super) fn inner_event_tag(event: &InnerEvent) -> &'static str {
         InnerEvent::ActionComplete { .. } => "action_complete",
         InnerEvent::ExecutorDecision { .. } => "executor_decision",
         InnerEvent::PlanSet { .. } => "plan_set",
+        InnerEvent::ObjectiveCreated { .. } => "objective_created",
+        InnerEvent::ObjectiveActivated { .. } => "objective_activated",
+        InnerEvent::ObjectiveUpdated { .. } => "objective_updated",
         InnerEvent::PlanItemStart { .. } => "plan_item_start",
         InnerEvent::PlanItemComplete { .. } => "plan_item_complete",
         InnerEvent::PlanItemSkip { .. } => "plan_item_skip",
@@ -48,5 +51,13 @@ pub(super) fn is_narration_tool(tool_name: &str) -> bool {
             | "complete_plan_item"
             | "skip_plan_item"
             | "block_plan_item"
+            // MON-129 objective authoring + navigation: writes emit semantic
+            // objective_* events; reads are pure introspection. Neither should
+            // render as a raw tool row on the timeline.
+            | "create_objective"
+            | "update_objective"
+            | "activate_objective"
+            | "get_tree"
+            | "get_objective"
     )
 }
