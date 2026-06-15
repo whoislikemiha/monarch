@@ -629,7 +629,7 @@ async fn build_objective_detail(
     if !items.is_empty() {
         out.push_str("\nPlan:\n");
         for it in &items {
-            out.push_str(&format!("  [{}] {}\n", it.status, it.title));
+            out.push_str(&format!("  [{}] {}  id={}\n", it.status, it.title, it.id));
         }
     }
 

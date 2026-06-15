@@ -1,6 +1,7 @@
 import { defineTool } from "@mariozechner/pi-coding-agent";
 import { Type } from "@mariozechner/pi-ai";
 import type { EmitFn } from "./ui-bridge.js";
+import { randomUUID } from "node:crypto";
 
 // Gentle length caps. Hard truncation rather than rejection — we never
 // want a plan tool call to fail; the executor's intent should land even
@@ -76,9 +77,10 @@ export function createPlanTools(agentId: string, emit: EmitFn) {
 				for (const it of rawItems) {
 					const title = trimTo(it.title ?? "", TITLE_MAX);
 					if (!title) continue;
-					const cleaned: CleanItem = { title };
-					const id = it.id?.trim();
-					if (id) cleaned.id = id;
+					// Mint an id up front (unless the caller is preserving one) so it
+					// can be returned to the model — start_plan_item needs the id, and
+					// it is otherwise invisible until a get_objective round-trip.
+					const cleaned: CleanItem = { title, id: it.id?.trim() || randomUUID() };
 					const rationale = cleanOptional(it.rationale, RATIONALE_MAX);
 					if (rationale !== undefined) cleaned.rationale = rationale;
 					items.push(cleaned);
@@ -100,7 +102,9 @@ export function createPlanTools(agentId: string, emit: EmitFn) {
 							text:
 								items.length === 0
 									? "Plan cleared."
-									: `Plan set with ${items.length} item${items.length === 1 ? "" : "s"}.`,
+									: `Plan set (${items.length} item${items.length === 1 ? "" : "s"}):\n` +
+										items.map((it) => `- ${it.title} — id=${it.id}`).join("\n") +
+										"\nCall start_plan_item(id) with the id shown to begin an item.",
 						},
 					],
 					details: { itemCount: items.length, rationale },
