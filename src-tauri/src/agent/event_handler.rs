@@ -461,7 +461,14 @@ async fn current_objective_for_event(
     event: &InnerEvent,
 ) -> Option<String> {
     match event {
-        InnerEvent::MemorySuggestion { .. } | InnerEvent::ToolExecutionEnd { .. } => db
+        // MON-129: complete_objective (ObjectiveReport) closes the agent's
+        // CURRENT objective — resolve it here, else build_persist_commands
+        // drops the CompleteObjective command and the report never persists
+        // (pre-existing: objective_reports stayed empty in runtime because this
+        // arm returned None).
+        InnerEvent::MemorySuggestion { .. }
+        | InnerEvent::ToolExecutionEnd { .. }
+        | InnerEvent::ObjectiveReport { .. } => db
             .get_agent_current_objective_id_internal(agent_id)
             .await
             .ok()
