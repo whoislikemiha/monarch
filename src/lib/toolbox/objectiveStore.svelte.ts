@@ -460,6 +460,20 @@ class ObjectiveStore {
       }
       entry.error = String(e);
     }
+    // MON-129: keep the CURRENT objective's plan loaded for the workspace NOW
+    // strip. Plan items otherwise load only on manual expand in the toolbox
+    // objective tool (toggleExpand) or via an objective-event on an
+    // already-subscribed objective — so a freshly-authored objective's plan
+    // never reached the NOW strip. refreshWorkingMemory runs on load, after
+    // create, and on live objective-events, so loading here keeps it fresh.
+    const currentObjectiveId = entry.workingMemory?.currentObjectiveId;
+    if (currentObjectiveId) {
+      try {
+        await this.loadPlanItems(agentId, currentObjectiveId);
+      } catch (e) {
+        entry.error = String(e);
+      }
+    }
   }
 
   toggleExpand(agentId: string, objectiveId: string): void {
