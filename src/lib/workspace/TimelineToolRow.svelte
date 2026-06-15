@@ -14,6 +14,15 @@
     time?: string | null;
   }
   let { tool, time = null }: Props = $props();
+
+  // MON-129: clamp a long target/args to a preview; click to expand fully.
+  let expanded = $state(false);
+  function onKey(e: KeyboardEvent) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      expanded = !expanded;
+    }
+  }
 </script>
 
 <div class="trow" class:error={tool.isError} class:running={tool.status === "running"}>
@@ -24,9 +33,9 @@
   </span>
   <span class="name mono">{tool.toolName}</span>
   {#if tool.target}
-    <span class="target mono" title={tool.target}>{tool.target}</span>
+    <span class="target mono" class:clamped={!expanded} title={tool.target} onclick={() => (expanded = !expanded)} onkeydown={onKey} role="button" tabindex="0">{tool.target}</span>
   {:else if tool.argsPreview}
-    <span class="target mono dim" title={tool.argsPreview}>{tool.argsPreview}</span>
+    <span class="target mono dim" class:clamped={!expanded} title={tool.argsPreview} onclick={() => (expanded = !expanded)} onkeydown={onKey} role="button" tabindex="0">{tool.argsPreview}</span>
   {/if}
   <span class="end mono">
     {#if tool.status === "running"}
@@ -66,7 +75,10 @@
   .trow.error .name { color: var(--status-error); }
   .target {
     color: var(--text-muted); min-width: 0; flex: 1;
-    white-space: normal; overflow-wrap: anywhere;
+    white-space: normal; overflow-wrap: anywhere; cursor: pointer;
+  }
+  .target.clamped {
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   .target.dim { opacity: 0.7; }
 

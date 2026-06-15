@@ -10,6 +10,7 @@
   import type { ActionView, ToolCallView } from "./timelineModel";
   import { elapsedClock, fmtDuration, relTime } from "./timelineModel";
   import EventIcon from "$lib/ui/EventIcon.svelte";
+  import { SvelteSet } from "svelte/reactivity";
 
   interface Props {
     action: ActionView;
@@ -28,6 +29,20 @@
 
   let toolList = $derived(tools ?? action.toolCalls);
   let childCount = $derived(toolList.length + action.decisions.length);
+
+  /** MON-129: per-tool expand state. Long targets/args clamp to a short
+   * preview and expand on click so the captain can read the whole thing. */
+  const expandedTools = new SvelteSet<string>();
+  function toggleTool(id: string) {
+    if (expandedTools.has(id)) expandedTools.delete(id);
+    else expandedTools.add(id);
+  }
+  function onToolKey(e: KeyboardEvent, id: string) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleTool(id);
+    }
+  }
 
   /** Active cards open by default; finished cards collapse to the summary. */
   let manualExpand = $state<boolean | null>(null);
@@ -106,9 +121,9 @@
             <EventIcon kind="tool" size={10} tone={tool.isError ? "error" : "neutral"} muted={!tool.isError} />
             <span class="t-name mono">{tool.toolName}</span>
             {#if tool.target}
-              <span class="t-target mono" title={tool.target}>{tool.target}</span>
+              <span class="t-target mono" class:clamped={!expandedTools.has(tool.eventId)} title={tool.target} onclick={() => toggleTool(tool.eventId)} onkeydown={(e) => onToolKey(e, tool.eventId)} role="button" tabindex="0">{tool.target}</span>
             {:else if tool.argsPreview}
-              <span class="t-target mono dim" title={tool.argsPreview}>{tool.argsPreview}</span>
+              <span class="t-target mono dim" class:clamped={!expandedTools.has(tool.eventId)} title={tool.argsPreview} onclick={() => toggleTool(tool.eventId)} onkeydown={(e) => onToolKey(e, tool.eventId)} role="button" tabindex="0">{tool.argsPreview}</span>
             {/if}
             <span class="t-end mono">
               {#if tool.status === "running"}
@@ -219,7 +234,10 @@
   .t-name { color: var(--text-secondary); flex: none; min-width: 44px; }
   .t-target {
     color: var(--text-muted); min-width: 0; flex: 1;
-    white-space: normal; overflow-wrap: anywhere;
+    white-space: normal; overflow-wrap: anywhere; cursor: pointer;
+  }
+  .t-target.clamped {
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   .t-target.dim { opacity: 0.7; }
   /* Head truncation: paths keep their TAIL visible (…/module.rs), never the
