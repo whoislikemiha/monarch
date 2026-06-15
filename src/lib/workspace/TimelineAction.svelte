@@ -106,7 +106,7 @@
             <EventIcon kind="tool" size={10} tone={tool.isError ? "error" : "neutral"} muted={!tool.isError} />
             <span class="t-name mono">{tool.toolName}</span>
             {#if tool.target}
-              <span class="t-target mono trunc-head" title={tool.target}>{tool.target}</span>
+              <span class="t-target mono" title={tool.target}>{tool.target}</span>
             {:else if tool.argsPreview}
               <span class="t-target mono dim" title={tool.argsPreview}>{tool.argsPreview}</span>
             {/if}
@@ -207,7 +207,7 @@
   .chip.chat:hover { color: var(--accent); border-color: var(--accent-border-subtle); }
 
   .children {
-    display: flex; flex-direction: column; gap: 2px;
+    display: flex; flex-direction: column; gap: 2px; min-width: 0;
     margin-top: var(--s1);
     padding: var(--s2) 0 var(--s1) var(--s3);
     border-left: 1px solid var(--border-subtle);
@@ -219,7 +219,7 @@
   .t-name { color: var(--text-secondary); flex: none; min-width: 44px; }
   .t-target {
     color: var(--text-muted); min-width: 0; flex: 1;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    white-space: normal; overflow-wrap: anywhere;
   }
   .t-target.dim { opacity: 0.7; }
   /* Head truncation: paths keep their TAIL visible (…/module.rs), never the

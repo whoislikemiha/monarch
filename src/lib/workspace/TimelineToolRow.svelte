@@ -24,7 +24,7 @@
   </span>
   <span class="name mono">{tool.toolName}</span>
   {#if tool.target}
-    <span class="target mono trunc-head" title={tool.target}>{tool.target}</span>
+    <span class="target mono" title={tool.target}>{tool.target}</span>
   {:else if tool.argsPreview}
     <span class="target mono dim" title={tool.argsPreview}>{tool.argsPreview}</span>
   {/if}
@@ -66,10 +66,9 @@
   .trow.error .name { color: var(--status-error); }
   .target {
     color: var(--text-muted); min-width: 0; flex: 1;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    white-space: normal; overflow-wrap: anywhere;
   }
   .target.dim { opacity: 0.7; }
-  .trunc-head { direction: rtl; text-align: left; unicode-bidi: isolate; }
 
   .end { flex: none; margin-left: auto; font-size: 9.5px; color: var(--text-muted); display: inline-flex; gap: var(--s2); }
   .st.run { color: var(--status-info); }
