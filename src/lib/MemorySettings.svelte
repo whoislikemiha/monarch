@@ -273,16 +273,16 @@
   .memory-settings {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--s3);
   }
   .card {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 10px 12px;
+    gap: var(--s2);
+    padding: var(--s3);
     border: 1px solid var(--border-subtle);
-    border-radius: 8px;
-    background: var(--bg-panel-2);
+    border-radius: var(--r-md);
+    background: var(--bg-base);
   }
   .card.disabled {
     opacity: 0.55;
@@ -290,17 +290,22 @@
   .card-title {
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.12em;
     font-size: 10px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    font-weight: 600;
   }
   .toggle {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--s2);
     font-size: 12px;
     cursor: pointer;
     color: var(--text-primary);
+    user-select: none;
+  }
+  .toggle input[type="checkbox"] {
+    accent-color: var(--accent);
+    margin: 0;
   }
   .toggle input:disabled {
     cursor: not-allowed;
@@ -309,11 +314,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--s2);
     font-size: 11px;
   }
   .row.footer-row {
-    padding-top: 4px;
+    padding-top: var(--s1);
   }
   .label {
     color: var(--text-muted);
@@ -323,15 +328,19 @@
     text-align: right;
   }
   .value.mono {
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    font-family: "JetBrains Mono", monospace;
     word-break: break-all;
   }
   .value.small,
   .row.mono.small {
     font-size: 10px;
   }
+  .row.mono.small .value {
+    font-family: "JetBrains Mono", monospace;
+    word-break: break-all;
+  }
   .status-ok {
-    color: var(--accent);
+    color: var(--status-success);
   }
   .status-pending {
     color: var(--text-muted);
@@ -339,13 +348,21 @@
   .input {
     flex: 1 1 auto;
     min-width: 0;
-    padding: 4px 6px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    background: var(--bg-panel);
-    color: var(--text-primary);
-    font-family: inherit;
+    font: inherit;
+    font-family: "JetBrains Mono", monospace;
     font-size: 11px;
+    padding: 4px var(--s2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-raised);
+    color: var(--text-primary);
+    transition: border-color 0.14s, background 0.14s;
+  }
+  .input:focus {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+    border-color: var(--accent);
+    background: var(--bg-overlay);
   }
   .input.narrow {
     flex: 0 0 5rem;
@@ -356,19 +373,19 @@
   }
   .btn-primary {
     align-self: flex-start;
-    padding: 6px 14px;
+    font: inherit;
+    padding: var(--s2) var(--s4);
     border: 1px solid var(--accent);
-    border-radius: 6px;
-    background: var(--accent-bg-hover);
-    color: var(--accent);
-    font-family: inherit;
+    border-radius: var(--r-md);
+    background: var(--accent);
+    color: var(--accent-ink);
     font-size: 11px;
+    font-weight: 600;
     cursor: pointer;
-    transition: background 0.15s;
+    transition: opacity 0.14s;
   }
   .btn-primary:hover:not(:disabled) {
-    background: var(--accent);
-    color: var(--bg-panel);
+    opacity: 0.88;
   }
   .btn-primary:disabled {
     opacity: 0.4;
@@ -377,7 +394,7 @@
   .actions {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--s3);
   }
   .hint {
     margin: 0;
@@ -390,26 +407,26 @@
   }
   .empty {
     color: var(--text-muted);
-    font-style: italic;
     font-size: 11px;
   }
   .error {
     margin: 0;
-    padding: 6px 8px;
-    background: var(--error-bg-faint);
-    color: var(--error-light);
+    padding: var(--s2) var(--s3);
+    border: 1px solid color-mix(in srgb, var(--status-error) 38%, transparent);
+    background: color-mix(in srgb, var(--status-error) 7%, var(--bg-raised));
+    color: var(--status-error);
     font-size: 10px;
     white-space: pre-wrap;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
   }
   .prompt-details {
-    margin-top: 4px;
+    margin-top: var(--s1);
     border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    background: var(--bg-panel);
+    border-radius: var(--r-sm);
+    background: var(--bg-sink);
   }
   .prompt-summary {
-    padding: 6px 8px;
+    padding: var(--s2);
     font-size: 10px;
     color: var(--text-muted);
     cursor: pointer;
@@ -420,9 +437,9 @@
   }
   .prompt-text {
     margin: 0;
-    padding: 8px;
+    padding: var(--s2);
     border-top: 1px solid var(--border-subtle);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    font-family: "JetBrains Mono", monospace;
     font-size: 10px;
     color: var(--text-secondary);
     white-space: pre-wrap;

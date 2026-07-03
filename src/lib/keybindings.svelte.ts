@@ -35,6 +35,7 @@ export const DEFAULT_BINDINGS: KeyBindingDef[] = [
   // Global
   { id: "global.spawn-agent", label: "Create agent", group: "Global", defaultKeys: "Ctrl+n", editable: true },
   { id: "global.settings", label: "Toggle settings", group: "Global", defaultKeys: "Ctrl+,", editable: true },
+  { id: "global.command-palette", label: "Command palette", group: "Global", defaultKeys: "Ctrl+k", editable: true },
   { id: "global.toggle-sidebar", label: "Toggle sidebar", group: "Global", defaultKeys: "Ctrl+b", editable: true },
   { id: "global.focus-chat", label: "Focus chat input", group: "Global", defaultKeys: "/", editable: true, hint: "when not in input" },
   { id: "global.focus-chat-alt", label: "Focus chat input (alt)", group: "Global", defaultKeys: "i", editable: true, hint: "when not in input" },

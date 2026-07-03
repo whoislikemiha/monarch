@@ -10,9 +10,11 @@
     title: string;
     onclose: () => void;
     width?: number;
+    /** Remove body padding — caller owns the full body layout (e.g. nav + content columns). */
+    flush?: boolean;
     children: Snippet;
   }
-  let { title, onclose, width = 520, children }: Props = $props();
+  let { title, onclose, width = 520, flush = false, children }: Props = $props();
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
@@ -41,7 +43,7 @@
         <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4l8 8M12 4l-8 8" /></svg>
       </button>
     </header>
-    <div class="m-body">
+    <div class="m-body" class:flush>
       {@render children()}
     </div>
   </div>
@@ -83,4 +85,5 @@
   }
   .m-close:hover { background: var(--bg-raised); color: var(--text-primary); }
   .m-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s4); }
+  .m-body.flush { padding: 0; overflow: hidden; display: flex; }
 </style>

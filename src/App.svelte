@@ -5,14 +5,15 @@
    * surface content lives in the views/workspace/board/panels trees; this file
    * stays thin.
    *
-   * Spawn + Settings still use the legacy dialogs transiently — they are
-   * rebuilt on the design system in slice 8.
+   * Settings (appearance · keybindings · memory) opens from the gear at the
+   * bottom of the inspector rail or Ctrl+, — see SettingsDialog.
    */
   import { onMount } from "svelte";
   import { invoke } from "$lib/api";
   import "./lib/ui/styles/atoms.css";
 
   import TopBar from "./lib/shell/TopBar.svelte";
+  import CommandPalette from "./lib/shell/CommandPalette.svelte";
   import AgentRail from "./lib/shell/AgentRail.svelte";
   import PanelHost from "./lib/shell/PanelHost.svelte";
   import NotificationStack from "./lib/NotificationStack.svelte";
@@ -27,6 +28,7 @@
   // --- Dialog state (shell-local) -------------------------------------
   let showSpawnDialog = $state(false);
   let showSettings = $state(false);
+  let showPalette = $state(false);
 
   // --- Zoom ------------------------------------------------------------
   const ZOOM_STEP = 0.05;
@@ -85,6 +87,11 @@
     if (matchBinding(e, "global.settings")) {
       e.preventDefault();
       showSettings = !showSettings;
+      return;
+    }
+    if (matchBinding(e, "global.command-palette")) {
+      e.preventDefault();
+      showPalette = !showPalette;
       return;
     }
     if (matchBinding(e, "global.toggle-sidebar")) {
@@ -159,10 +166,10 @@
 <svelte:window onkeydown={handleKeydown} onwheel={handleWheel} />
 
 <main class="shell">
-  <TopBar {crumbs} />
+  <TopBar {crumbs} onCommandPalette={() => (showPalette = true)} />
   <div class="body">
     <AgentRail onextract={() => (showSpawnDialog = true)} />
-    <PanelHost />
+    <PanelHost onsettings={() => (showSettings = true)} />
   </div>
 </main>
 
@@ -180,6 +187,14 @@
 
 {#if showSettings}
   <SettingsDialog onclose={() => (showSettings = false)} {zoomLevel} onzoom={applyZoom} />
+{/if}
+
+{#if showPalette}
+  <CommandPalette
+    onclose={() => (showPalette = false)}
+    onspawn={() => (showSpawnDialog = true)}
+    onsettings={() => (showSettings = true)}
+  />
 {/if}
 
 <style>

@@ -1,12 +1,12 @@
 <script lang="ts">
   /**
    * Persistent top chrome: brand · context breadcrumb · Agents⇄Projects lens
-   * toggle · ⌘K (stub) · theme switch · supervisor chip.
+   * toggle · ⌘K command palette · supervisor chip.
    *
-   * Pure presentation + the view/theme stores. No agent logic lives here.
+   * Pure presentation + the view store. Appearance (theme, zoom) lives in the
+   * Settings dialog, opened from the gear at the bottom of the inspector rail.
    */
   import { viewStore, type ViewId } from "./viewStore.svelte";
-  import { listThemes, type ThemeId } from "$lib/themes";
 
   interface Props {
     /** Breadcrumb crumbs, left → right (e.g. ["monarch", "Onyx"]). */
@@ -19,12 +19,6 @@
     { id: "agents", label: "Agents" },
     { id: "projects", label: "Projects" },
   ];
-
-  const themeOptions = listThemes();
-
-  function onThemeChange(e: Event) {
-    viewStore.setTheme((e.currentTarget as HTMLSelectElement).value as ThemeId);
-  }
 </script>
 
 <header class="topbar">
@@ -56,17 +50,9 @@
     {/each}
   </div>
 
-  <button class="cmdk" onclick={() => onCommandPalette?.()} title="Command palette (coming soon)" disabled>
+  <button class="cmdk" onclick={() => onCommandPalette?.()} title="Command palette (Ctrl+K)">
     <span class="mono">⌘K</span>
   </button>
-
-  <label class="theme" title="Theme">
-    <select class="theme-select mono" value={viewStore.themeId} onchange={onThemeChange}>
-      {#each themeOptions as t (t.id)}
-        <option value={t.id}>{t.label}</option>
-      {/each}
-    </select>
-  </label>
 
   <div class="supervisor" title="Supervisor">
     <span class="cap-dot" aria-hidden="true"></span>
@@ -163,27 +149,11 @@
     border-radius: var(--r-md);
     color: var(--text-muted);
     font-size: 11px;
-    cursor: not-allowed;
-    opacity: 0.7;
-  }
-
-  .theme { display: flex; }
-  .theme-select {
-    font-size: 11px;
-    color: var(--text-secondary);
-    background: var(--bg-base);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--r-md);
-    padding: 4px 22px 4px var(--s2);
     cursor: pointer;
-    appearance: none;
-    background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
-      linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
-    background-position: calc(100% - 13px) 11px, calc(100% - 9px) 11px;
-    background-size: 4px 4px, 4px 4px;
-    background-repeat: no-repeat;
+    transition: background 0.14s, color 0.14s;
   }
-  .theme-select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .cmdk:hover { background: var(--bg-raised); color: var(--text-primary); }
+  .cmdk:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
   .supervisor {
     display: flex;

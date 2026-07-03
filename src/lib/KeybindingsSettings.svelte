@@ -116,22 +116,22 @@
   .keybindings-panel {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: var(--s4);
   }
 
   .group {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--s1);
   }
 
   .group-label {
     font-size: 10px;
+    font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    margin-bottom: 4px;
+    letter-spacing: 0.12em;
+    margin-bottom: var(--s1);
   }
 
   .group-items {
@@ -143,9 +143,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 0;
+    padding: var(--s2) 0;
     border-bottom: 1px solid var(--border-subtle);
-    gap: 12px;
+    gap: var(--s3);
   }
 
   .binding-row.non-editable {
@@ -153,10 +153,10 @@
   }
 
   .binding-row.capturing {
-    background: var(--accent-bg-hover);
-    margin: 0 -8px;
-    padding: 8px;
-    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    margin: 0 calc(-1 * var(--s2));
+    padding: var(--s2);
+    border-radius: var(--r-sm);
     border-bottom-color: transparent;
   }
 
@@ -170,19 +170,17 @@
   .binding-label {
     font-size: 12px;
     color: var(--text-primary);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
   .binding-hint {
     font-size: 10px;
     color: var(--text-muted);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
   .binding-keys {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--s2);
     flex-shrink: 0;
   }
 
@@ -198,13 +196,13 @@
     justify-content: center;
     min-width: 22px;
     height: 22px;
-    padding: 0 6px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    background: var(--bg-panel-2);
+    padding: 0 var(--s2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-raised);
     color: var(--text-secondary);
     font-size: 10px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    font-family: "JetBrains Mono", monospace;
     line-height: 1;
     white-space: nowrap;
   }
@@ -212,11 +210,11 @@
   .capture-box {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 4px 10px;
+    gap: var(--s2);
+    padding: 4px var(--s3);
     border: 1px solid var(--accent);
-    border-radius: 6px;
-    background: var(--bg-panel-2);
+    border-radius: var(--r-sm);
+    background: var(--bg-raised);
     outline: none;
     min-width: 160px;
   }
@@ -224,14 +222,12 @@
   .capture-text {
     font-size: 11px;
     color: var(--accent);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     animation: pulse 1.2s ease-in-out infinite;
   }
 
   .capture-hint {
     font-size: 9px;
     color: var(--text-muted);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
   @keyframes pulse {
@@ -240,19 +236,19 @@
   }
 
   .btn-edit {
-    padding: 2px 8px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
+    font: inherit;
+    padding: 2px var(--s2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
     background: transparent;
     color: var(--text-muted);
     font-size: 10px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition: background 0.14s, color 0.14s;
   }
 
   .btn-edit:hover {
-    background: var(--bg-panel-2);
+    background: var(--bg-raised);
     color: var(--text-primary);
   }
 
@@ -262,48 +258,48 @@
     justify-content: center;
     width: 22px;
     height: 22px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition: background 0.14s, color 0.14s;
   }
 
   .btn-reset-single:hover {
-    background: var(--bg-panel-2);
+    background: var(--bg-raised);
     color: var(--text-primary);
   }
 
   .badge-system {
     font-size: 9px;
+    font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    padding: 2px 6px;
+    letter-spacing: 0.12em;
+    padding: 2px var(--s2);
     border: 1px solid var(--border-subtle);
-    border-radius: 4px;
+    border-radius: var(--r-sm);
   }
 
   .reset-section {
-    padding-top: 8px;
+    padding-top: var(--s2);
   }
 
   .btn-reset-all {
-    padding: 6px 12px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
+    font: inherit;
+    padding: var(--s2) var(--s3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
     background: transparent;
     color: var(--text-muted);
     font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition: background 0.14s, color 0.14s;
   }
 
   .btn-reset-all:hover {
-    background: var(--bg-panel-2);
+    background: var(--bg-raised);
     color: var(--text-primary);
   }
 </style>

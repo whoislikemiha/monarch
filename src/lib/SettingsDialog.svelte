@@ -1,6 +1,13 @@
 <script lang="ts">
-  import { invoke } from "$lib/api";
-  import { listThemes, applyTheme, getActiveTheme, type ThemeId, type Theme } from "./themes";
+  /**
+   * App settings — built on the design-system Modal with a section nav.
+   * Appearance (theme + zoom, moved here from the TopBar), Keybindings,
+   * and Memory. Theme selection goes through viewStore so every consumer
+   * of the active theme stays in sync.
+   */
+  import Modal from "./ui/Modal.svelte";
+  import { listThemes, type ThemeId } from "./themes";
+  import { viewStore } from "./shell/viewStore.svelte";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
   import MemorySettings from "./MemorySettings.svelte";
 
@@ -14,431 +21,344 @@
     onzoom: (level: number) => void;
   } = $props();
 
-  const categories = [
-    { id: "general", label: "General" },
+  const sections = [
     { id: "appearance", label: "Appearance" },
-    { id: "agent-defaults", label: "Agent Defaults" },
-    { id: "memory", label: "Memory" },
     { id: "keybindings", label: "Keybindings" },
-  ];
+    { id: "memory", label: "Memory" },
+  ] as const;
+  type SectionId = (typeof sections)[number]["id"];
 
-  let activeCategory = $state("general");
-  let activeThemeId = $state(getActiveTheme().name);
-  let themes = $derived(listThemes());
-
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") {
-      onclose();
-      e.stopPropagation();
-    }
-  }
+  let active = $state<SectionId>("appearance");
+  const themes = listThemes();
 
   function selectTheme(id: ThemeId) {
-    const resolvedId = applyTheme(id);
-    activeThemeId = resolvedId;
-    invoke("db_set_ui_state", { key: "theme", value: JSON.stringify(resolvedId) }).catch(() => {});
+    viewStore.setTheme(id);
   }
 
   let zoomPercent = $derived(Math.round(zoomLevel * 100));
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="overlay" onclick={onclose} role="presentation">
-  <div
-    class="dialog"
-    onclick={(e: MouseEvent) => e.stopPropagation()}
-    onkeydown={handleKeydown}
-    role="dialog"
-    tabindex="-1"
-  >
-    <div class="dialog-header">
-      <h2>Settings</h2>
-      <button class="btn-close" onclick={onclose}>Close</button>
-    </div>
-    <div class="dialog-body">
-      <nav class="category-nav">
-        {#each categories as cat (cat.id)}
-          <button
-            class="category-btn"
-            class:active={activeCategory === cat.id}
-            onclick={() => (activeCategory = cat.id)}
-          >
-            {cat.label}
-          </button>
-        {/each}
-      </nav>
-      <div class="category-content">
-        <h3>{categories.find((c) => c.id === activeCategory)?.label}</h3>
+<Modal title="Settings" {onclose} width={760} flush>
+  <div class="settings">
+    <nav class="nav" aria-label="Settings sections">
+      {#each sections as section (section.id)}
+        <button
+          class="nav-btn"
+          class:active={active === section.id}
+          onclick={() => (active = section.id)}
+        >
+          {section.label}
+        </button>
+      {/each}
+    </nav>
 
-        {#if activeCategory === "appearance"}
-          <div class="theme-section">
-            <span class="section-label">Theme</span>
-            <div class="theme-grid">
-              {#each themes as { id, label, theme } (id)}
-                <button
-                  class="theme-card"
-                  class:active={activeThemeId === id}
-                  onclick={() => selectTheme(id)}
-                >
-                  <div class="theme-preview">
-                    <div class="preview-sidebar" style:background={theme.bgSidebar}></div>
-                    <div class="preview-main" style:background={theme.bgPanel}>
-                      <div class="preview-header" style:background={theme.bgSidebar} style:border-bottom="1px solid {theme.borderSubtle}"></div>
-                      <div class="preview-content">
-                        <div class="preview-line" style:background={theme.textMuted}></div>
-                        <div class="preview-line short" style:background={theme.accent}></div>
-                        <div class="preview-line" style:background={theme.textMuted}></div>
-                      </div>
-                      <div class="preview-input" style:background={theme.bgPanel2} style:border-top="1px solid {theme.borderSubtle}"></div>
-                    </div>
+    <div class="content">
+      {#if active === "appearance"}
+        <span class="head">Theme</span>
+        <div class="theme-grid">
+          {#each themes as { id, label, theme } (id)}
+            <button
+              class="theme-card"
+              class:active={viewStore.themeId === id}
+              onclick={() => selectTheme(id)}
+            >
+              <div class="preview" style:background={theme.bgApp}>
+                <div class="p-side" style:background={theme.bgSidebar}></div>
+                <div class="p-main" style:background={theme.bgPanel}>
+                  <div
+                    class="p-head"
+                    style:background={theme.bgSidebar}
+                    style:border-bottom="1px solid {theme.borderSubtle}"
+                  ></div>
+                  <div class="p-body">
+                    <div class="p-line" style:background={theme.textMuted}></div>
+                    <div class="p-line short" style:background={theme.accent}></div>
+                    <div class="p-line" style:background={theme.textMuted}></div>
                   </div>
-                  <span class="theme-label">{label}</span>
-                  {#if activeThemeId === id}
-                    <span class="theme-active-badge">Active</span>
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          </div>
+                  <div
+                    class="p-input"
+                    style:background={theme.bgPanel2}
+                    style:border-top="1px solid {theme.borderSubtle}"
+                  ></div>
+                </div>
+              </div>
+              <span class="theme-name">
+                {label}
+                {#if viewStore.themeId === id}
+                  <span class="active-dot" aria-label="Active"></span>
+                {/if}
+              </span>
+            </button>
+          {/each}
+        </div>
 
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Zoom Level</span>
-              <span class="setting-hint">Ctrl+Plus / Ctrl+Minus / Ctrl+0 to reset</span>
-            </div>
-            <div class="zoom-controls">
-              <button class="zoom-btn" onclick={() => onzoom(zoomLevel - 0.05)} disabled={zoomPercent <= 50}>−</button>
-              <span class="zoom-value">{zoomPercent}%</span>
-              <button class="zoom-btn" onclick={() => onzoom(zoomLevel + 0.05)} disabled={zoomPercent >= 200}>+</button>
-              <button class="zoom-reset" onclick={() => onzoom(1.0)} disabled={zoomPercent === 100}>Reset</button>
-            </div>
+        <span class="head">Window</span>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Zoom</span>
+            <span class="setting-hint">Ctrl+Plus / Ctrl+Minus · Ctrl+0 resets</span>
           </div>
-        {:else if activeCategory === "memory"}
-          <MemorySettings />
-        {:else if activeCategory === "keybindings"}
-          <KeybindingsSettings />
-        {:else}
-          <p class="placeholder-text">No settings configured yet.</p>
-        {/if}
-      </div>
+          <div class="zoom-controls">
+            <button
+              class="zoom-btn"
+              aria-label="Zoom out"
+              onclick={() => onzoom(zoomLevel - 0.05)}
+              disabled={zoomPercent <= 50}>−</button
+            >
+            <span class="zoom-value mono">{zoomPercent}%</span>
+            <button
+              class="zoom-btn"
+              aria-label="Zoom in"
+              onclick={() => onzoom(zoomLevel + 0.05)}
+              disabled={zoomPercent >= 200}>+</button
+            >
+            <button class="zoom-reset" onclick={() => onzoom(1.0)} disabled={zoomPercent === 100}>
+              Reset
+            </button>
+          </div>
+        </div>
+      {:else if active === "keybindings"}
+        <KeybindingsSettings />
+      {:else if active === "memory"}
+        <MemorySettings />
+      {/if}
     </div>
   </div>
-</div>
+</Modal>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    background: var(--overlay-backdrop);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-  }
-
-  .dialog {
-    background: var(--bg-panel);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-lg);
-    width: 720px;
-    max-width: 90vw;
-    height: 520px;
-    max-height: 80vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .dialog-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border-subtle);
-    flex-shrink: 0;
-  }
-
-  .dialog-header h2 {
-    margin: 0;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .dialog-body {
+  .settings {
     display: flex;
     flex: 1;
-    min-height: 0;
+    min-width: 0;
+    height: min(540px, calc(100vh - 160px));
   }
 
-  .category-nav {
+  .nav {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    padding: 12px;
-    width: 180px;
-    flex-shrink: 0;
+    width: 168px;
+    flex: none;
+    padding: var(--s3);
     border-right: 1px solid var(--border-subtle);
+    background: var(--bg-base);
     overflow-y: auto;
   }
-
-  .category-btn {
-    padding: 8px 12px;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-secondary);
+  .nav-btn {
+    font: inherit;
     font-size: 12px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    cursor: pointer;
+    font-weight: 500;
     text-align: left;
-    transition: background 0.15s, color 0.15s;
-  }
-
-  .category-btn:hover {
-    background: var(--bg-panel-2);
-    color: var(--text-primary);
-  }
-
-  .category-btn.active {
-    background: var(--accent-bg-hover);
-    color: var(--accent);
-  }
-
-  .category-content {
-    flex: 1;
-    padding: 20px 24px;
-    overflow-y: auto;
-  }
-
-  .category-content h3 {
-    margin: 0 0 16px 0;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-  }
-
-  .placeholder-text {
-    font-size: 12px;
-    color: var(--text-muted);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    margin: 0;
-  }
-
-  .btn-close {
-    padding: 6px 12px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    background: transparent;
     color: var(--text-secondary);
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    background: transparent;
+    border: none;
+    border-radius: var(--r-sm);
+    padding: var(--s2) var(--s3);
     cursor: pointer;
-    transition: background 0.15s;
+    transition: background 0.14s, color 0.14s;
+  }
+  .nav-btn:hover {
+    background: var(--bg-raised);
+    color: var(--text-primary);
+  }
+  .nav-btn.active {
+    background: var(--bg-overlay);
+    color: var(--text-primary);
+  }
+  .nav-btn:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
   }
 
-  .btn-close:hover {
-    background: var(--bg-panel-2);
-  }
-
-  /* Appearance tab */
-  .theme-section {
+  .content {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--s3);
+    padding: var(--s4) var(--s5);
+    overflow-y: auto;
   }
 
-  .section-label {
-    font-size: 11px;
-    color: var(--text-muted);
+  .head {
+    font-size: 10px;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    letter-spacing: 0.12em;
+    color: var(--text-muted);
+  }
+  .head:not(:first-child) {
+    margin-top: var(--s3);
   }
 
+  .mono {
+    font-family: "JetBrains Mono", monospace;
+  }
+
+  /* --- Theme cards --- */
   .theme-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
+    gap: var(--s3);
   }
-
   .theme-card {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 10px;
-    border: 2px solid var(--border-subtle);
-    border-radius: 10px;
-    background: var(--bg-panel-2);
+    gap: var(--s2);
+    padding: var(--s2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    background: var(--bg-raised);
     cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
     text-align: left;
+    transition: border-color 0.14s, background 0.14s;
   }
-
   .theme-card:hover {
     border-color: var(--border-strong);
-    background: var(--bg-panel-3);
   }
-
   .theme-card.active {
     border-color: var(--accent);
   }
+  .theme-card:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+  }
 
-  .theme-preview {
+  .preview {
     display: flex;
-    border-radius: 6px;
-    overflow: hidden;
-    height: 72px;
+    height: 68px;
     border: 1px solid var(--border-subtle);
+    border-radius: var(--r-sm);
+    overflow: hidden;
   }
-
-  .preview-sidebar {
-    width: 28px;
-    flex-shrink: 0;
+  .p-side {
+    width: 26px;
+    flex: none;
   }
-
-  .preview-main {
+  .p-main {
     flex: 1;
     display: flex;
     flex-direction: column;
   }
-
-  .preview-header {
-    height: 10px;
-    flex-shrink: 0;
+  .p-head {
+    height: 9px;
+    flex: none;
   }
-
-  .preview-content {
+  .p-body {
     flex: 1;
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 6px 8px;
+    padding: var(--s2);
     justify-content: center;
   }
-
-  .preview-line {
+  .p-line {
     height: 3px;
     border-radius: 2px;
     width: 80%;
     opacity: 0.5;
   }
-
-  .preview-line.short {
+  .p-line.short {
     width: 50%;
-    opacity: 0.8;
+    opacity: 0.9;
+  }
+  .p-input {
+    height: 9px;
+    flex: none;
   }
 
-  .preview-input {
-    height: 10px;
-    flex-shrink: 0;
-  }
-
-  .theme-label {
+  .theme-name {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--text-primary);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  }
+  .active-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: var(--r-full);
+    background: var(--accent);
   }
 
-  .theme-active-badge {
-    font-size: 9px;
-    color: var(--accent);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-  }
-
-  /* --- Settings rows --- */
-
+  /* --- Setting rows --- */
   .setting-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border-subtle);
+    gap: var(--s3);
+    padding: var(--s2) 0;
   }
-
   .setting-info {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    min-width: 0;
   }
-
   .setting-label {
     font-size: 12px;
     color: var(--text-primary);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
-
   .setting-hint {
     font-size: 10px;
     color: var(--text-muted);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
   .zoom-controls {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--s2);
+    flex: none;
   }
-
   .zoom-btn {
-    width: 28px;
-    height: 28px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 14px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    cursor: pointer;
-    display: flex;
+    width: 26px;
+    height: 26px;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.15s, color 0.15s;
+    font: inherit;
+    font-size: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-raised);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.14s, color 0.14s;
   }
-
   .zoom-btn:hover:not(:disabled) {
-    background: var(--bg-panel-2);
+    background: var(--bg-overlay);
     color: var(--text-primary);
   }
-
   .zoom-btn:disabled {
-    opacity: 0.3;
+    opacity: 0.35;
     cursor: default;
   }
-
   .zoom-value {
     min-width: 44px;
     text-align: center;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-primary);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     font-variant-numeric: tabular-nums;
   }
-
   .zoom-reset {
-    padding: 4px 10px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
+    font: inherit;
+    font-size: 11px;
+    padding: 4px var(--s2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
     background: transparent;
     color: var(--text-muted);
-    font-size: 10px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
-    margin-left: 4px;
-    transition: background 0.15s, color 0.15s;
+    transition: background 0.14s, color 0.14s;
   }
-
   .zoom-reset:hover:not(:disabled) {
-    background: var(--bg-panel-2);
+    background: var(--bg-raised);
     color: var(--text-primary);
   }
-
   .zoom-reset:disabled {
-    opacity: 0.3;
+    opacity: 0.35;
     cursor: default;
   }
 </style>
