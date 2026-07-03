@@ -8,13 +8,28 @@
   import Avatar from "$lib/ui/Avatar.svelte";
   import AssistantBlock from "./AssistantBlock.svelte";
   import ToolActivityChip from "./ToolActivityChip.svelte";
+  import ClassificationPill from "./ClassificationPill.svelte";
+  import { classifierStore } from "$lib/classifierStore.svelte";
 
   interface Props {
     agent: Agent;
     items: DisplayItem[];
     streamingMessage: AssistantMessage | null;
+    /** MON-82: global user-turn ordinal per item — enables the complexity
+     * pill lookup. Omitted in read-only viewers (session history). */
+    userOrdinals?: Map<DisplayItem, number> | null;
   }
-  let { agent, items, streamingMessage }: Props = $props();
+  let { agent, items, streamingMessage, userOrdinals = null }: Props = $props();
+
+  let classifications = $derived(
+    userOrdinals ? classifierStore.byAgent.get(agent.id)?.ordinalMap ?? null : null,
+  );
+
+  function classificationFor(item: DisplayItem) {
+    if (!classifications || !userOrdinals) return null;
+    const ord = userOrdinals.get(item);
+    return ord === undefined ? null : classifications.get(ord) ?? null;
+  }
 
   let scroller: HTMLDivElement | undefined = $state();
   let pinned = true;
@@ -38,8 +53,14 @@
 <div class="stream" bind:this={scroller} onscroll={onScroll}>
   {#each items as item, i (i)}
     {#if item.kind === "user"}
+      {@const clf = classificationFor(item)}
       <div class="turn user">
-        <div class="bubble">{item.content}</div>
+        <div class="user-stack">
+          <div class="bubble">{item.content}</div>
+          {#if clf}
+            <ClassificationPill info={clf} />
+          {/if}
+        </div>
       </div>
     {:else if item.kind === "assistant"}
       {#if item.content.length === 0}
@@ -94,8 +115,9 @@
   }
   .turn { display: flex; min-width: 0; }
   .turn.user { justify-content: flex-end; }
+  .user-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; max-width: 85%; }
   .turn.user .bubble {
-    max-width: 85%;
+    max-width: 100%;
     background: var(--accent-bg-subtle);
     border: 1px solid var(--accent-border-subtle);
     border-radius: var(--r-md);

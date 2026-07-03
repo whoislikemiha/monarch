@@ -103,22 +103,23 @@ If you add a new table, command, event channel, or convention — it belongs in 
 | Sidecar  | `sidecar/src/model-resolver.ts`                       | Dynamic model registration + thinking-level resolution                      |
 | Sidecar  | `sidecar/src/stored-content.ts`                       | Stored message content parsing + normalization helpers                      |
 | Sidecar  | `sidecar/src/memory-tools.ts`                         | Pi tool definitions for memory search/inject                                |
-| Frontend | `src/App.svelte`                                      | App shell, restore flow, agent creation                                     |
-| Frontend | `src/lib/AgentView.svelte`                            | Live agent UI, event handling, session continuation                         |
-| Frontend | `src/lib/AgentRoster.svelte`                          | Left-rail agent list (portraits + status)                                   |
-| Frontend | `src/lib/ChatInput.svelte`                            | Composer: textarea, attachments, @-mention autocomplete                     |
+| Frontend | `src/App.svelte`                                      | App shell frame: TopBar + AgentRail + PanelHost, boot sequence, global keys |
+| Frontend | `src/lib/shell/AgentRail.svelte`                      | Left-rail roster (project groups, grade rings, context menu)                |
+| Frontend | `src/lib/shell/PanelHost.svelte`                      | Center view + right dock of pinnable inspector panels + icon rail           |
+| Frontend | `src/lib/layout/panelRegistry.ts`                     | Dock panel registry — add an inspector panel here                           |
+| Frontend | `src/lib/workspace/SoloWorkspace.svelte`              | Live agent workspace: header + arrangeable timeline/chat tiles              |
+| Frontend | `src/lib/workspace/Composer.svelte`                   | Chat composer (Enter sends, auto-grow)                                      |
 | Frontend | `src/lib/api.ts`                                      | Unified IPC (Tauri webview or WebSocket fallback)                           |
 | Frontend | `src/lib/bindings.ts`                                 | Auto-generated Tauri command types (**do not edit**)                        |
 | Frontend | `src/lib/toolbox/liveAgentStore.svelte.ts`            | Per-agent reactive state (SvelteMap + `$state`)                             |
 | Frontend | `src/lib/toolbox/objectiveStore.svelte.ts`                | Per-agent objective tree + event-log slice (MON-83)                             |
-| Frontend | `src/lib/toolbox/tools/ObjectiveTimelineTool.svelte`      | Read-only objective timeline + manual create form (MON-83)                      |
 | Frontend | `src/lib/workspace/timelineStore.svelte.ts`               | Paged per-agent execution-timeline feed + live head refresh (MON-124)           |
 | Frontend | `src/lib/workspace/TimelinePane.svelte`                   | Workspace timeline: NOW strip, segments, action cards, infinite scroll (MON-124)|
 | Frontend | `src/lib/workspace/timelineModel.ts`                      | Timeline view-model: payload parsing, action grouping, live tool merge (MON-124)|
 | Frontend | `src/lib/toolbox/tools/SessionHistoryTool.svelte`         | Session-history dock panel: list, read-only view, rename, continue, new session (MON-127) |
 | Frontend | `src/lib/classifierStore.svelte.ts`                   | Per-agent user-turn complexity classifications (MON-82)                     |
-| Frontend | `src/lib/ClassificationPill.svelte`                   | Read-only complexity pill shown beside each user message (MON-82)           |
-| Frontend | `src/lib/toolbox/tools/ClassifierSettingsTool.svelte` | Global classifier config: primary/fallback models, timeout, prompt (MON-82) |
+| Frontend | `src/lib/workspace/message/ClassificationPill.svelte` | Read-only complexity pill under each live user turn (MON-82)                |
+| Frontend | `src/lib/toolbox/tools/ClassifierSettingsTool.svelte` | Global classifier config dock panel: models, timeout, prompt (MON-82)       |
 | Rust     | `src-tauri/src/config/classifier.rs`                  | `classifier.toml` loader + Tauri commands (MON-82)                          |
 | Sidecar  | `sidecar/src/classifier.ts`                           | One-shot Haiku/LM Studio classifier invoked on every user turn (MON-82)     |
 | Frontend | `src/lib/stores/agentStore.svelte.ts`                 | Active/saved agent list + selection state                                   |
@@ -157,7 +158,7 @@ Monarch is mid-migration to a flat, token-driven visual language. **New surfaces
 - **Sidecar is singleton** — one Node process hosts many agents, keyed by `agentId`. Not one process per agent.
 - **Legacy columns** — `sessions.pi_session_file` and `agents.custom_prompt` exist in the schema but are inert. Don't build on them.
 - **Schema evolves via `ALTER TABLE` migrations** — `db::init_schema` applies idempotent `ALTER TABLE` / `CREATE TABLE IF NOT EXISTS` blocks at the end of init. Never rewrite the base `CREATE TABLE` for columns added post-launch — add a new migration block. Current post-launch columns: `sessions.parent_session_id`, `agents.project_id`, `agents.context_window`, `agents.archived_at`, `agents.avatar_type`, `agents.avatar_path`, `agents.current_objective_id`, `agents.identity_version_id`, `messages.duration_ms`, `messages.objective_id`, `objective_nodes.scope`, `objective_nodes.current_direction`, `objective_nodes.rationale`, `objective_nodes.fork_parent_id`, `objective_nodes.kind` (P1), `projects.root_objective_id` (P1), `sessions.title` (MON-127). Post-launch tables: `projects`, `agent_templates`, `ui_state`, `agent_stats`, `agent_tool_usage`, `message_attachments`, `objective_nodes`, `objective_events`, `objective_plan_items`, `objective_refs`, `objective_reports`, `classifications`, `captain`, `captain_identity_versions`, `shadow_identity_versions`, `agent_working_memory`, `memories`, `memories_fts`, `memory_keeper_runs`.
-- **Classifier is advisory, per-user-turn** (MON-82) — the sidecar fires a one-shot `complete()` against Haiku (default) or LM Studio in parallel with every user turn, emits `agent-classification-{id}`, and annotates the forwarded user `message_end` with `classification_id` so Rust can backfill the FK. Failures log a "failed" pill but never block the turn. No consumer of the label in Slice 1 — Slice 3 (Architect, MON-84) is the first reader. Config is global at `~/.config/monarch/classifier.toml`; the system prompt lives in `config/classifier.rs` (read-only in the settings UI).
+- **Classifier is advisory, per-user-turn** (MON-82) — the sidecar fires a one-shot `complete()` against Haiku (default) or LM Studio in parallel with every user turn, emits `agent-classification-{id}`, and annotates the forwarded user `message_end` with `classification_id` so Rust can backfill the FK. Failures log a "failed" pill but never block the turn. The label renders as a `ClassificationPill` under each live user turn (keyed by global user-turn ordinal — `classifierStore` FIFO-assigns events, `ChatThread` threads the ordinal map through pane filtering); Slice 3 (Architect, MON-84) is the first machine reader. Config is global at `~/.config/monarch/classifier.toml`, editable in the "Classifier" dock panel; the system prompt lives in `config/classifier.rs` (read-only in the settings UI).
 
 - **The workspace timeline is a flat chronological feed projection** (MON-124) — `db_list_agent_timeline` pages on top-level `objective_events` (`parent_event_id IS NULL`, `(created_at, id)` cursor, newest-first) joined through `objective_nodes.assignee_shadow_id` with `kind='objective'`; children and objective metadata ride along per page. **Narration augments the stream, it doesn't contain it**: a tool call with no current narrated action persists top-level and renders as a bare tool row; narrated actions group only the tools they claim. Tool-call payloads carry a normalized `target` extracted at record time (previews are truncated — don't parse `args_preview`). Supervisor-opened scoped chats record a `chat_spawned` child event under the action. Chat panes never render tool tables — `ToolActivityChip` links a turn's tool group to its timeline row by `tool_call_id`. Keep action-card children heterogeneous (tools, decisions, chats, future delegated runs) — that's the Arc II seam.
 - **Narration is tool-driven and objective-free** (MON-124) — `set_current_action(intent)` is the ONE grouping mechanism: it opens an action and subsequent tool calls nest under it until the next action opens (the prompt instructs this as "one extra tool call before each chunk"). There is deliberately NO text-harvesting of chat into headlines — unnarrated tools render as bare timeline rows, which is the honest floor. Narration/tool events with no current objective land on the agent's **scratch objective** (`scratch-{agent_id}`, `ensure_scratch_objective_internal`, created silently, never closed/graded/reported) — unscoped work is durable, not dropped.
@@ -173,12 +174,12 @@ Monarch is mid-migration to a flat, token-driven visual language. **New surfaces
 - **Thinking levels are Pi-canonical on the wire** — `off` / `minimal` / `low` / `medium` / `high` / `xhigh`. `off` is a first-class value (pi-agent-core maps it to `undefined` reasoning). Per-provider display labels and per-model supported subsets live in `src/lib/thinking.ts`. Per-model defaults come from `~/.config/monarch/thinking.toml` (see `src-tauri/src/config/thinking.rs`); absence of a matching entry falls back to a conservative built-in table.
 - **Toolbox tools stay mounted across agent switches** — if your tool keeps per-agent state, key it by `agentContext.agentId`.
 
-## Adding a Toolbox Tool
+## Adding a Dock Panel (inspector)
 
-1. Create component at `src/lib/toolbox/tools/YourTool.svelte` — must accept `{ agentContext }: ToolProps`.
-2. Register it in `src/lib/toolbox/registry.ts` with a stable `id`, `title`, SVG `icon`, and optional `order`.
-3. (Optional) Add backend: Tauri command in `src-tauri/src/toolbox/`, register in `lib.rs` handler + `websocket/dispatch.rs` dispatch.
+1. Create component at `src/lib/toolbox/tools/YourTool.svelte` — must accept `{ agentContext }: ToolProps`. `agentContext.live` is **null for sleeping agents**; DB-backed panels must render without it.
+2. Register it in `src/lib/layout/panelRegistry.ts` (`PANELS`) with a stable `id`, `title`, and inline SVG `icon`. PanelHost handles docking/pinning/resizing generically.
+3. (Optional) Add backend: Tauri command in `src-tauri/src/`, register in `lib.rs` handler **and** the matching `websocket/handlers/` module + `dispatch.rs` arm (browser-mode dev breaks otherwise).
 
-Existing tools to crib from: `PlaceholderTool.svelte` (full store + backend path), `ContextInspectorTool.svelte` (reads `agentContext.live`), `AgentStatsTool.svelte` (pulls from `db_get_agent_stats`).
+Existing panels to crib from: `SessionHistoryTool.svelte` (list + inline viewer + actions), `MemoryInspectorTool.svelte` (search + tree + inline detail), `AgentStatsTool.svelte` (DB-backed meters/rows), `ContextInspectorTool.svelte` (live-state panel with asleep fallback).
 
 Full guide: [ONBOARDING.md](./ONBOARDING.md) section 7.

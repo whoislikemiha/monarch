@@ -116,11 +116,19 @@ pub(crate) async fn dispatch_command(
         "db_list_classifications_for_agent" => objectives::db_list_classifications_for_agent(state, args).await,
         "db_get_classification_for_message" => objectives::db_get_classification_for_message(state, args).await,
 
+        // Agent service record (stats panel).
+        "db_get_agent_stats" => agents::db_get_agent_stats(state, args).await,
+
         // ---- MON-98: Supervisor / agent identity ----
         "get_captain_identity" => agents::get_captain_identity(state, args).await,
         "upsert_captain_identity" => agents::upsert_captain_identity(state, args).await,
         "get_shadow_identity" => agents::get_shadow_identity(state, args).await,
         "upsert_shadow_identity" => agents::upsert_shadow_identity(state, args).await,
+
+        // ---- MON-82: classifier config (global) ----
+        "classifier_get_config" => misc::classifier_get_config(state, args).await,
+        "classifier_set_config" => misc::classifier_set_config(state, args).await,
+        "classifier_get_config_path" => misc::classifier_get_config_path(state, args).await,
 
         // ---- MON-99: Memory config ----
         "memory_get_config" => memories::memory_get_config(state, args).await,

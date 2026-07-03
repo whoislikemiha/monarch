@@ -16,7 +16,9 @@
 export function formatCost(n: number | null | undefined): string | null {
   if (n == null || n <= 0) return null;
   if (n < 0.0001) return "<$0.0001";
-  return "$" + n.toFixed(4);
+  // Sub-cent costs keep 4 decimals (per-turn chips); real money reads as money.
+  if (n < 0.01) return "$" + n.toFixed(4);
+  return "$" + n.toFixed(2);
 }
 
 /**

@@ -46,12 +46,17 @@ export interface AgentSetupContext {
   projectInstructions: string | null;
 }
 
-/** Context handed to every toolbox tool. Null when no agent is active. */
+/**
+ * Context handed to every toolbox tool. Null when no agent is active.
+ * `live` is null while the agent has no running/restored session — DB-backed
+ * panels (stats, memory, sessions, identity) must render without it; only
+ * live-state panels (context inspector) degrade to an explanatory empty state.
+ */
 export type AgentContext =
   | {
       agentId: string;
       agent: Agent;
-      live: LiveAgentState;
+      live: LiveAgentState | null;
       setup: AgentSetupContext;
     }
   | null;

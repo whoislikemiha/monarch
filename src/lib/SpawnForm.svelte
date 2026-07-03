@@ -180,6 +180,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
+<div class="form">
 <TemplateSelector onselect={applyTemplate} />
 
 <ModelSelector bind:provider bind:model bind:thinkingLevel bind:contextWindow bind:modelsStatus />
@@ -284,29 +285,39 @@
     <span class="shortcut">Ctrl+Enter</span>
   </button>
 </div>
+</div>
 
 <style>
+  /* Vertical rhythm for the whole dialog — SpawnForm renders into the Modal
+     body, which has no stacking of its own. */
+  .form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+  }
+
+  /* Design-system restyle: Inter for labels/copy, mono only for paths.
+     Foundation tokens throughout. */
   .section {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--s2);
   }
 
   .label {
-    font-size: 11px;
+    font-size: 10px;
+    font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    letter-spacing: 0.12em;
   }
 
   .template-save-check {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 11px;
+    font-size: 11.5px;
     color: var(--text-secondary);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
     user-select: none;
   }
@@ -332,7 +343,7 @@
 
   .project-chips {
     display: flex;
-    gap: 8px;
+    gap: var(--s2);
     flex-wrap: wrap;
   }
 
@@ -340,25 +351,26 @@
     display: flex;
     align-items: center;
     gap: 2px;
-    padding: 6px 12px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    background: var(--bg-panel-2);
-    color: var(--text-secondary);
+    font: inherit;
     font-size: 12px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    font-weight: 500;
+    padding: 5px var(--s3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-raised);
+    color: var(--text-secondary);
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    transition: background 0.14s, border-color 0.14s, color 0.14s;
   }
 
   .project-chip:hover {
-    background: var(--bg-panel-3);
-    border-color: var(--accent-border-subtle);
+    background: var(--bg-overlay);
+    border-color: var(--border-strong);
     color: var(--text-primary);
   }
 
   .project-chip.active {
-    background: var(--accent-bg-hover);
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised));
     border-color: var(--accent);
     color: var(--accent);
   }
@@ -371,17 +383,16 @@
   .project-info {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--accent-border-subtle);
-    background: var(--accent-bg-subtle);
+    gap: 3px;
+    padding: var(--s2) var(--s3);
+    border-radius: var(--r-md);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    background: color-mix(in srgb, var(--accent) 6%, var(--bg-raised));
   }
 
   .project-info-label {
     font-size: 12px;
     font-weight: 600;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     color: var(--text-primary);
     display: flex;
     align-items: center;
@@ -396,135 +407,150 @@
   .project-info-path {
     font-size: 10px;
     color: var(--text-muted);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    font-family: "JetBrains Mono", monospace;
     overflow-wrap: anywhere;
   }
 
   .project-info-tag {
-    font-size: 10px;
+    font-size: 10.5px;
     color: var(--accent);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
   .cwd-row {
     display: flex;
-    gap: 6px;
+    gap: var(--s2);
   }
 
   .cwd-row input {
     flex: 1;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11.5px;
   }
 
   .browse-btn {
-    padding: 8px 12px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    background: var(--bg-panel-2);
-    color: var(--text-secondary);
+    font: inherit;
     font-size: 12px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    padding: 7px var(--s3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-raised);
+    color: var(--text-secondary);
     cursor: pointer;
-    transition: background 0.15s;
+    transition: background 0.14s;
     flex-shrink: 0;
   }
 
   .browse-btn:hover {
-    background: var(--bg-panel-3);
+    background: var(--bg-overlay);
+    color: var(--text-primary);
   }
 
   .row {
     display: flex;
-    gap: 12px;
+    gap: var(--s3);
     flex-wrap: wrap;
   }
 
   .field {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 5px;
     flex: 1;
     min-width: 0;
   }
 
   input,
   select {
+    font: inherit;
+    font-size: 12.5px;
     width: 100%;
-    background: var(--bg-panel-2);
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
     color: var(--text-primary);
-    font-size: 12px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    padding: 8px 10px;
-    outline: none;
+    padding: 7px var(--s3);
+    transition: border-color 0.14s, background 0.14s;
   }
 
   input::placeholder {
     color: var(--text-muted);
-    opacity: 0.6;
   }
 
   input:focus,
   select:focus {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
     border-color: var(--accent);
+    background: var(--bg-overlay);
   }
 
   select {
     cursor: pointer;
     appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%), linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+    background-position: calc(100% - 15px) 14px, calc(100% - 10px) 14px;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
   }
 
   .actions {
     display: flex;
     justify-content: flex-end;
-    gap: 8px;
-    margin-top: 4px;
+    gap: var(--s2);
+    margin-top: var(--s1);
   }
 
   .btn-cancel {
-    padding: 8px 16px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 8px;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 7px var(--s4);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
     background: transparent;
     color: var(--text-secondary);
-    font-size: 12px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
-    transition: background 0.15s;
+    transition: background 0.14s, color 0.14s, border-color 0.14s;
   }
 
   .btn-cancel:hover {
-    background: var(--bg-panel-2);
+    background: var(--bg-raised);
+    color: var(--text-primary);
+    border-color: var(--border-strong);
   }
 
   .btn-spawn {
-    padding: 8px 20px;
-    border: none;
-    border-radius: 8px;
-    background: var(--accent);
-    color: var(--text-on-accent);
-    font-size: 12px;
+    font: inherit;
+    font-size: 12.5px;
     font-weight: 600;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    padding: 7px var(--s4);
+    border: 1px solid var(--accent);
+    border-radius: var(--r-md);
+    background: var(--accent);
+    color: var(--accent-ink);
     cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 8px;
-    transition: background 0.15s;
+    gap: var(--s2);
+    transition: background 0.14s;
   }
 
   .btn-spawn:hover {
     background: var(--accent-hover);
+    border-color: var(--accent-hover);
   }
 
   .btn-spawn:disabled {
-    background: var(--bg-panel-2);
+    background: var(--bg-raised);
+    border-color: var(--border);
     color: var(--text-muted);
     cursor: not-allowed;
   }
 
-  .btn-spawn:disabled:hover {
-    background: var(--bg-panel-2);
+  .btn-spawn:focus-visible,
+  .btn-cancel:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
   }
 
   .action-hint {
@@ -534,9 +560,10 @@
   }
 
   .shortcut {
+    font-family: "JetBrains Mono", monospace;
     font-size: 10px;
     font-weight: 400;
-    opacity: 0.6;
+    opacity: 0.7;
   }
 
   @media (max-width: 640px) {

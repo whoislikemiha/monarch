@@ -61,7 +61,8 @@
     >
       <ThinkingMeter intensity={currentIntensity} />
       <span class="trigger-label">{currentLabel}</span>
-      <span class="caret" aria-hidden="true">{direction === "up" ? "▴" : "▾"}</span>
+      <!-- "chev", not "caret" — .caret is the app-wide streaming-cursor atom (atoms.css). -->
+      <span class="chev" aria-hidden="true">{direction === "up" ? "▴" : "▾"}</span>
     </button>
     {#if open}
       <div class="menu" role="listbox">
@@ -85,6 +86,7 @@
 {/if}
 
 <style>
+  /* Flat design-system restyle — depth = elevation + border, no shadows/glows. */
   .picker {
     position: relative;
     display: inline-flex;
@@ -93,50 +95,54 @@
   .trigger {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    padding: 6px 10px;
-    border-radius: 6px;
-    background: var(--bg-panel-2);
-    border: 1px solid var(--border-subtle);
+    gap: var(--s2);
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 500;
+    padding: 5px var(--s2);
+    border-radius: var(--r-md);
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
     color: var(--text-secondary);
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+    transition: background 0.14s, border-color 0.14s, color 0.14s;
   }
 
   .trigger:hover {
-    background: var(--bg-panel-3);
+    background: var(--bg-overlay);
     border-color: var(--border-strong);
   }
 
+  .trigger:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+  }
+
   .trigger.level-cool {
-    border-color: var(--accent-blue-border-subtle);
-    color: var(--accent-blue);
+    border-color: color-mix(in srgb, var(--status-info) 35%, transparent);
+    color: var(--status-info);
   }
 
   .trigger.level-warm {
-    border-color: var(--accent-border-subtle);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
     color: var(--accent);
   }
 
   .trigger.level-hot {
-    border-color: var(--accent-border-hover);
+    border-color: var(--accent);
     color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent-border-subtle) inset;
   }
 
   .trigger.level-max {
-    border-color: var(--warning-border-subtle);
-    color: var(--warning);
-    box-shadow: 0 0 6px var(--warning-glow), 0 0 0 1px var(--warning-border-faint) inset;
+    border-color: var(--status-warning);
+    color: var(--status-warning);
   }
 
   .trigger-label {
-    letter-spacing: 0.2px;
+    letter-spacing: 0.01em;
   }
 
-  .caret {
+  .chev {
     font-size: 9px;
     opacity: 0.55;
   }
@@ -144,15 +150,14 @@
   .menu {
     position: absolute;
     left: 0;
-    background: var(--bg-panel-2);
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    padding: 4px;
+    background: var(--bg-overlay);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    padding: var(--s1);
     z-index: 50;
     display: flex;
     flex-direction: column;
     min-width: 160px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   }
 
   .picker:not(.dir-up) .menu {
@@ -166,27 +171,27 @@
   .option {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 6px 10px;
+    gap: var(--s2);
+    padding: 6px var(--s2);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     background: transparent;
     color: var(--text-secondary);
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    font: inherit;
+    font-size: 11.5px;
     cursor: pointer;
     text-align: left;
     transition: background 0.1s, color 0.1s;
   }
 
   .option:hover {
-    background: var(--bg-panel-3);
+    background: var(--bg-raised);
     color: var(--text-primary);
   }
 
   .option.active {
     color: var(--accent);
-    background: var(--accent-bg-subtle);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
   }
 
   .opt-label {

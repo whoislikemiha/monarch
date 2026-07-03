@@ -175,3 +175,9 @@ pub(crate) async fn upsert_shadow_identity(state: &WsState, args: Value) -> Resu
         .await?;
     Ok(Value::Null)
 }
+
+pub(crate) async fn db_get_agent_stats(state: &WsState, args: Value) -> Result<Value, MonarchError> {
+    let agent_id = str_field(&args, "agentId")?;
+    let stats = state.db.get_agent_stats_internal(&agent_id).await?;
+    serde_json::to_value(stats).map_err(MonarchError::from)
+}

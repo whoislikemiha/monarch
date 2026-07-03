@@ -348,7 +348,7 @@ Sidecar ([`sidecar/src/runtime-manager.ts`](./sidecar/src/runtime-manager.ts) `c
 
 ### 5.2 Run (user sends a message)
 
-1. `ChatInput.svelte` → `AgentView.svelte` → `invoke("send_command", { id, commandJson })`.
+1. `Composer.svelte` → `ChatThread.send` → `LiveBinding.sendPrompt` → `invoke("send_command", { id, commandJson })`.
 2. Rust injects `agentId` into the command and calls `send_with_recovery()`.
 3. Sidecar routes by command type (`prompt`, `abort`, `set_model`, `set_thinking_level`, `compact`, `new_session`, `set_custom_prompt`, ...).
 4. Pi runs the LLM loop, streaming events (`message_start` → `message_update` → `message_end`, `tool_execution_*`, `turn_*`).
@@ -358,7 +358,7 @@ Sidecar ([`sidecar/src/runtime-manager.ts`](./sidecar/src/runtime-manager.ts) `c
    - Feeds the event into the per-agent `LiveAgentState::apply_event` state machine (`src-tauri/src/agent/state.rs`) — Rust owns turn assembly: streaming messages, tool-group stitching, `lastUsage`, `activityStatus`, etc.
    - Emits the assembled snapshot on `agent-state-{agent_id}` as a JSON-encoded string, with a 16ms debounce coalescing streaming `message_update`s (terminal events flush immediately).
 7. Legacy `agent-event-{agent_id}` forwarding is still present for out-of-band signals only: `session_ready`, `sidecar_error`, and `extension_ui_request`. **Message and tool events are not consumed from this channel by the frontend anymore.** The raw `event` forward on this topic is pending removal (MON-14 follow-up).
-8. `AgentView.svelte` uses a **pull-then-subscribe** pattern: on bind, `invoke("get_agent_state", { agentId })` seeds `liveAgentStore`, then `listen("agent-state-{id}")` applies incremental snapshots. Snapshots are reconciled by `stateVersion` — any incoming snapshot with `version <= entry.stateVersion` is dropped.
+8. `LiveBinding` (per `SoloWorkspace` mount) uses a **pull-then-subscribe** pattern: on bind, `invoke("get_agent_state", { agentId })` seeds `liveAgentStore`, then `listen("agent-state-{id}")` applies incremental snapshots. Snapshots are reconciled by `stateVersion` — any incoming snapshot with `version <= entry.stateVersion` is dropped.
 
 **Important:** the frontend **never** writes to the DB for conversation history and **never** assembles turn state. Rust owns persistence and the authoritative live view. The frontend is a passive receiver of Rust-assembled snapshots.
 
@@ -367,8 +367,8 @@ Sidecar ([`sidecar/src/runtime-manager.ts`](./sidecar/src/runtime-manager.ts) `c
 1. App startup: `App.svelte` calls `db_get_agents` and populates `savedAgents[]`, shows the restore bar.
 2. User clicks "Restore All" (or one specifically). `restoreAgent()` calls `createAgent()` with `reuseExistingSession: true` and a `sourceSessionId` pointing at the session to replay.
 3. The normal spawn flow runs (steps 5.1), but using the existing session row instead of creating a new one.
-4. `AgentView.bindAgent` calls `rebuild_agent_state_from_session` with the `sourceSessionId`, which loads messages from SQLite (following parent-session ancestry), rebuilds `LiveAgentState.items` via `display_items_from_messages`, replaces the in-memory entry, and returns the new snapshot. The frontend seeds its store from the returned value (and Rust also emits the same snapshot on `agent-state-{id}`).
-5. When the sidecar emits `session_ready`, `AgentView` notices `sourceSessionId` was pending and calls `load_session_context` — Rust walks ancestry and sends a `load_session` command to inject messages into the sidecar's LLM context.
+4. `LiveBinding.bind` calls `rebuild_agent_state_from_session` with the `sourceSessionId`, which loads messages from SQLite (following parent-session ancestry), rebuilds `LiveAgentState.items` via `display_items_from_messages`, replaces the in-memory entry, and returns the new snapshot. The frontend seeds its store from the returned value (and Rust also emits the same snapshot on `agent-state-{id}`).
+5. When the sidecar emits `session_ready`, `LiveBinding` notices `sourceSessionId` was pending and calls `load_session_context` — Rust walks ancestry and sends a `load_session` command to inject messages into the sidecar's LLM context.
 6. Sidecar's `loadSession` reconstructs messages (user / assistant / toolResult) and pushes them into `session.agent.state.messages` plus the session manager's persisted log.
 
 ### 5.4 Recover from sidecar crash
@@ -473,28 +473,29 @@ Model discovery lives in [`src-tauri/src/models.rs`](./src-tauri/src/models.rs) 
 
 ## 7. Frontend layout
 
-### Component tree
+### Component tree (v2 command-center shell)
 
 ```
-App.svelte                       — root: agents[], activeId, session restore, keybindings
-├── Sidebar.svelte               — active + saved agents
-├── SpawnDialog.svelte           — modal chrome for the new-agent flow
-│   └── SpawnForm.svelte         — form body (agent identity, cwd, save-as-template)
+App.svelte                         — frame: boot sequence, global keys, zoom
+├── shell/TopBar.svelte            — brand, breadcrumb, view tabs, theme, supervisor
+├── shell/AgentRail.svelte         — left roster (project groups, grade rings)
+│   └── shell/AgentRow.svelte      — avatar + name + grade chip + hover action
+├── shell/PanelHost.svelte         — center view + right dock + inspector icon rail
+│   ├── views/AgentsView.svelte    — wraps the active agent's workspace
+│   │   └── workspace/SoloWorkspace.svelte — AgentHeader + arrangeable tile stack
+│   │       ├── workspace/AgentHeader.svelte   — status, thinking, spend, actions
+│   │       ├── workspace/TimelinePane.svelte  — NOW strip + execution timeline
+│   │       └── workspace/ChatThread.svelte    — one chat pane (shared session)
+│   │           ├── workspace/message/MessageStream.svelte — turns + pills + chips
+│   │           └── workspace/Composer.svelte  — textarea, Enter to send
+│   ├── views/ProjectsView.svelte  — project chips + campaign tree + objective detail
+│   └── dock panels (layout/panelRegistry.ts):
+│       Sessions · Memory · Context · Architect · Stats · Identity · Classifier
+├── SpawnDialog.svelte             — modal chrome for the new-agent flow
+│   └── SpawnForm.svelte           — form body (identity, cwd, save-as-template)
 │       ├── TemplateSelector.svelte — load/apply/delete AgentTemplateRow chips
 │       └── ModelSelector.svelte    — provider, model picker, LM Studio ctx, thinking
-├── AgentView.svelte             — main workspace per active agent
-│   ├── AgentHeader.svelte       — name, model, agent grade
-│   ├── AgentControls.svelte     — thinking level, token/cost counter, abort
-│   ├── MessageList.svelte       — rendered display items
-│   │   ├── AssistantMessage.svelte  — text / thinking / tool call blocks
-│   │   ├── ToolGroup.svelte         — groups of tool executions
-│   │   └── ToolCallCard.svelte      — individual tool call + result
-│   ├── ChatInput.svelte         — textarea, auto-resize, Enter to send
-│   ├── MentionAutocomplete.svelte — @-mention file/folder dropdown (sibling to a textarea)
-│   ├── PromptEditor.svelte      — modal to edit system prompt override
-│   └── ExtensionDialog.svelte   — handles Pi extension UI requests
-├── toolbox/ToolPanelStack.svelte — vertically stacked tool panels (resizable)
-└── toolbox/ToolRail.svelte      — right-edge vertical icon strip
+└── NotificationStack.svelte       — app-wide toasts (MON-51)
 ```
 
 Shared types live in [`src/lib/types.ts`](./src/lib/types.ts). Toolbox types and
@@ -502,24 +503,18 @@ the live-state store live in [`src/lib/toolbox/`](./src/lib/toolbox/).
 
 ### State flow (Svelte 5 runes)
 
-Top-level (`App.svelte`):
-
-```ts
-let agents:       Agent[]              = $state([]);
-let activeId:     string | null        = $state(null);
-let savedAgents:  SavedAgentInfo[]     = $state([]);
-let openToolIds:  string[]             = $state(restoreOpenIds());
-let toolboxWidth: number               = $state(restoreWidth());
-```
+App-level state lives in module stores: `stores/agentStore.svelte.ts` (agent
+list + selection), `shell/viewStore.svelte.ts` (Agents/Projects view),
+`layout/layoutStore.svelte.ts` (open dock panels, widths, pins — persisted to
+`ui_state`), and `workspace/chatStore.svelte.ts` (tile arrangement + turn
+membership per agent).
 
 Per-agent live conversation state (items, tool executions, streaming message,
-etc.) lives in [`src/lib/toolbox/liveAgentStore.ts`](./src/lib/toolbox/liveAgentStore.ts)
-— a module-level `$state({ byAgent: Map })`. AgentView writes to and reads
-from the store exclusively, so the state survives the `{#key activeAgent.viewKey}`
-remount and is visible to toolbox tools via `AgentContext.live`.
-
-Per-agent `AgentView.svelte` keeps only genuinely UI-local state (streaming
-flag, extension request, showStderr, modal open flags, listener handles).
+etc.) lives in [`src/lib/toolbox/liveAgentStore.svelte.ts`](./src/lib/toolbox/liveAgentStore.svelte.ts)
+— a module-level store keyed by agent id. `SoloWorkspace` binds it per mount
+(keyed by `viewKey` for clean session remounts); dock panels see it via
+`AgentContext.live`, which is **null while the agent has no live session** —
+DB-backed panels (Sessions, Memory, Stats, Identity) render regardless.
 
 ### Notifications surface (MON-51)
 
@@ -548,7 +543,7 @@ Who pushes:
   sustained provider failure) surfaces as a toast. Pi's `session.prompt()` does
   not throw in that case — it resolves quietly and the retry-end event is the
   only signal — so the mirror lives at the listener, not in a try/catch.
-- `AgentView.handleNarrowEvent` keeps its own `console.error` for the active
+- `LiveBinding` keeps its own `console.error` for the active
   agent (dev diagnostic); the user-facing toast is emitted by the store.
 
 Out of scope today: `agent-stderr-{id}` is not yet emitted from Rust (see the
@@ -560,34 +555,35 @@ Event flow from backend to UI:
 1. Svelte calls `invoke("send_command", …)`.
 2. Rust → sidecar → Pi → Pi events → Rust.
 3. Rust persists to SQLite and emits `agent-event-{agentId}` on the Tauri event bus.
-4. `AgentView` listens on that topic and writes to `liveAgentStore.byAgent.get(id)`.
-5. Svelte's reactivity re-renders `AgentView` and any open toolbox tool.
+4. `LiveBinding` listens on that topic and writes to `liveAgentStore.byAgent.get(id)`.
+5. Svelte's reactivity re-renders the workspace and any open dock panel.
 
-### Adding a toolbox tool
+### Adding a dock panel (inspector)
 
-The toolbox is a pluggable registry. Adding a tool = editing one registry file
-plus creating one Svelte component. If the tool needs backend access, a typed
-Tauri command is added alongside.
+The right dock is a pluggable registry. Adding a panel = editing one registry
+file plus creating one Svelte component. If the panel needs backend access, a
+typed Tauri command is added alongside.
 
 1. **Create the component** at `src/lib/toolbox/tools/YourTool.svelte`. It must
    accept exactly `{ agentContext }: ToolProps` — the import is
    `import type { ToolProps } from "../types";`. Derive display from
    `agentContext` reactively. `agentContext.live` exposes `items`,
    `toolExecutions`, `streamingMessage`, `lastUsage`, `currentToolGroup`,
-   `activityStatus`, `eventCount` for the active agent.
-2. **Register it** by appending a `ToolDefinition` entry to
-   [`src/lib/toolbox/registry.ts`](./src/lib/toolbox/registry.ts) with a stable
-   `id`, human `title`, inline SVG `icon` string, the imported component, and
-   an optional `order` (lower = higher on the rail).
-3. **(Optional) Backend commands.** Create
-   `src-tauri/src/toolbox/your_tool.rs` with typed Tauri commands following
-   the placeholder pattern (`#[tauri::command]` wrapper + `ws_*` wrapper
-   calling a shared inner fn). Declare the submodule in
-   `src-tauri/src/toolbox/mod.rs`, add the commands to the `invoke_handler!`
-   in `src-tauri/src/lib.rs`, and add matching match arms to
-   `websocket::dispatch::dispatch_command` in `src-tauri/src/websocket/dispatch.rs`. Add a `ToolDescriptor`
-   to the list returned by `toolbox::descriptors()`.
-4. **Never import `@tauri-apps/api` directly** from a tool. All `invoke`
+   `activityStatus`, `eventCount` for the active agent — **and is `null`
+   while the agent has no live session**. DB-backed panels must render
+   without it; only genuinely live panels may show an "agent is asleep" state.
+2. **Register it** by appending a `PanelDef` entry to
+   [`src/lib/layout/panelRegistry.ts`](./src/lib/layout/panelRegistry.ts) with
+   a stable `id`, human `title`, inline SVG `icon` string, and the imported
+   component. `PanelHost` + `layoutStore` handle docking, pinning, reorder,
+   and per-panel heights generically.
+3. **(Optional) Backend commands.** Add typed `#[tauri::command]` fns in the
+   matching `src-tauri/src/` module, register them in the `invoke_handler!`
+   in `src-tauri/src/lib.rs`, and add a handler fn in the matching
+   `src-tauri/src/websocket/handlers/` module plus a match arm in
+   `websocket/dispatch.rs` — browser-mode dev goes through the WS bridge, so
+   a command missing there renders as "Not found" in the panel.
+4. **Never import `@tauri-apps/api` directly** from a panel. All `invoke`
    calls go through [`src/lib/api.ts`](./src/lib/api.ts) so the Tauri webview
    and the WS browser bridge both work.
 
@@ -760,25 +756,22 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `lib/ModelSelector.svelte` | Provider, model picker, auth status, thinking level, LM Studio context — reusable. |
 | `lib/providers.ts` | `PROVIDERS`, `REFRESHABLE_PROVIDERS`, `THINKING_LEVELS` catalogue. |
 | `lib/toolbox/tools/SessionHistoryTool.svelte` | Session-history dock panel: list, read-only view, rename, continue, new session (MON-127). |
-| `lib/AgentView.svelte` | Per-agent workspace + event listeners. |
-| `lib/AgentHeader.svelte` | Name / model / grade header. |
-| `lib/AgentControls.svelte` | Thinking level, token counter, abort. |
-| `lib/MessageList.svelte` | Display items renderer. |
-| `lib/AssistantMessage.svelte` | Content blocks (text / thinking / tool calls). |
-| `lib/ToolGroup.svelte` | Groups of tool calls. |
-| `lib/ToolCallCard.svelte` | Single tool call + result. |
-| `lib/ChatInput.svelte` | Message composer. |
+| `lib/shell/AgentRail.svelte` | Left roster rail (project groups, grade rings, context menu). |
+| `lib/shell/PanelHost.svelte` | Center view + right dock of pinnable panels + inspector icon rail. |
+| `lib/workspace/SoloWorkspace.svelte` | Per-agent workspace: header + arrangeable timeline/chat tiles. |
+| `lib/workspace/AgentHeader.svelte` | Status, thinking picker, spend, session actions. |
+| `lib/workspace/ChatThread.svelte` | One chat pane over the shared session (turn membership). |
+| `lib/workspace/message/MessageStream.svelte` | Turn renderer: bubbles, classification pills, tool chips. |
+| `lib/workspace/message/AssistantBlock.svelte` | Content blocks (thinking / markdown / images / caret). |
+| `lib/workspace/Composer.svelte` | Message composer. |
 | `lib/MentionAutocomplete.svelte` | `@`-triggered file/folder suggestion dropdown attached to a textarea (MON-76). |
 | `lib/PromptEditor.svelte` | System prompt override dialog. |
 | `lib/ExtensionDialog.svelte` | Handles Pi extension UI requests. |
 | `lib/api.ts` | Unified `invoke` / `listen` wrapper — Tauri or WebSocket. |
-| `lib/toolbox/types.ts` | `ToolDefinition`, `ToolProps`, `AgentContext`, `LiveAgentState`. |
-| `lib/toolbox/registry.ts` | The `TOOLS` array — edit to add a tool. |
-| `lib/toolbox/liveAgentStore.ts` | Shared per-agent live-state store (`byAgent` Map). |
-| `lib/toolbox/persistence.ts` | localStorage helpers for rail width + open ids. |
-| `lib/toolbox/ToolRail.svelte` | Right-edge vertical icon strip. |
-| `lib/toolbox/ToolPanelStack.svelte` | Stacked panel region left of the rail. |
-| `lib/toolbox/tools/PlaceholderTool.svelte` | Sample tool exercising the full store + backend path. |
+| `lib/toolbox/types.ts` | `ToolProps`, `AgentContext`, `LiveAgentState` (`live` nullable). |
+| `lib/layout/panelRegistry.ts` | The `PANELS` array — edit to add a dock panel. |
+| `lib/layout/layoutStore.svelte.ts` | Open panels, dock width, pins — persisted to `ui_state`. |
+| `lib/toolbox/liveAgentStore.svelte.ts` | Shared per-agent live-state store (`byAgent` Map). |
 
 ### Config
 

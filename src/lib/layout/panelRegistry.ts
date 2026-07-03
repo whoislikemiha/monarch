@@ -3,9 +3,11 @@
  * Adding a panel = one entry here. Future panels (git, diff, war-room) register
  * the same way; the layout store + PanelHost handle docking/pinning generically.
  *
- * The four inspectors reuse the existing tool components (they already take
- * `{ agentContext }`); their internals will be restyled onto the design-system
- * atoms in a later pass. The Architect is a stub until its backend lands.
+ * The inspectors are the toolbox tool components (they all take
+ * `{ agentContext }`), rebuilt on the design system. DB-backed panels render
+ * for sleeping agents (agentContext.live is null then); only the context
+ * inspector needs a live session. The Architect is a stub until its backend
+ * lands.
  */
 import type { Component } from "svelte";
 import type { ToolProps } from "$lib/toolbox/types";
@@ -15,6 +17,7 @@ import ContextInspectorTool from "$lib/toolbox/tools/ContextInspectorTool.svelte
 import AgentStatsTool from "$lib/toolbox/tools/AgentStatsTool.svelte";
 import ArchitectPanel from "$lib/panels/ArchitectPanel.svelte";
 import SessionHistoryTool from "$lib/toolbox/tools/SessionHistoryTool.svelte";
+import ClassifierSettingsTool from "$lib/toolbox/tools/ClassifierSettingsTool.svelte";
 
 export interface PanelDef {
   id: string;
@@ -61,6 +64,13 @@ export const PANELS: PanelDef[] = [
     title: "Identity",
     icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
     component: IdentityTool,
+  },
+  {
+    id: "classifier",
+    title: "Classifier",
+    // funnel/filter icon — the always-on turn classifier (MON-82)
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.5 10 19 14 21 14 12.5 22 3"/></svg>`,
+    component: ClassifierSettingsTool,
   },
 ];
 

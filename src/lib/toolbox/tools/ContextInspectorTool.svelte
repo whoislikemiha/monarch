@@ -1,4 +1,11 @@
 <script lang="ts">
+  /**
+   * Context-window inspector: live used/window snapshot with health meter,
+   * then the window's contents broken into collapsible categories (setup,
+   * user, assistant, thinking, tool calls/results) with per-entry estimates.
+   * Live-state panel: sizes come from the in-memory session; when the agent
+   * is asleep only the setup layer is estimable and a note says so.
+   */
   import type { ToolProps } from "../types";
   import type { DisplayItem, Usage } from "../../types";
 
@@ -101,8 +108,9 @@
     }
   }
 
-  let items = $derived<DisplayItem[]>(agentContext?.live.items ?? []);
-  let lastUsage = $derived<Usage | undefined>(agentContext?.live.lastUsage);
+  let items = $derived<DisplayItem[]>(agentContext?.live?.items ?? []);
+  let lastUsage = $derived<Usage | undefined>(agentContext?.live?.lastUsage);
+  let isLive = $derived(!!agentContext?.live);
   let contextWindow = $derived(agentContext?.agent.contextWindow);
   let sessionStats = $derived(agentContext?.agent.sessionStats);
   let shadow = $derived(agentContext?.agent.shadow);
@@ -306,83 +314,74 @@
   let healthState = $derived(
     usedRatio >= 0.9 ? "critical" : usedRatio >= 0.7 ? "warning" : "healthy"
   );
-  let usageSource = $derived(lastUsage ? "Live telemetry" : "Estimated from restored content");
 </script>
 
 {#if agentContext === null}
-  <p class="empty">No agent active.</p>
+  <div class="blank">Select an agent to inspect its context window.</div>
 {:else}
-  <div class="inspector">
-    <div class="inspector-summary">
-      <div class="summary-row">
-        <span class="summary-label">Context Snapshot</span>
-        <span class="summary-value">{formatTokens(liveContextTokens)} / {formatTokens(resolvedWindow)}</span>
+  <div class="ctx">
+    <!-- snapshot -->
+    <div class="snap">
+      <div class="meter" class:warn={healthState === "warning"} class:crit={healthState === "critical"}>
+        <div class="top">
+          <span class="lab">Context window</span>
+          <span class="val mono">{formatTokens(liveContextTokens)} / {formatTokens(resolvedWindow)}</span>
+        </div>
+        <div class="track"><div class="fill" style:width={`${Math.max(usedRatio * 100, liveContextTokens > 0 ? 1.5 : 0)}%`}></div></div>
+        <div class="under">
+          <span class="src">{lastUsage ? "live telemetry" : "estimated from content"}</span>
+          <span class="free mono">{formatTokens(freeTokens)} free · {freePct}%</span>
+        </div>
       </div>
-      <div class="summary-row sub">
-        <span class="summary-label">Headroom</span>
-        <span class="summary-value">{formatTokens(freeTokens)} free ({freePct}%)</span>
-      </div>
-      <div class="summary-row sub">
-        <span class="summary-label">Source</span>
-        <span class="summary-value">{usageSource}</span>
-      </div>
-      <div class="health-track" class:warning={healthState === "warning"} class:critical={healthState === "critical"}>
-        <div class="health-fill" style:width={`${Math.max((1 - usedRatio) * 100, 0)}%`}></div>
-      </div>
-      {#if sessionStats && sessionStats.totalTokens > 0}
-        <div class="summary-row sub">
-          <span class="summary-label">Billing Total</span>
-          <span class="summary-value">{formatTokens(sessionStats.totalTokens)} · ${sessionStats.totalCost.toFixed(4)}</span>
+
+      {#if sessionStats || (lastUsage && ((lastUsage.cacheRead ?? 0) > 0 || (lastUsage.cacheWrite ?? 0) > 0))}
+        <div class="facts">
+          {#if sessionStats && sessionStats.totalTokens > 0}
+            <div class="fr"><span class="fk">Billing total</span><span class="fv mono">{formatTokens(sessionStats.totalTokens)} · ${sessionStats.totalCost.toFixed(4)}</span></div>
+          {/if}
+          {#if sessionStats}
+            <div class="fr"><span class="fk">Turns</span><span class="fv mono">{sessionStats.turnCount}</span></div>
+            <div class="fr"><span class="fk">Messages</span><span class="fv mono">{sessionStats.messageCount}</span></div>
+          {/if}
+          {#if lastUsage && (lastUsage.cacheRead ?? 0) > 0}
+            <div class="fr"><span class="fk">Cache read</span><span class="fv mono">{formatTokens(lastUsage.cacheRead ?? 0)}</span></div>
+          {/if}
+          {#if lastUsage && (lastUsage.cacheWrite ?? 0) > 0}
+            <div class="fr"><span class="fk">Cache write</span><span class="fv mono">{formatTokens(lastUsage.cacheWrite ?? 0)}</span></div>
+          {/if}
         </div>
       {/if}
-      {#if sessionStats}
-        <div class="summary-row sub">
-          <span class="summary-label">Turns</span>
-          <span class="summary-value">{sessionStats.turnCount}</span>
-        </div>
-        <div class="summary-row sub">
-          <span class="summary-label">Messages</span>
-          <span class="summary-value">{sessionStats.messageCount}</span>
-        </div>
-      {/if}
-      {#if lastUsage && (lastUsage.cacheRead ?? 0) > 0}
-        <div class="summary-row sub">
-          <span class="summary-label">Cache Read</span>
-          <span class="summary-value">{formatTokens(lastUsage.cacheRead ?? 0)}</span>
-        </div>
-      {/if}
-      {#if lastUsage && (lastUsage.cacheWrite ?? 0) > 0}
-        <div class="summary-row sub">
-          <span class="summary-label">Cache Write</span>
-          <span class="summary-value">{formatTokens(lastUsage.cacheWrite ?? 0)}</span>
-        </div>
+
+      {#if !isLive}
+        <p class="asleep">Agent is asleep — live telemetry appears when a session starts.</p>
       {/if}
     </div>
 
-    <div class="inspector-categories">
+    <!-- categories -->
+    <div class="cats">
       {#each categories as category (category.id)}
-        <div class="category">
-          <button class="category-header" onclick={() => toggleCategory(category.id)}>
-            <span class="category-chevron">{expandedCategories[category.id] ? "▾" : "▸"}</span>
-            <span class="category-label">{category.label}</span>
-            <span class="category-count">{category.entries.length}</span>
-            <span class="category-tokens">{formatTokens(category.tokens)}</span>
+        <div class="cat">
+          <button class="cat-head" onclick={() => toggleCategory(category.id)} aria-expanded={!!expandedCategories[category.id]}>
+            <svg class="chev" class:open={expandedCategories[category.id]} viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l4 4-4 4"/></svg>
+            <span class="cat-label">{category.label}</span>
+            <span class="cat-count mono">{category.entries.length}</span>
+            <span class="cat-tokens mono">{formatTokens(category.tokens)}</span>
           </button>
 
           {#if expandedCategories[category.id]}
-            <div class="category-entries">
+            <div class="entries">
               {#each category.entries as entry (entry.id)}
                 <button class="entry" onclick={() => toggleEntry(entry.id)}>
-                  <div class="entry-header">
-                    <span class="entry-label">{entry.label}</span>
-                    <div class="entry-meta">
-                      {#if entry.meta}
-                        <span class="entry-badge">{entry.meta}</span>
-                      {/if}
-                      <span class="entry-tokens">{formatTokens(entry.tokens)}</span>
-                    </div>
-                  </div>
-                  <div class="entry-preview">{expandedEntries[entry.id] ? entry.fullText : entry.preview}</div>
+                  <span class="e-head">
+                    <span class="e-label">{entry.label}</span>
+                    {#if entry.meta}
+                      <span class="e-badge" class:err={entry.meta === "error"}>{entry.meta}</span>
+                    {/if}
+                    <span class="e-tokens mono">{formatTokens(entry.tokens)}</span>
+                  </span>
+                  {#if entry.preview}
+                    <span class="e-preview mono">{expandedEntries[entry.id] ? entry.fullText : entry.preview}</span>
+                  {/if}
                 </button>
               {/each}
             </div>
@@ -391,239 +390,89 @@
       {/each}
 
       {#if categories.length === 0}
-        <div class="empty-categories">No useful context has been captured yet.</div>
+        <div class="blank">Nothing in the window yet — send a message to start filling it.</div>
       {/if}
-    </div>
-
-    <div class="inspector-footer">
-      <span class="footer-note">
-        Category sizes are estimated from visible content so you can compare what is actually taking up space.
-      </span>
     </div>
   </div>
 {/if}
 
 <style>
-  .empty {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 11px;
-    font-style: italic;
-  }
+  .blank { padding: var(--s4); text-align: center; font-size: 11px; color: var(--text-muted); }
 
-  .inspector {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    margin: -12px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    font-size: 11px;
-    color: var(--text-secondary);
-  }
+  .ctx { display: flex; flex-direction: column; min-height: 0; }
+  .mono { font-family: "JetBrains Mono", monospace; }
 
-  .inspector-summary {
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--border-subtle);
+  /* snapshot */
+  .snap {
+    padding: var(--s3); border-bottom: 1px solid var(--border-subtle);
+    display: flex; flex-direction: column; gap: var(--s2);
   }
-
-  .summary-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 6px;
+  .meter { display: flex; flex-direction: column; gap: 5px; }
+  .meter .top { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s2); }
+  .meter .lab { font-size: 11px; font-weight: 500; color: var(--text-secondary); }
+  .meter .val { font-size: 10.5px; color: var(--text-primary); }
+  .meter .track {
+    height: 6px; background: var(--bg-sink);
+    border: 1px solid var(--border-subtle); border-radius: var(--r-full); overflow: hidden;
   }
+  .meter .fill { height: 100%; background: var(--status-success); border-radius: var(--r-full); transition: width .25s ease; }
+  .meter.warn .fill { background: var(--status-warning); }
+  .meter.crit .fill { background: var(--status-error); }
+  .under { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s2); }
+  .src { font-size: 10px; color: var(--text-muted); }
+  .free { font-size: 10px; color: var(--text-muted); }
 
-  .summary-row.sub {
-    margin-bottom: 2px;
+  .facts { display: flex; flex-direction: column; }
+  .fr { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); padding: 1px 0; }
+  .fk { font-size: 10.5px; color: var(--text-muted); }
+  .fv { font-size: 10px; color: var(--text-secondary); }
+
+  .asleep { margin: 0; font-size: 10.5px; color: var(--text-muted); }
+
+  /* categories */
+  .cats { flex: 1; min-height: 0; overflow-y: auto; }
+  .cat { border-bottom: 1px solid var(--border-subtle); }
+  .cat:last-child { border-bottom: none; }
+  .cat-head {
+    display: flex; align-items: center; gap: var(--s2);
+    width: 100%; padding: 7px var(--s3);
+    background: none; border: none; cursor: pointer; text-align: left;
+    font: inherit; color: var(--text-primary);
   }
-
-  .summary-label {
-    color: var(--text-muted);
-    font-size: 10px;
+  .cat-head:hover { background: var(--bg-raised); }
+  .cat-head:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .chev { flex: none; color: var(--text-muted); transition: transform .18s ease; }
+  .chev.open { transform: rotate(90deg); }
+  .cat-label { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; }
+  .cat-count {
+    flex: none; font-size: 9.5px; color: var(--text-muted);
+    border: 1px solid var(--border-subtle); border-radius: var(--r-sm); padding: 0 5px;
   }
+  .cat-tokens { flex: none; font-size: 10.5px; color: var(--accent-2); min-width: 40px; text-align: right; }
 
-  .summary-value {
-    color: var(--text-secondary);
-    font-size: 10px;
-  }
-
-  .summary-row.sub .summary-label,
-  .summary-row.sub .summary-value {
-    font-size: 9px;
-  }
-
-  .health-track {
-    position: relative;
-    height: 4px;
-    border-radius: 2px;
-    overflow: hidden;
-    background: var(--active-overlay);
-    margin-bottom: 8px;
-  }
-
-  .health-fill {
-    height: 100%;
-    border-radius: 2px;
-    background: var(--success);
-    transition: width 0.25s ease, background 0.2s ease;
-  }
-
-  .health-track.warning .health-fill {
-    background: var(--warning);
-  }
-
-  .health-track.critical .health-fill {
-    background: var(--error);
-  }
-
-  .inspector-categories {
-    padding: 8px 0;
-  }
-
-  .category {
-    border-bottom: 1px solid var(--subtle-divider);
-  }
-
-  .category-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    padding: 8px 14px;
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    font-family: inherit;
-    font-size: 11px;
-    cursor: pointer;
-    text-align: left;
-    transition: background 0.12s ease;
-  }
-
-  .category-header:hover {
-    background: var(--hover-overlay);
-  }
-
-  .category-chevron {
-    font-size: 9px;
-    width: 10px;
-    color: var(--text-muted);
-    flex-shrink: 0;
-  }
-
-  .category-label {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .category-count {
-    font-size: 9px;
-    color: var(--text-muted);
-    padding: 1px 5px;
-    border-radius: 3px;
-    background: var(--hover-overlay);
-    flex-shrink: 0;
-  }
-
-  .category-tokens {
-    font-size: 10px;
-    color: var(--success);
-    flex-shrink: 0;
-    min-width: 40px;
-    text-align: right;
-  }
-
-  .category-entries {
-    padding: 0 14px 8px 30px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
+  .entries { display: flex; flex-direction: column; padding: 0 var(--s3) var(--s2) var(--s5); }
   .entry {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    width: 100%;
-    padding: 4px 0;
-    border: none;
-    border-bottom: 1px solid var(--subtle-divider);
-    background: transparent;
-    color: inherit;
-    font-family: inherit;
-    cursor: pointer;
-    text-align: left;
-    transition: background 0.1s;
+    display: flex; flex-direction: column; gap: 2px;
+    width: 100%; padding: 4px 0; text-align: left; cursor: pointer;
+    background: none; border: none; border-bottom: 1px solid var(--border-subtle);
+    font: inherit;
   }
-
-  .entry:hover {
-    background: var(--hover-overlay);
+  .entry:last-child { border-bottom: none; }
+  .entry:hover { background: var(--bg-raised); }
+  .e-head { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+  .e-label {
+    flex: 1; min-width: 0; font-size: 11px; color: var(--text-secondary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-
-  .entry:last-child {
-    border-bottom: none;
+  .e-badge {
+    flex: none; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-muted); border: 1px solid var(--border-subtle);
+    border-radius: var(--r-sm); padding: 0 4px;
   }
-
-  .entry-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-
-  .entry-label {
-    font-size: 10px;
-    color: var(--text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .entry-meta {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-shrink: 0;
-  }
-
-  .entry-badge {
-    padding: 2px 6px;
-    border-radius: 3px;
-    background: var(--active-overlay);
-    color: var(--text-muted);
-    font-size: 9px;
-  }
-
-  .entry-tokens {
-    font-size: 9px;
-    color: var(--text-muted);
-  }
-
-  .entry-preview {
-    font-size: 9px;
-    color: var(--text-muted);
-    line-height: 1.4;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .empty-categories {
-    padding: 24px 14px;
-    text-align: center;
-    color: var(--text-muted);
-    font-size: 10px;
-  }
-
-  .inspector-footer {
-    padding: 8px 14px;
-    border-top: 1px solid var(--border-subtle);
-  }
-
-  .footer-note {
-    font-size: 9px;
-    color: var(--text-muted);
-    line-height: 1.5;
+  .e-badge.err { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 45%, transparent); }
+  .e-tokens { flex: none; font-size: 9.5px; color: var(--text-muted); }
+  .e-preview {
+    font-size: 9.5px; color: var(--text-muted); line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
   }
 </style>

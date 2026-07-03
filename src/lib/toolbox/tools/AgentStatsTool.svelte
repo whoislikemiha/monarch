@@ -1,8 +1,16 @@
 <script lang="ts">
+  /**
+   * Agent service record: identity header, experience, lifetime totals,
+   * specialization profile (derived from tool usage) and per-tool counts.
+   * DB-backed (`db_get_agent_stats`) — renders whether or not the agent has a
+   * live session. Built on the design-system atoms (.meter/.drow/.gchip).
+   */
   import { invoke } from "$lib/api";
   import { formatCost } from "$lib/format";
+  import Avatar from "$lib/ui/Avatar.svelte";
+  import { gradeLetter } from "$lib/ui/grade";
   import type { ToolProps } from "../types";
-  import type { AgentStats, SpecializationScores } from "../../bindings";
+  import type { AgentStats, SpecializationScores } from "$lib/bindings";
 
   let { agentContext }: ToolProps = $props();
 
@@ -25,33 +33,25 @@
     security: "Security",
   };
 
-  // Only show specialization categories with non-zero scores, sorted descending
-  const activeSpecs = $derived.by(() => {
+  let grade = $derived(gradeLetter(agentContext?.agent.shadow?.shadowGrade));
+
+  // Non-zero specialization axes, strongest first.
+  let activeSpecs = $derived.by(() => {
     if (!stats) return [];
     const entries = Object.entries(stats.specialization) as [keyof SpecializationScores, number][];
-    return entries
-      .filter(([, v]) => v > 0.005)
-      .sort((a, b) => b[1] - a[1]);
+    return entries.filter(([, v]) => v > 0.005).sort((a, b) => b[1] - a[1]);
   });
 
-  const primarySpec = $derived(
-    activeSpecs.length > 0
-      ? SPEC_LABELS[activeSpecs[0][0]]
-      : null,
-  );
-
-  const topTools = $derived(
-    stats ? stats.toolUsage.slice(0, 8) : [],
-  );
+  let primarySpec = $derived(activeSpecs.length > 0 ? SPEC_LABELS[activeSpecs[0][0]] : null);
+  let topTools = $derived(stats ? stats.toolUsage.slice(0, 8) : []);
+  let maxToolCalls = $derived(topTools.reduce((m, t) => Math.max(m, t.callCount), 1));
 
   async function loadStats() {
     if (!agentContext) return;
     loading = true;
     error = null;
     try {
-      stats = await invoke<AgentStats>("db_get_agent_stats", {
-        agentId: agentContext.agentId,
-      });
+      stats = await invoke<AgentStats>("db_get_agent_stats", { agentId: agentContext.agentId });
     } catch (e) {
       error = String(e);
       stats = null;
@@ -61,7 +61,7 @@
   }
 
   $effect(() => {
-    if (agentContext) {
+    if (agentContext?.agentId) {
       loadStats();
     } else {
       stats = null;
@@ -74,313 +74,170 @@
     return n.toString();
   }
 
-  function pct(n: number): string {
-    return (n * 100).toFixed(0) + "%";
-  }
+  const pct = (n: number): string => (n * 100).toFixed(0) + "%";
 </script>
 
-<div class="stats-tool">
+<div class="stats">
   {#if !agentContext}
-    <p class="empty">No agent selected.</p>
+    <div class="blank">Select an agent to view its service record.</div>
   {:else if loading && !stats}
-    <p class="empty">Loading stats…</p>
+    <div class="blank">Loading stats…</div>
   {:else if error}
-    <p class="error-msg">{error}</p>
+    <div class="err">{error}</div>
   {:else if stats}
-    <!-- Identity + Experience -->
-    <div class="section identity">
-      <div class="agent-name">
-        {agentContext.agent.shadow?.shadowName ?? agentContext.agent.name}
+    <!-- identity -->
+    <header class="who">
+      <Avatar
+        name={agentContext.agent.name}
+        size={38}
+        {grade}
+        avatarType={agentContext.agent.avatarType}
+        avatarPath={agentContext.agent.avatarPath}
+      />
+      <div class="who-id">
+        <div class="who-top">
+          <span class="nm">{agentContext.agent.shadow?.shadowName ?? agentContext.agent.name}</span>
+          <span class="gchip mono" style="--gc:var(--grade-{grade.toLowerCase()}); color:var(--gc); border-color:var(--gc)">{grade}</span>
+        </div>
+        <div class="who-sub">
+          {#if agentContext.agent.shadow?.shadowTitle}
+            <span class="ti">{agentContext.agent.shadow.shadowTitle}</span>
+          {/if}
+          {#if primarySpec}
+            <span class="spec">{primarySpec} lead</span>
+          {/if}
+        </div>
       </div>
-      {#if agentContext.agent.shadow?.shadowTitle}
-        <div class="agent-title">{agentContext.agent.shadow.shadowTitle}</div>
-      {/if}
-      {#if agentContext.agent.shadow?.shadowGrade}
-        <div class="agent-grade">{agentContext.agent.shadow.shadowGrade}</div>
-      {/if}
-      {#if primarySpec}
-        <div class="primary-spec">{primarySpec} Specialist</div>
-      {/if}
+    </header>
 
-      <div class="xp-bar-container">
-        <div class="xp-label">
-          <span>EXP</span>
-          <span class="xp-value">{stats.experience.toFixed(0)}</span>
-        </div>
-        <div class="xp-track">
-          <div class="xp-fill" style="width: {stats.experience}%"></div>
-        </div>
+    <!-- experience -->
+    <div class="meter">
+      <div class="top">
+        <span class="lab">Experience</span>
+        <span class="val">{stats.experience.toFixed(0)} / 100</span>
       </div>
+      <div class="track"><div class="fill" style="width:{Math.min(100, stats.experience)}%"></div></div>
     </div>
 
-    <!-- Lifetime Numbers -->
-    <div class="section">
-      <div class="section-title">Lifetime</div>
-      <div class="row">
-        <span class="label">Tokens (in)</span>
-        <span class="value mono">{formatTokens(stats.totalInputTokens)}</span>
+    <!-- lifetime totals -->
+    <section class="block">
+      <div class="bt">Lifetime</div>
+      <div class="rows">
+        <div class="r"><span class="k">Sessions</span><span class="v mono">{stats.totalSessions.toLocaleString()}</span></div>
+        <div class="r"><span class="k">Messages</span><span class="v mono">{stats.totalMessages.toLocaleString()}</span></div>
+        <div class="r"><span class="k">Turns</span><span class="v mono">{stats.totalTurns.toLocaleString()}</span></div>
+        <div class="r"><span class="k">Tokens in</span><span class="v mono">{formatTokens(stats.totalInputTokens)}</span></div>
+        <div class="r"><span class="k">Tokens out</span><span class="v mono">{formatTokens(stats.totalOutputTokens)}</span></div>
+        <div class="r"><span class="k">Cost</span><span class="v mono">{formatCost(stats.totalCost) ?? "$0"}</span></div>
       </div>
-      <div class="row">
-        <span class="label">Tokens (out)</span>
-        <span class="value mono">{formatTokens(stats.totalOutputTokens)}</span>
-      </div>
-      <div class="row">
-        <span class="label">Cost</span>
-        <span class="value mono">{formatCost(stats.totalCost) ?? "$0"}</span>
-      </div>
-      <div class="row">
-        <span class="label">Sessions</span>
-        <span class="value mono">{stats.totalSessions}</span>
-      </div>
-      <div class="row">
-        <span class="label">Messages</span>
-        <span class="value mono">{stats.totalMessages}</span>
-      </div>
-      <div class="row">
-        <span class="label">Turns</span>
-        <span class="value mono">{stats.totalTurns}</span>
-      </div>
-    </div>
+    </section>
 
-    <!-- Specialization -->
+    <!-- specialization profile -->
     {#if activeSpecs.length > 0}
-      <div class="section">
-        <div class="section-title">Specialization</div>
-        {#each activeSpecs as [key, value]}
-          <div class="spec-row">
-            <span class="spec-label">{SPEC_LABELS[key]}</span>
-            <div class="spec-bar-track">
-              <div
-                class="spec-bar-fill"
-                style="width: {value * 100}%"
-              ></div>
+      <section class="block">
+        <div class="bt">Specialization</div>
+        <div class="rows">
+          {#each activeSpecs as [key, value] (key)}
+            <div class="r">
+              <span class="k">{SPEC_LABELS[key]}</span>
+              <span class="cell">
+                <span class="track thin"><span class="fill" style="width:{value * 100}%"></span></span>
+                <span class="cv mono">{pct(value)}</span>
+              </span>
             </div>
-            <span class="spec-pct">{pct(value)}</span>
-          </div>
-        {/each}
-      </div>
+          {/each}
+        </div>
+      </section>
     {/if}
 
-    <!-- Tool Usage -->
+    <!-- tool usage -->
     {#if topTools.length > 0}
-      <div class="section">
-        <div class="section-title">Tools</div>
-        {#each topTools as tool}
-          <div class="row">
-            <span class="label tool-name">{tool.toolName}</span>
-            <span class="value mono">
-              {tool.callCount}{#if tool.errorCount > 0}<span class="error-count"> ({tool.errorCount} err)</span>{/if}
-            </span>
-          </div>
-        {/each}
-      </div>
+      <section class="block">
+        <div class="bt">Tools</div>
+        <div class="rows">
+          {#each topTools as tool (tool.toolName)}
+            <div class="r">
+              <span class="k mono">{tool.toolName}</span>
+              <span class="cell">
+                <span class="track thin"><span class="fill f2" style="width:{(tool.callCount / maxToolCalls) * 100}%"></span></span>
+                <span class="cv mono">
+                  {tool.callCount.toLocaleString()}{#if tool.errorCount > 0}<span class="errct"> · {tool.errorCount}✕</span>{/if}
+                </span>
+              </span>
+            </div>
+          {/each}
+        </div>
+      </section>
     {/if}
-
-    <!-- Refresh -->
-    <button class="refresh-btn" type="button" onclick={loadStats} disabled={loading}>
-      {loading ? "Loading…" : "Refresh"}
-    </button>
   {:else}
-    <p class="empty">No stats yet — use this agent to start tracking.</p>
+    <div class="blank">No stats yet — this agent hasn't worked.</div>
   {/if}
 </div>
 
 <style>
-  .stats-tool {
+  .stats {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--s4);
+    padding: var(--s3);
   }
 
-  .section {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .section-title {
-    font-size: 9px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: 2px;
-  }
-
-  /* Identity */
-  .identity {
-    gap: 2px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  .agent-name {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-  }
-
-  .agent-title {
+  .blank {
+    padding: var(--s4);
+    text-align: center;
     font-size: 11px;
-    color: var(--accent);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-  }
-
-  .agent-grade {
-    font-size: 10px;
     color: var(--text-muted);
   }
-
-  .primary-spec {
-    font-size: 10px;
-    color: var(--accent);
-    font-weight: 500;
-    margin-top: 2px;
-  }
-
-  /* Experience bar */
-  .xp-bar-container {
-    margin-top: 6px;
-  }
-
-  .xp-label {
-    display: flex;
-    justify-content: space-between;
-    font-size: 9px;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 3px;
-  }
-
-  .xp-value {
-    color: var(--accent);
-    font-weight: 600;
-  }
-
-  .xp-track {
-    position: relative;
-    height: 4px;
-    border-radius: 2px;
-    overflow: hidden;
-    background: var(--active-overlay);
-  }
-
-  .xp-fill {
-    height: 100%;
-    border-radius: 2px;
-    background: var(--accent);
-    transition: width 0.3s ease;
-  }
-
-  /* Rows */
-  .row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
+  .err {
+    padding: var(--s2) var(--s3);
     font-size: 11px;
+    color: var(--status-error);
   }
 
-  .label {
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-size: 10px;
-  }
+  /* identity header */
+  .who { display: flex; align-items: center; gap: var(--s3); }
+  .who-id { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .who-top { display: flex; align-items: center; gap: var(--s2); }
+  .nm { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .who-sub { display: flex; align-items: baseline; gap: var(--s2); min-width: 0; }
+  .ti { font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .spec { font-size: 10px; color: var(--accent); white-space: nowrap; }
 
-  .value {
-    color: var(--text-primary);
+  /* meters (local copy of the .meter atom internals for scoped markup) */
+  .meter { display: flex; flex-direction: column; gap: 5px; }
+  .meter .top { display: flex; justify-content: space-between; align-items: baseline; }
+  .meter .lab { font-size: 11px; color: var(--text-secondary); font-weight: 500; }
+  .meter .val { font-family: "JetBrains Mono", monospace; font-size: 10.5px; color: var(--text-primary); }
+  .track {
+    display: block; height: 6px; flex: 1;
+    background: var(--bg-sink); border: 1px solid var(--border-subtle);
+    border-radius: var(--r-full); overflow: hidden;
   }
+  .track.thin { height: 4px; }
+  .fill { display: block; height: 100%; background: var(--accent); border-radius: var(--r-full); }
+  .fill.f2 { background: var(--accent-2); }
 
-  .value.mono {
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    text-align: right;
+  /* data blocks */
+  .block { display: flex; flex-direction: column; gap: var(--s2); }
+  .bt {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--text-muted);
   }
-
-  .tool-name {
-    text-transform: none;
-    letter-spacing: normal;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+  .rows {
+    border: 1px solid var(--border-subtle); border-radius: var(--r-md);
+    background: var(--bg-panel); overflow: hidden;
   }
-
-  .error-count {
-    color: var(--error);
-    font-size: 10px;
+  .r {
+    display: flex; align-items: center; gap: var(--s3);
+    padding: 5px var(--s3); border-bottom: 1px solid var(--border-subtle);
+    min-height: 24px;
   }
-
-  /* Specialization bars */
-  .spec-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 10px;
-  }
-
-  .spec-label {
-    width: 56px;
-    flex-shrink: 0;
-    color: var(--text-muted);
-    font-size: 10px;
-  }
-
-  .spec-bar-track {
-    flex: 1;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--active-overlay);
-    overflow: hidden;
-  }
-
-  .spec-bar-fill {
-    height: 100%;
-    border-radius: 2px;
-    background: var(--accent);
-    transition: width 0.3s ease;
-  }
-
-  .spec-pct {
-    width: 28px;
-    text-align: right;
-    color: var(--text-secondary);
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-    font-size: 10px;
-  }
-
-  /* Refresh */
-  .refresh-btn {
-    margin-top: 4px;
-    padding: 5px 10px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    background: var(--bg-panel-2);
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 10px;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-
-  .refresh-btn:hover:not(:disabled) {
-    background: var(--accent-bg-hover);
-  }
-
-  .refresh-btn:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .empty {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 11px;
-    font-style: italic;
-  }
-
-  .error-msg {
-    margin: 0;
-    color: var(--error);
-    font-size: 11px;
-  }
+  .r:last-child { border-bottom: none; }
+  .r > .k { font-size: 11px; color: var(--text-muted); flex: none; width: 84px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .r > .k.mono { font-family: "JetBrains Mono", monospace; font-size: 10.5px; color: var(--text-secondary); }
+  .r > .v { font-size: 11.5px; color: var(--text-primary); margin-left: auto; }
+  .r > .v.mono, .cv.mono { font-family: "JetBrains Mono", monospace; font-size: 10.5px; }
+  .cell { display: flex; align-items: center; gap: var(--s2); flex: 1; min-width: 0; }
+  .cv { color: var(--text-secondary); flex: none; min-width: 44px; text-align: right; }
+  .errct { color: var(--status-error); }
 </style>

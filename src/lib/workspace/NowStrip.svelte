@@ -89,7 +89,7 @@
       >
         <span class="tag">PLAN</span>
         {#if planProgress}<span class="prog mono">{planProgress.done}/{planProgress.total}</span>{/if}
-        <span class="caret" class:open={planOpen} aria-hidden="true">▸</span>
+        <span class="chev" class:open={planOpen} aria-hidden="true">▸</span>
       </button>
 
       {#if planOpen}
@@ -175,8 +175,8 @@
   }
   .plan-head:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-sm); }
   .prog { font-size: 10px; color: var(--text-muted); }
-  .caret { font-size: 9px; color: var(--text-muted); transition: transform 0.12s; }
-  .caret.open { transform: rotate(90deg); }
+  .chev { font-size: 9px; color: var(--text-muted); transition: transform 0.12s; }
+  .chev.open { transform: rotate(90deg); }
 
   .plan-items { display: flex; gap: var(--s2); flex-wrap: wrap; min-width: 0; }
   .pi { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-muted); }

@@ -124,3 +124,23 @@ pub(crate) async fn list_paths(_state: &WsState, args: Value) -> Result<Value, M
             })??;
     serde_json::to_value(result).map_err(MonarchError::from)
 }
+
+// ---- MON-82: classifier config (global) ----
+
+pub(crate) async fn classifier_get_config(_state: &WsState, _args: Value) -> Result<Value, MonarchError> {
+    let cfg = crate::config::classifier::resolved().await;
+    serde_json::to_value(cfg).map_err(MonarchError::from)
+}
+
+pub(crate) async fn classifier_set_config(_state: &WsState, args: Value) -> Result<Value, MonarchError> {
+    let config: crate::config::classifier::ClassifierConfig =
+        serde_json::from_value(args.get("config").cloned().unwrap_or(Value::Null))
+            .map_err(|e| MonarchError::invalid_input(format!("Invalid config: {}", e)))?;
+    crate::config::classifier::write_raw(&config).await?;
+    serde_json::to_value(crate::config::classifier::resolve(config)).map_err(MonarchError::from)
+}
+
+pub(crate) async fn classifier_get_config_path(_state: &WsState, _args: Value) -> Result<Value, MonarchError> {
+    let path = crate::config::classifier::config_path()?;
+    Ok(Value::String(path.to_string_lossy().to_string()))
+}

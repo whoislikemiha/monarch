@@ -1,4 +1,9 @@
 <script lang="ts">
+  /**
+   * Identity editors: supervisor (L1a, global) + agent (L1b, per-agent).
+   * Both payloads are injected into every system prompt, so a combined token
+   * budget meter guards the pair. DB-backed — works for sleeping agents.
+   */
   import { invoke } from "$lib/api";
   import type { ToolProps } from "../types";
 
@@ -32,6 +37,7 @@
   const combinedTokens = $derived(captainTokens + shadowTokens);
   const overBudget = $derived(combinedTokens > COMBINED_TOKEN_CAP);
   const nearBudget = $derived(combinedTokens > TOKEN_WARN_THRESHOLD && !overBudget);
+  const budgetPct = $derived(Math.min(100, (combinedTokens / COMBINED_TOKEN_CAP) * 100));
 
   // ── Load supervisor identity on mount ────────────────────────────────────
   async function loadCaptain() {
@@ -116,65 +122,63 @@
       shadowSaving = false;
     }
   }
-
-  function onCaptainInput() {
-    captainDirty = true;
-  }
-
-  function onShadowInput() {
-    shadowDirty = true;
-  }
 </script>
 
-<div class="identity-tool">
-  <!-- ── Token budget bar ──────────────────────────────────────────────── -->
-  <div class="budget-row" class:warn={nearBudget} class:over={overBudget}>
-    <span class="budget-label">Combined L1 budget</span>
-    <span class="budget-value">{combinedTokens} / {COMBINED_TOKEN_CAP} est. tokens</span>
+<div class="identity">
+  <!-- combined system-prompt budget -->
+  <div class="meter" class:warn={nearBudget} class:over={overBudget}>
+    <div class="top">
+      <span class="lab">Prompt budget</span>
+      <span class="val mono">{combinedTokens} / {COMBINED_TOKEN_CAP} tok</span>
+    </div>
+    <div class="track"><div class="fill" style="width:{budgetPct}%"></div></div>
+    {#if overBudget}
+      <p class="note over-note">Over budget — trim identity content before saving.</p>
+    {:else if nearBudget}
+      <p class="note warn-note">Approaching the combined limit.</p>
+    {/if}
   </div>
-  {#if overBudget}
-    <p class="budget-warning">Over budget — reduce identity content before saving.</p>
-  {:else if nearBudget}
-    <p class="budget-warning warn-text">Approaching limit.</p>
-  {/if}
 
-  <!-- ── Supervisor identity (L1a) ──────────────────────────────────────── -->
-  <div class="section">
-    <div class="section-title">Supervisor (L1a — global)</div>
+  <!-- supervisor identity (L1a) -->
+  <section class="block">
+    <div class="bh">
+      <span class="bt">Supervisor</span>
+      <span class="rule"></span>
+      <span class="bm mono">global · ~{captainTokens} tok</span>
+    </div>
 
     {#if captainLoading}
-      <p class="empty">Loading…</p>
+      <div class="blank">Loading…</div>
     {:else}
-      <div class="field-row">
-        <label class="field-label" for="supervisor-name">Name</label>
+      <div class="field">
+        <label for="supervisor-name">Name</label>
         <input
           id="supervisor-name"
-          class="field-input"
+          class="input"
           type="text"
           bind:value={captainName}
-          oninput={onCaptainInput}
+          oninput={() => (captainDirty = true)}
           placeholder="Supervisor"
         />
       </div>
 
-      <label class="field-label textarea-label" for="supervisor-payload">Identity</label>
-      <textarea
-        id="supervisor-payload"
-        class="payload-area"
-        rows={6}
-        bind:value={captainPayload}
-        oninput={onCaptainInput}
-        placeholder="Who you are, your preferences, working style…"
-      ></textarea>
+      <div class="field">
+        <label for="supervisor-payload">Identity</label>
+        <textarea
+          id="supervisor-payload"
+          class="textarea"
+          rows={6}
+          bind:value={captainPayload}
+          oninput={() => (captainDirty = true)}
+          placeholder="Who you are, your preferences, working style…"
+        ></textarea>
+      </div>
 
-      <div class="token-hint">~{captainTokens} tokens</div>
-
-      {#if captainError}
-        <p class="error-msg">{captainError}</p>
-      {/if}
+      {#if captainError}<p class="err">{captainError}</p>{/if}
 
       <button
-        class="save-btn"
+        class="save"
+        class:dirty={captainDirty}
         type="button"
         disabled={!captainDirty || captainSaving || overBudget}
         onclick={saveCaptain}
@@ -182,35 +186,40 @@
         {captainSaving ? "Saving…" : captainDirty ? "Save" : "Saved"}
       </button>
     {/if}
-  </div>
+  </section>
 
-  <!-- ── Agent identity (L1b) ───────────────────────────────────────────── -->
-  <div class="section">
-    <div class="section-title">Agent (L1b — this agent)</div>
+  <!-- agent identity (L1b) -->
+  <section class="block">
+    <div class="bh">
+      <span class="bt">Agent</span>
+      <span class="rule"></span>
+      <span class="bm mono">
+        {agentContext ? `${agentContext.agent.name} · ~${shadowTokens} tok` : "—"}
+      </span>
+    </div>
 
     {#if !agentContext}
-      <p class="empty">No agent selected.</p>
+      <div class="blank">Select an agent to edit its identity.</div>
     {:else if shadowLoading}
-      <p class="empty">Loading…</p>
+      <div class="blank">Loading…</div>
     {:else}
-      <label class="field-label textarea-label" for="agent-payload">Identity</label>
-      <textarea
-        id="agent-payload"
-        class="payload-area"
-        rows={6}
-        bind:value={shadowPayload}
-        oninput={onShadowInput}
-        placeholder="Agent-specific traits, persona, specialties…"
-      ></textarea>
+      <div class="field">
+        <label for="agent-payload">Identity</label>
+        <textarea
+          id="agent-payload"
+          class="textarea"
+          rows={6}
+          bind:value={shadowPayload}
+          oninput={() => (shadowDirty = true)}
+          placeholder="Agent-specific traits, persona, specialties…"
+        ></textarea>
+      </div>
 
-      <div class="token-hint">~{shadowTokens} tokens</div>
-
-      {#if shadowError}
-        <p class="error-msg">{shadowError}</p>
-      {/if}
+      {#if shadowError}<p class="err">{shadowError}</p>{/if}
 
       <button
-        class="save-btn"
+        class="save"
+        class:dirty={shadowDirty}
         type="button"
         disabled={!shadowDirty || shadowSaving || overBudget}
         onclick={saveShadow}
@@ -218,172 +227,74 @@
         {shadowSaving ? "Saving…" : shadowDirty ? "Save" : "Saved"}
       </button>
     {/if}
-  </div>
+  </section>
 </div>
 
 <style>
-  .identity-tool {
+  .identity {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--s4);
+    padding: var(--s3);
   }
 
-  /* Budget bar */
-  .budget-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 10px;
-    color: var(--text-muted);
-    padding: 4px 6px;
-    border-radius: 4px;
-    background: var(--bg-panel-2);
-    border: 1px solid var(--border-subtle);
-    transition: border-color 0.15s, color 0.15s;
-  }
+  .blank { font-size: 11px; color: var(--text-muted); padding: var(--s2) 0; }
+  .err { margin: 0; font-size: 11px; color: var(--status-error); }
+  .mono { font-family: "JetBrains Mono", monospace; }
 
-  .budget-row.warn {
-    border-color: var(--warning, #f2994a);
-    color: var(--warning, #f2994a);
+  /* budget meter */
+  .meter { display: flex; flex-direction: column; gap: 5px; }
+  .meter .top { display: flex; justify-content: space-between; align-items: baseline; }
+  .meter .lab { font-size: 11px; font-weight: 500; color: var(--text-secondary); }
+  .meter .val { font-size: 10.5px; color: var(--text-primary); }
+  .meter .track {
+    height: 6px; background: var(--bg-sink);
+    border: 1px solid var(--border-subtle); border-radius: var(--r-full); overflow: hidden;
   }
+  .meter .fill { height: 100%; background: var(--accent); border-radius: var(--r-full); transition: width .2s ease; }
+  .meter.warn .fill { background: var(--status-warning); }
+  .meter.over .fill { background: var(--status-error); }
+  .meter.warn .val { color: var(--status-warning); }
+  .meter.over .val { color: var(--status-error); }
+  .note { margin: 0; font-size: 10.5px; }
+  .warn-note { color: var(--status-warning); }
+  .over-note { color: var(--status-error); }
 
-  .budget-row.over {
-    border-color: var(--error, #eb5757);
-    color: var(--error, #eb5757);
+  /* section heads */
+  .block { display: flex; flex-direction: column; gap: var(--s2); }
+  .bh { display: flex; align-items: center; gap: var(--s2); }
+  .bt { font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); }
+  .rule { flex: 1; height: 1px; background: var(--border-subtle); }
+  .bm { font-size: 9.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+
+  /* fields (atom spec) */
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field > label { font-size: 11px; font-weight: 500; color: var(--text-secondary); }
+  .input, .textarea {
+    font: inherit; font-size: 12px; color: var(--text-primary);
+    background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--r-md);
+    padding: 6px var(--s3); width: 100%; transition: border-color .14s, background .14s;
   }
-
-  .budget-label {
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 600;
+  .input::placeholder, .textarea::placeholder { color: var(--text-muted); }
+  .input:focus, .textarea:focus {
+    outline: 2px solid var(--focus); outline-offset: 1px;
+    border-color: var(--accent); background: var(--bg-overlay);
   }
+  .textarea { resize: vertical; min-height: 80px; line-height: 1.55; }
 
-  .budget-value {
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-  }
-
-  .budget-warning {
-    margin: 0;
-    font-size: 10px;
-    color: var(--error, #eb5757);
-  }
-
-  .budget-warning.warn-text {
-    color: var(--warning, #f2994a);
-  }
-
-  /* Sections */
-  .section {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .section-title {
-    font-size: 9px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: 2px;
-  }
-
-  /* Fields */
-  .field-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .field-label {
-    font-size: 10px;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    white-space: nowrap;
-  }
-
-  .textarea-label {
-    display: block;
-    margin-bottom: 2px;
-  }
-
-  .field-input {
-    flex: 1;
-    padding: 4px 6px;
-    background: var(--bg-input, var(--bg-panel-2));
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 11px;
-    outline: none;
-  }
-
-  .field-input:focus {
-    border-color: var(--accent);
-  }
-
-  .payload-area {
-    width: 100%;
-    resize: vertical;
-    padding: 6px 8px;
-    background: var(--bg-input, var(--bg-panel-2));
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 11px;
-    line-height: 1.5;
-    outline: none;
-    box-sizing: border-box;
-  }
-
-  .payload-area:focus {
-    border-color: var(--accent);
-  }
-
-  .token-hint {
-    font-size: 9px;
-    color: var(--text-muted);
-    text-align: right;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
-  }
-
-  /* Save button */
-  .save-btn {
-    margin-top: 2px;
-    padding: 5px 10px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    background: var(--bg-panel-2);
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 10px;
-    cursor: pointer;
-    transition: background 0.15s;
+  /* save button */
+  .save {
     align-self: flex-start;
+    font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+    padding: 4px var(--s3); border-radius: var(--r-md);
+    background: transparent; color: var(--text-muted);
+    border: 1px solid var(--border);
+    transition: background .14s, color .14s, border-color .14s;
   }
-
-  .save-btn:hover:not(:disabled) {
-    background: var(--accent-bg-hover);
+  .save.dirty {
+    background: var(--accent); color: var(--accent-ink); border-color: var(--accent);
   }
-
-  .save-btn:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .empty {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 11px;
-    font-style: italic;
-  }
-
-  .error-msg {
-    margin: 0;
-    color: var(--error);
-    font-size: 11px;
-  }
+  .save.dirty:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .save:disabled { cursor: default; }
+  .save:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 </style>

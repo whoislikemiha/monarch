@@ -97,7 +97,7 @@ pub fn resolve(raw: ClassifierConfig) -> ResolvedClassifierConfig {
     }
 }
 
-fn config_path() -> Result<PathBuf, MonarchError> {
+pub(crate) fn config_path() -> Result<PathBuf, MonarchError> {
     let dir = dirs::config_dir()
         .ok_or_else(|| MonarchError::persistence("config_dir unavailable"))?
         .join("monarch");
@@ -121,7 +121,7 @@ pub async fn resolved() -> ResolvedClassifierConfig {
     resolve(load_raw().await)
 }
 
-async fn write_raw(cfg: &ClassifierConfig) -> Result<(), MonarchError> {
+pub(crate) async fn write_raw(cfg: &ClassifierConfig) -> Result<(), MonarchError> {
     let path = config_path()?;
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)

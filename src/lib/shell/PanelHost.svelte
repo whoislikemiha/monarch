@@ -15,13 +15,20 @@
   import Splitter from "$lib/ui/Splitter.svelte";
   import TileStack from "$lib/ui/TileStack.svelte";
 
+  interface Props {
+    /** Opens the app settings dialog — the gear pinned at the bottom of the rail. */
+    onsettings?: () => void;
+  }
+  let { onsettings }: Props = $props();
+
   let activeAgent = $derived(agentStore.getAgent(agentStore.activeTabId ?? ""));
   let live = $derived(activeAgent ? liveAgentStore.byAgent.get(activeAgent.id) ?? null : null);
   let project = $derived(
     activeAgent?.projectId ? agentStore.projects.find((p) => p.id === activeAgent!.projectId) : undefined,
   );
+  // live is null for a selected-but-sleeping agent — DB-backed panels still work.
   let agentContext: AgentContext = $derived(
-    activeAgent && live
+    activeAgent
       ? {
           agentId: activeAgent.id,
           agent: activeAgent,
@@ -90,6 +97,13 @@
         {@html panel.icon}
       </button>
     {/each}
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" title="Settings (Ctrl+,)" aria-label="Settings" onclick={() => onsettings?.()}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    </button>
   </nav>
 </div>
 
@@ -134,9 +148,11 @@
     align-items: center;
     gap: var(--s1);
     padding-top: var(--s2);
+    padding-bottom: var(--s2);
     background: var(--bg-sink);
     border-left: 1px solid var(--border-subtle);
   }
+  .rail-spacer { flex: 1; }
   .rail-btn {
     width: 32px;
     height: 32px;

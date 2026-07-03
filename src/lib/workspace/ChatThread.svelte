@@ -8,6 +8,7 @@
   import { liveAgentStore, detachedLiveState } from "$lib/toolbox/liveAgentStore.svelte";
   import type { LiveBinding } from "./liveBinding.svelte";
   import { chatStore, type ChatPane } from "./chatStore.svelte";
+  import { classifierStore } from "$lib/classifierStore.svelte";
   import MessageStream from "./message/MessageStream.svelte";
   import Composer from "./Composer.svelte";
 
@@ -21,16 +22,28 @@
   const DETACHED = detachedLiveState();
   let live = $derived(liveAgentStore.byAgent.get(agent.id) ?? DETACHED);
 
-  // Filter the shared stream to the turns that belong to this pane.
-  let items = $derived.by<DisplayItem[]>(() => {
+  // Filter the shared stream to the turns that belong to this pane. The
+  // side map keeps each user item's GLOBAL ordinal — the classifier store is
+  // keyed by it (MON-82), so the pill lookup survives pane filtering.
+  let filtered = $derived.by<{ items: DisplayItem[]; ordinals: Map<DisplayItem, number> }>(() => {
     const out: DisplayItem[] = [];
+    const ordinals = new Map<DisplayItem, number>();
     let ord = -1;
     for (const item of live.items) {
       if (item.kind === "user") ord++;
       const owner = ord < 0 ? "general" : chatStore.paneForOrdinal(agent.id, ord);
-      if (owner === pane.id) out.push(item);
+      if (owner === pane.id) {
+        out.push(item);
+        if (item.kind === "user") ordinals.set(item, ord);
+      }
     }
-    return out;
+    return { items: out, ordinals };
+  });
+  let items = $derived(filtered.items);
+
+  // Keep the classifier event subscription alive for this agent.
+  $effect(() => {
+    classifierStore.ensure(agent.id);
   });
 
   let userCount = $derived(live.items.filter((i) => i.kind === "user").length);
@@ -65,7 +78,7 @@
 
 <div class="thread">
   {#if hasMessages}
-    <MessageStream {agent} {items} streamingMessage={streamingMine ? live.streamingMessage : null} />
+    <MessageStream {agent} {items} userOrdinals={filtered.ordinals} streamingMessage={streamingMine ? live.streamingMessage : null} />
   {:else}
     <div class="blank">
       <p class="hint">

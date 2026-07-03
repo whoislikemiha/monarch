@@ -68,20 +68,20 @@
   .section {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--s2);
   }
 
   .label {
-    font-size: 11px;
+    font-size: 10px;
+    font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+    letter-spacing: 0.12em;
   }
 
   .template-chips {
     display: flex;
-    gap: 6px;
+    gap: var(--s2);
     flex-wrap: wrap;
   }
 
@@ -89,20 +89,21 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 6px 4px 10px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 999px;
-    background: var(--bg-panel-2);
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 500;
+    padding: 3px 5px 3px 9px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-raised);
     color: var(--text-secondary);
-    font-size: 11px;
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background 0.14s, border-color 0.14s;
   }
 
   .template-chip:hover {
-    background: var(--bg-panel-3);
-    border-color: var(--accent-border-hover);
+    background: var(--bg-overlay);
+    border-color: var(--border-strong);
   }
 
   .template-chip-name {
@@ -115,7 +116,7 @@
     justify-content: center;
     width: 16px;
     height: 16px;
-    border-radius: 50%;
+    border-radius: var(--r-sm);
     color: var(--text-muted);
     font-size: 13px;
     line-height: 1;
@@ -123,7 +124,7 @@
   }
 
   .template-chip-del:hover {
-    background: var(--chip-delete-hover-bg);
-    color: var(--chip-delete-hover-text);
+    background: color-mix(in srgb, var(--status-error) 14%, transparent);
+    color: var(--status-error);
   }
 </style>

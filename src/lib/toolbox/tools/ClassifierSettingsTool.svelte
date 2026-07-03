@@ -169,14 +169,14 @@
     </div>
 
     <div class="section">
-      <div class="section-title">System prompt (read-only)</div>
-      <pre class="prompt">{config.systemPrompt}</pre>
+      <div class="section-title">System prompt · read-only</div>
+      <pre class="prompt mono">{config.systemPrompt}</pre>
     </div>
 
     {#if configPath}
-      <div class="row mono">
+      <div class="row">
         <span class="label">File</span>
-        <span class="value">{configPath}</span>
+        <span class="value mono">{configPath}</span>
       </div>
     {/if}
   {/if}
@@ -190,82 +190,101 @@
   .classifier-tool {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--s3);
+    padding: var(--s3);
   }
+  .mono { font-family: "JetBrains Mono", monospace; }
   .section {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 6px 8px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 6px;
+    gap: var(--s2);
   }
   .section-title {
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.14em;
     font-size: 10px;
+    font-weight: 600;
   }
   .toggle {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--s2);
     font-size: 12px;
+    color: var(--text-primary);
     cursor: pointer;
+    user-select: none;
+  }
+  .toggle input[type="checkbox"] {
+    accent-color: var(--accent);
+    margin: 0;
   }
   .row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--s2);
     font-size: 11px;
-  }
-  .row.mono {
-    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
   .label {
     color: var(--text-muted);
+    flex: none;
+    width: 72px;
   }
   .value {
-    color: var(--text-primary);
+    color: var(--text-secondary);
+    font-size: 10px;
     word-break: break-all;
     text-align: right;
   }
   .input {
     flex: 1 1 auto;
     min-width: 0;
-    padding: 4px 6px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 4px;
-    background: var(--bg-panel-2);
-    color: var(--text-primary);
-    font-family: inherit;
+    font: inherit;
+    font-family: "JetBrains Mono", monospace;
     font-size: 11px;
+    padding: 4px var(--s2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-raised);
+    color: var(--text-primary);
+    transition: border-color 0.14s, background 0.14s;
   }
+  .input:focus {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+    border-color: var(--accent);
+    background: var(--bg-overlay);
+  }
+  .input:disabled { opacity: 0.5; }
   .input.narrow {
     flex: 0 0 6rem;
   }
   .prompt {
     margin: 0;
-    padding: 6px 8px;
-    background: var(--bg-panel-2);
-    border-radius: 4px;
-    color: var(--text-primary);
+    padding: var(--s2) var(--s3);
+    background: var(--bg-sink);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-sm);
+    color: var(--text-secondary);
     font-size: 10px;
+    line-height: 1.6;
     white-space: pre-wrap;
     max-height: 14rem;
     overflow: auto;
   }
   .empty {
     color: var(--text-muted);
-    font-style: italic;
     font-size: 11px;
+    padding: var(--s2) 0;
   }
   .error {
     margin: 0;
-    padding: 6px 8px;
-    background: var(--error-bg-faint);
-    color: var(--error-light);
+    padding: var(--s2) var(--s3);
+    border: 1px solid color-mix(in srgb, var(--status-error) 38%, transparent);
+    background: color-mix(in srgb, var(--status-error) 7%, var(--bg-raised));
+    border-radius: var(--r-sm);
+    color: var(--status-error);
     font-size: 10px;
     white-space: pre-wrap;
   }
