@@ -2,6 +2,10 @@
 name = "monarch"
 version = "0.1.0"
 edition = "2021"
+description = "Multi-agent desktop command center for AI coding agents, built on Tauri, Svelte 5, and Rust."
+license = "MIT"
+authors = ["Miha Bubnjevic"]
+repository = "https://github.com/whoislikemiha/monarch"
 
 [lib]
 name = "monarch_lib"

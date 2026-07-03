@@ -1,7 +1,13 @@
 {
   "name": "monarch",
-  "private": true,
   "version": "0.1.0",
+  "description": "Multi-agent desktop command center for AI coding agents, built on Tauri, Svelte 5, and Rust.",
+  "license": "MIT",
+  "author": "Miha Bubnjevic",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/whoislikemiha/monarch"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
