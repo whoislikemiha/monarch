@@ -121,6 +121,12 @@ export function createUIBridge(
 		setFooter() {},
 		setHeader() {},
 		setEditorComponent() {},
+		getEditorComponent() {
+			return undefined;
+		},
+		setWorkingIndicator() {},
+		setWorkingVisible() {},
+		addAutocompleteProvider() {},
 		pasteToEditor() {},
 		getEditorText() {
 			return "";
