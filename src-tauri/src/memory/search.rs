@@ -28,7 +28,7 @@ pub async fn search_memories_for_agent_internal(
     top_k: Option<u32>,
 ) -> Result<Vec<MemorySearchResult>, MonarchError> {
     let query = query.trim();
-    if query.is_empty() || !index.is_initialized() {
+    if query.is_empty() {
         return Ok(vec![]);
     }
 
@@ -43,7 +43,13 @@ pub async fn search_memories_for_agent_internal(
             .await
             .unwrap_or_default()
     };
-    let vector_ids = index.query(query, limit).await.unwrap_or_default();
+    // The vector leg needs the embedding index; FTS must keep working without
+    // it so search degrades gracefully before the model is downloaded.
+    let vector_ids = if index.is_initialized() {
+        index.query(query, limit).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     let mut fts_by_id: HashMap<i64, f64> = HashMap::new();
     let mut fts_order: Vec<i64> = Vec::new();
