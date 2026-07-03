@@ -21,6 +21,7 @@ src-tauri/gen/
 # Env
 .env
 .env.*
+!.env.example
 
 # Monarch config (user-specific)
 # ~/.config/monarch/ is where runtime data lives, not in repo

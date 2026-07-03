@@ -1,0 +1,23 @@
+name: frontend
+on:
+  push:
+    branches: [master]
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install sidecar dependencies
+        run: npm ci --prefix sidecar
+      - name: Build sidecar
+        run: npm run build:sidecar
+      - name: Type-check frontend
+        run: npx svelte-check
+      - name: Run tests
+        run: npm test
