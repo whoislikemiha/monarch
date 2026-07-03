@@ -2,7 +2,7 @@
 
 Linear: https://linear.app/monarch-commander/issue/MON-36
 Parent: MON-14 Phase 1 cleanup (Wave 1)
-Base branch: `markocvijanovic1998/mon-14-phase-1-rust-state-ownership`
+Base branch: `mon-14-phase-1-rust-state-ownership`
 
 ## Problem
 

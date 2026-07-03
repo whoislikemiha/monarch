@@ -8,7 +8,7 @@ Slice A ships everything required for memories to **exist and be inspected**, wi
 
 ## Status (already committed on this branch)
 
-The substrate is in flight. The two feature commits already on `mihabubnjevic/mon-99-p2-first-memory-end-to-end` are:
+The substrate is in flight. The two feature commits already on `mon-99-p2-first-memory-end-to-end` are:
 
 - `c87eeb8 feat(mon-99): memories schema, keeper_runs, FTS5 triggers, DB internals` — `db.rs` schema + DB internals (`insert_memory_internal`, `list_memories_for_agent_internal`, `get_memory_internal`, `insert_keeper_run_internal`, `fts_search_memories_internal`, `update_memory_access_internal`).
 - `be39295 feat(mon-99): memory_config.rs, memory_index.rs, Cargo deps` — global config loader + Tauri commands, HNSW + ONNX embedder + Tauri commands, `Cargo.toml` deps (`instant-distance`, `ort` with `download-binaries`, `ndarray`, `tokenizers`).

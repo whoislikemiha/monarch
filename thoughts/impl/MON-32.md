@@ -1,6 +1,6 @@
 # MON-32 — Typed `SidecarEvent` and `SidecarCommand` enums
 
-Shipped: PR #25, merged into `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` on 2026-04-11 as commit `c3f35ce`. Wave 2 step 2 of 5 (after MON-31, before MON-35).
+Shipped: PR #25, merged into `mon-14-phase-1-rust-state-ownership` on 2026-04-11 as commit `c3f35ce`. Wave 2 step 2 of 5 (after MON-31, before MON-35).
 
 ## What shipped
 

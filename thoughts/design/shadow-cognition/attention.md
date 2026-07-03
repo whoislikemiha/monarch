@@ -27,7 +27,7 @@ Igris:   on it
 [timeline: Igris: commit and push staged changes
    ├ git add -A
    ├ git commit -m "feat(mon-82): wire classifier"
-   └ git push origin mihabubnjevic/mon-82-classifier-...]
+   └ git push origin mon-82-classifier-...]
 Igris:   pushed.
 ```
 

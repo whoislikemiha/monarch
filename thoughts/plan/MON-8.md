@@ -54,7 +54,7 @@ When an agent is restored (sidecar recovery or session continuation), Rust rebui
 
 ## Decisions (confirmed with user)
 
-1. **Per-agent at spawn**, input shown in `SpawnDialog.svelte` when the selected provider is `lmstudio`. Marko's local setup runs ~4 LM Studio agents in parallel, so the per-agent input needs to be quick to fill (default to last-used value for the same model is a nice-to-have, not a requirement).
+1. **Per-agent at spawn**, input shown in `SpawnDialog.svelte` when the selected provider is `lmstudio`. A local setup runs ~4 LM Studio agents in parallel, so the per-agent input needs to be quick to fill (default to last-used value for the same model is a nice-to-have, not a requirement).
 2. **Auto-detect via LM Studio's `/api/v0/models`** is out of scope for MON-8 and tracked as a separate issue/plan.
 3. **OpenRouter's hardcoded 128k default is fixed in this same issue** — same plumbing path, same meter fix. Treat as a second instance of the same bug, not a separate concern.
 4. **Keep a session-lifetime billing readout** in the controls bar alongside the live context meter. Not critical for LM Studio (local, free) but important for paid providers, and it's cheap to keep the number visible.

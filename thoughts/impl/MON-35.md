@@ -3,7 +3,7 @@
 - **Linear:** https://linear.app/monarch-commander/issue/MON-35
 - **Parent:** MON-14 (Phase 1 Rust state ownership)
 - **Wave:** 2, step 3 of 5 (MON-31 → MON-32 → **MON-35** → MON-33 → MON-34)
-- **Base:** `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` (tip `6f34ff6`)
+- **Base:** `mon-14-phase-1-rust-state-ownership` (tip `6f34ff6`)
 
 ## What was implemented
 

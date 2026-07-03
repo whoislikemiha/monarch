@@ -42,7 +42,7 @@ Also set:
 - **assignee** — `me` unless the user says otherwise.
 - **project** — if the work clearly belongs to an existing project (e.g. `Agent loop`, `Memory & context tools`), attach it. Otherwise leave blank and mention it to the user.
 
-After creation, **capture the `gitBranchName` field from the response** — it looks like `markocvijanovic1998/mon-5-update-readme`. This is the exact branch name to use in step 3.
+After creation, **capture the `gitBranchName` field from the response** — it looks like `your-branch/mon-5-update-readme`. This is the exact branch name to use in step 3.
 
 ## 3. Create the Git branch
 

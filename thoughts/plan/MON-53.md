@@ -122,7 +122,7 @@ The refactor is best done as a single commit (or a tight series of commits that 
 
 ## Commit plan
 
-Each commit lands on `mihabubnjevic/mon-53-split-agentrs-into-focused-modules`:
+Each commit lands on `mon-53-split-agentrs-into-focused-modules`:
 
 1. `refactor(mon-53): create util.rs for chrono_now and uuid_v4_simple` — add `src-tauri/src/util.rs`, move the two helpers, update `db.rs` / `project.rs` / `agent.rs` imports.
 2. `refactor(mon-53): scaffold agent/ module` — convert `agent.rs` → `agent/mod.rs` byte-for-byte (no content moves yet), add empty submodule files, update `lib.rs` only if needed (shouldn't be).

@@ -1,7 +1,7 @@
 # MON-41 — Coarse reactivity: `liveAgentStore.applyUpdate` swaps object identity per snapshot
 
 Linear: [MON-41](https://linear.app/monarch-commander/issue/MON-41/coarse-reactivity-liveagentstoreapplyupdate-swaps-object-identity-per) (parent: MON-14)
-Branch: `markocvijanovic1998/mon-41-coarse-reactivity-liveagentstoreapplyupdate-swaps-object`
+Branch: `mon-41-coarse-reactivity-liveagentstoreapplyupdate-swaps-object`
 
 ## Summary
 

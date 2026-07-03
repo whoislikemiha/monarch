@@ -158,7 +158,7 @@ P2 ──► P2b ──► P4 ──► P4b ──► P5 ──► P6 ──► 
 
 ### P2c — Split live-context compaction from memory distillation
 
-**Read first.** [`distillation.md`](./distillation.md) § "What changed (2026‑06)" + § "Compaction triggers" (both revised). Pi's compaction harness in the local checkout (`/Users/miha/pro/pi`): `packages/agent/src/harness/compaction/{compaction.ts,utils.ts}` and `packages/coding-agent/src/core/agent-session.ts` (`_runAutoCompaction`, the `session_before_compact` hook, `compaction_start` / `compaction_end`).
+**Read first.** [`distillation.md`](./distillation.md) § "What changed (2026‑06)" + § "Compaction triggers" (both revised). Pi's compaction harness in the local pi checkout: `packages/agent/src/harness/compaction/{compaction.ts,utils.ts}` and `packages/coding-agent/src/core/agent-session.ts` (`_runAutoCompaction`, the `session_before_compact` hook, `compaction_start` / `compaction_end`).
 
 **Goal.** The Keeper stops rewriting the executor's live context. Pi's native compaction owns the live window (level trigger near `contextWindow − reserveTokens`, keeps recent ~20k raw, structured checkpoint, `<read-files>` / `<modified-files>` for re-read-on-demand). The Keeper becomes memory-only and distills the slice Pi evicts, at Pi's compaction boundary and at quest close — not per-turn. Net: no per-turn churn, real (non-zero) live-context savings, and tool-output substrate is preserved (re-readable) rather than prose-summarized.
 

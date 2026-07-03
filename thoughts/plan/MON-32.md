@@ -1,8 +1,8 @@
 # MON-32 — Typed `SidecarEvent` / `SidecarCommand` enums
 
 - **Linear:** https://linear.app/monarch-commander/issue/MON-32
-- **Branch:** `markocvijanovic1998/mon-32-typed-sidecarevent-and-sidecarcommand-enums`
-- **Base:** `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` @ `9dacfca` (MON-31 merge)
+- **Branch:** `mon-32-typed-sidecarevent-and-sidecarcommand-enums`
+- **Base:** `mon-14-phase-1-rust-state-ownership` @ `9dacfca` (MON-31 merge)
 - **Wave:** 2, step 2 of 5 (MON-31 merged → MON-32 → MON-35 → MON-33 → MON-34)
 
 ## Summary

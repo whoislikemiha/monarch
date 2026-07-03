@@ -6,7 +6,7 @@ Rive animation runtime (`@rive-app/webgl2`) integrated into the Monarch frontend
 
 ## Key decisions
 
-- **WebGL2 over Canvas** — went with `@rive-app/webgl2` for maximum rendering quality. Marko's prior WebGL experience on the team confirms WebKitGTK handles it fine.
+- **WebGL2 over Canvas** — went with `@rive-app/webgl2` for maximum rendering quality. Prior WebGL experience on the project confirms WebKitGTK handles it fine.
 - **CDN WASM loading** — Rive loads its WASM renderer from unpkg by default. Works for both dev and production. Can switch to local bundle via `RuntimeLoader.setWasmUrl()` if offline support is ever needed.
 - **Mutually exclusive activity states** — The state mapper enforces exactly one boolean true at a time via priority ordering: error > tool running > coding > thinking > idle. No ambiguous states possible.
 - **Read vs Tool distinction** — Tools like `Read`, `Grep`, `Glob` trigger `isReading` instead of generic `isUsingTool`, giving richer animation variety.

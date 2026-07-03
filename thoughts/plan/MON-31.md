@@ -1,8 +1,8 @@
 # MON-31 — Introduce `MonarchError` domain error type
 
 Linear: https://linear.app/monarch-commander/issue/MON-31
-Branch: `markocvijanovic1998/mon-31-introduce-monarcherror-domain-error-type`
-Base: `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` (Wave 2 rule — not `master`)
+Branch: `mon-31-introduce-monarcherror-domain-error-type`
+Base: `mon-14-phase-1-rust-state-ownership` (Wave 2 rule — not `master`)
 
 ## Summary
 

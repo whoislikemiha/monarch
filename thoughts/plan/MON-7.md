@@ -1,7 +1,7 @@
 # MON-7 — Polish model selection and add LM Studio provider support
 
-- **Linear:** [MON-7](https://linear.app/monarch-commander/issue/MON-7/polish-model-selection-and-add-lm-studio-provider-support)
-- **Branch:** `markocvijanovic1998/mon-7-polish-model-selection-and-add-lm-studio-provider-support`
+- **Linear:** MON-7 (internal issue tracker)
+- **Branch:** `mon-7-polish-model-selection-and-add-lm-studio-provider-support`
 
 ## Summary
 

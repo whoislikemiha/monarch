@@ -40,7 +40,7 @@ At the module level:
 8. **Cargo.toml:** add `parking_lot = "0.12"` (or whichever version matches the transitive one in `Cargo.lock` to avoid a second copy) as a direct dep.
 9. **Tests.** Rewrite the MON-33 round-trip test's seed path to insert into the new inner struct through the `parking_lot::Mutex` lock. Keep the assertion shape intact.
 
-PR targets `markocvijanovic1998/mon-14-phase-1-rust-state-ownership`, not master. After MON-14 lands on master, the base will flip automatically.
+PR targets `mon-14-phase-1-rust-state-ownership`, not master. After MON-14 lands on master, the base will flip automatically.
 
 ## Out of scope
 

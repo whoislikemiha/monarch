@@ -1,7 +1,7 @@
 # MON-39 — Phase 1 cleanup: remove dead code and legacy channels
 
 **Linear:** https://linear.app/monarch-commander/issue/MON-39
-**Base:** `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` @ `f81c017` (post-MON-34, docs commit)
+**Base:** `mon-14-phase-1-rust-state-ownership` @ `f81c017` (post-MON-34, docs commit)
 **PR target:** the same Wave 2 base branch, not `master`
 **Parent:** MON-14 Phase 1
 

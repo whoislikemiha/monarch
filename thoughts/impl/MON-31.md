@@ -2,7 +2,7 @@
 
 Linear: https://linear.app/monarch-commander/issue/MON-31
 PR: https://github.com/whoislikemiha/monarch/pull/24
-Base: `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` (Wave 2 rule — not `master`)
+Base: `mon-14-phase-1-rust-state-ownership` (Wave 2 rule — not `master`)
 
 ## What was implemented
 

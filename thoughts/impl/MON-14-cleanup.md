@@ -276,7 +276,7 @@ about the shape left behind. -->
     issues from runtime failures.
 
 - **Handoff from Wave 1 → Wave 2 starting point.** Wave 1 is merged
-  into `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` (all
+  into `mon-14-phase-1-rust-state-ownership` (all
   five PRs: MON-29 #18, MON-38 #19, MON-30 #20, MON-36 #21, MON-37 #22).
   None have reached `master` yet — the whole Phase 1 train merges
   together later, which is why the Wave 1 checkboxes stay `[ ]` per
@@ -315,7 +315,7 @@ about the shape left behind. -->
   bullet from MON-35.
 
 - **Wave 2 starting state for MON-35.** Branch from
-  `markocvijanovic1998/mon-14-phase-1-rust-state-ownership` at
+  `mon-14-phase-1-rust-state-ownership` at
   `c3f35ce` (MON-32 merge commit). `cargo check` / `cargo clippy`
   clean modulo the two pre-existing `too_many_arguments` warnings
   on `spawn_agent` (13 args) and `ws_spawn_agent` (11 args) —
@@ -645,7 +645,7 @@ about the shape left behind. -->
   https://linear.app/monarch-commander/issue/MON-39
 
   _Wave 2 base_: branch from
-  `markocvijanovic1998/mon-14-phase-1-rust-state-ownership`
+  `mon-14-phase-1-rust-state-ownership`
   (post-MON-34, commit `e9dbfee`), open PR against the same. Commit
   `thoughts/plan/MON-39.md` and `thoughts/impl/MON-39.md` on the PR
   branch. Update this tracker file's Wave 2 entry for MON-39 in the
