@@ -7,7 +7,7 @@
 
 Monarch lets you run several AI coding agents side by side, each with its own identity, memory, and conversation history — instead of juggling a pile of terminal tabs with no shared visibility. It's built as a real multi-process desktop app: a Rust/Tauri core that owns all state, a Svelte 5 frontend that renders it, and a long-lived Node sidecar that hosts the actual agent runtime ([Pi SDK](https://github.com/badlogic/pi-mono)) and streams events back.
 
-> Monarch is under active development — expect rough edges. See [VISION.md](./VISION.md) for where it's headed, [ONBOARDING.md](./ONBOARDING.md) for the full architecture/data-model walkthrough, and [`thoughts/`](./thoughts/) for the running design log (research plans, implementation notes, and open design docs written as the project evolves).
+> **Status — parked.** Monarch is an experimental project exploring multi-agent orchestration: agent memory, persistent work structure, and session ancestry. A large amount was built here; rather than leave it hidden, it's published as a reference and showcase. It is **not actively maintained and is not accepting contributions** — fork and explore freely. See [VISION.md](./VISION.md) for the original direction, [ONBOARDING.md](./ONBOARDING.md) for the architecture and data-model walkthrough, and [`thoughts/`](./thoughts/) for the design log (research plans, implementation notes, and design docs written as it evolved).
 
 ## Why
 
