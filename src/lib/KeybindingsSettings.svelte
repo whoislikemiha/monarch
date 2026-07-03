@@ -68,9 +68,10 @@
             </div>
             <div class="binding-keys">
               {#if capturingId === binding.id}
-                <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
                 <div
                   class="capture-box"
+                  role="textbox"
+                  aria-label="Type shortcut"
                   tabindex="0"
                   onkeydown={handleCaptureKeydown}
                   onblur={() => (capturingId = null)}

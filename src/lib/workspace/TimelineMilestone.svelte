@@ -105,6 +105,8 @@
     <span class="d-time mono">{relTime(event.createdAt)}</span>
   </div>
 {:else}
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <!-- tabindex and role are both gated on `detail`: interactive only when expandable -->
   <div
     class="mile"
     class:blocker={isBlocker}

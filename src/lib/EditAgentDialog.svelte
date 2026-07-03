@@ -15,10 +15,15 @@
     onclose: () => void;
   } = $props();
 
+  // Non-reactive snapshot of the prop — the form seeds its editable fields once,
+  // on open, and owns them thereafter.
+  // svelte-ignore state_referenced_locally
+  const seed = agent;
+
   // Shadow identity
-  let shadowName = $state(agent.shadow?.shadowName ?? "");
-  let shadowTitle = $state(agent.shadow?.shadowTitle ?? "");
-  let shadowGrade: ShadowGrade = $state((agent.shadow?.shadowGrade as ShadowGrade) ?? "Knight");
+  let shadowName = $state(seed.shadow?.shadowName ?? "");
+  let shadowTitle = $state(seed.shadow?.shadowTitle ?? "");
+  let shadowGrade: ShadowGrade = $state((seed.shadow?.shadowGrade as ShadowGrade) ?? "Knight");
 
   // Connection / model
   const providers = [
@@ -29,14 +34,14 @@
   ];
   const REFRESHABLE_PROVIDERS = new Set(["openrouter", "lmstudio"]);
 
-  let selectedProvider = $state(agent.provider ?? "openrouter");
-  let modelInput = $state(agent.model ?? "");
-  let thinkingLevel = $state(agent.thinkingLevel ?? "off");
-  let cwd = $state(agent.cwd ?? "");
+  let selectedProvider = $state(seed.provider ?? "openrouter");
+  let modelInput = $state(seed.model ?? "");
+  let thinkingLevel = $state(seed.thinkingLevel ?? "off");
+  let cwd = $state(seed.cwd ?? "");
 
   // Avatar
-  let avatarType = $state<"image" | undefined>(agent.avatarType);
-  let avatarPath = $state<string | undefined>(agent.avatarPath);
+  let avatarType = $state<"image" | undefined>(seed.avatarType);
+  let avatarPath = $state<string | undefined>(seed.avatarPath);
 
   // Model dropdown state
   interface ModelInfo { id: string; name: string; provider: string; contextWindow?: number; }
