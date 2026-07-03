@@ -116,17 +116,11 @@ export function createUIBridge(
 			return () => {};
 		},
 		setWorkingMessage() {},
-		setWorkingIndicator() {},
-		setWorkingVisible() {},
-		addAutocompleteProvider() {},
 		setHiddenThinkingLabel() {},
 		setWidget() {},
 		setFooter() {},
 		setHeader() {},
 		setEditorComponent() {},
-		getEditorComponent() {
-			return undefined;
-		},
 		pasteToEditor() {},
 		getEditorText() {
 			return "";
