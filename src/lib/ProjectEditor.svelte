@@ -180,7 +180,7 @@
     </div>
 
     <div class="editor-hint">
-      Project instructions injected into every shadow's system prompt.
+      Project instructions injected into every agent's system prompt.
       Loaded from AGENTS.md / CLAUDE.md on first detection. Edit here to override.
       {#if dirty}
         <span class="unsaved-badge">Unsaved changes</span>

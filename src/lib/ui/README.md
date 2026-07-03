@@ -49,7 +49,7 @@ Live reference (renders every token + atom, theme-switchable): run dev → **`ht
 
 `.panel`/`.panel-head`/`.panel-body` · `.btn`(`.btn-primary`/`-ghost`/`-danger`/`-icon`) · `.field`/`.input`/`.textarea`/`.select` ·
 `.badge`(`.b-success`/`-warning`/`-error`/`-info`) · `.chip`/`.chip-scope` · `.gchip` (grade) · `.sdot`(`.idle`/`.success`/`.running`/`.warning`/`.error`) ·
-`.avatar`(`.ring` + `--gc`) · `.shadow-row` · `.empty` · `.meter` · `.gprog` · `.drow`/`.drow-group` (data rows) ·
+`.avatar`(`.ring` + `--gc`) · `.agent-row` · `.empty` · `.meter` · `.gprog` · `.drow`/`.drow-group` (data rows) ·
 `.tree`/`.tnode`/`.trow`/`.tkids` (disclosure) · `.popover`/`.tooltip` · `.codeblock`/`.showmore` · `.evt`/`.ei` (timeline event icons) · `.caret` (streaming)
 
 ## House rules (non-negotiable)

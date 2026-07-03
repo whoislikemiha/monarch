@@ -9,12 +9,12 @@ export function createSuggestMemoryTool(agentId: string, emit: EmitFn) {
 		name: "suggest_memory",
 		label: "Suggest Memory",
 		description:
-			"Suggest a noteworthy fact, decision, preference, or convention for the Keeper to consider later.",
+			"Suggest a noteworthy fact, decision, preference, or convention for the curator to consider later.",
 		promptSnippet:
-			"suggest_memory(title, summary, content) - flag a durable fact, decision, preference, or convention for later Keeper review.",
+			"suggest_memory(title, summary, content) - flag a durable fact, decision, preference, or convention for later curator review.",
 		promptGuidelines: [
 			"Use suggest_memory only for durable information that should likely survive this objective.",
-			"The tool records a suggestion only; the Keeper decides whether it becomes memory.",
+			"The tool records a suggestion only; the curator decides whether it becomes memory.",
 		],
 		parameters: Type.Object({
 			title: Type.String({
@@ -24,7 +24,7 @@ export function createSuggestMemoryTool(agentId: string, emit: EmitFn) {
 				description: "One-sentence summary of what should be remembered.",
 			}),
 			content: Type.String({
-				description: "Supporting detail, evidence, or context for the Keeper.",
+				description: "Supporting detail, evidence, or context for the curator.",
 			}),
 		}),
 		async execute(_toolCallId, params) {
@@ -45,7 +45,7 @@ export function createSuggestMemoryTool(agentId: string, emit: EmitFn) {
 				content: [
 					{
 						type: "text",
-						text: "Memory suggestion queued for Keeper review if an active objective is available.",
+						text: "Memory suggestion queued for curator review if an active objective is available.",
 					},
 				],
 				details: { title, summary, content },

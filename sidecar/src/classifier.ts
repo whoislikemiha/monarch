@@ -73,7 +73,7 @@ Label the user's message with exactly one of:
 - chitchat: greetings, social/small-talk, or meta-questions that need no task execution
 - simple: a direct request solvable in a single focused turn (e.g. a one-line fix, a factual question, a small rename)
 - decomposable: work that benefits from an explicit plan — several files, several decisions, or sequenced steps
-- delegate: work that benefits from parallel subtasks or exploration across unrelated areas, where multiple shadows should run simultaneously
+- delegate: work that benefits from parallel subtasks or exploration across unrelated areas, where multiple agents should run simultaneously
 
 Bias toward escalation on ambiguity — prefer 'decomposable' over 'simple' when it's a close call. A misclassified simple prompt is cheap; a missed decomposable task is expensive.
 

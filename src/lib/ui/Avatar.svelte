@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Static shadow avatar — monogram or uploaded image, with an optional grade
+   * Static agent avatar — monogram or uploaded image, with an optional grade
    * ring and presence pip. Deliberately NOT animated (no Rive): the avatar's
    * job is visual tracking at a glance, not motion. Wraps the `.avatar` atom.
    */

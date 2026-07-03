@@ -12,6 +12,6 @@
   } = $props();
 </script>
 
-<Modal title="Extract shadow" onclose={oncancel} width={560}>
+<Modal title="Create agent" onclose={oncancel} width={560}>
   <SpawnForm {onspawn} {oncancel} />
 </Modal>

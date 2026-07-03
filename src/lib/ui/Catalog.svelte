@@ -98,10 +98,10 @@
     <section class="section">
       <div class="section-head"><span class="idx mono">02</span><h2>Typography</h2></div>
       <div class="text-spec">
-        <div class="row"><span style="font-size:32px;font-weight:700;letter-spacing:-0.02em;color:var(--text-primary)">Captain's Bridge</span><span class="meta mono">Inter 700 · 32</span></div>
+        <div class="row"><span style="font-size:32px;font-weight:700;letter-spacing:-0.02em;color:var(--text-primary)">Command Center</span><span class="meta mono">Inter 700 · 32</span></div>
         <div class="row"><span style="font-size:23px;font-weight:600;color:var(--text-primary)">Active Objectives</span><span class="meta mono">Inter 600 · 23</span></div>
         <div class="row"><span style="font-size:13px;color:var(--text-secondary);max-width:48ch">Body copy is Inter at 13px — comfortable for long reading-heavy sessions at the console.</span><span class="meta mono">Inter 400 · 13</span></div>
-        <div class="row"><span class="mono" style="font-size:12px;color:var(--accent-2)">SH-0271 · grade A · 64% distilled</span><span class="meta mono">Mono · ids · metrics</span></div>
+        <div class="row"><span class="mono" style="font-size:12px;color:var(--accent-2)">AG-0271 · grade A · 64% distilled</span><span class="meta mono">Mono · ids · metrics</span></div>
       </div>
       <p class="note">Inter for everything a human reads as language. JetBrains Mono only for ids, metrics, paths, timestamps, code.</p>
     </section>
@@ -133,9 +133,9 @@
           <div class="panel-head"><div class="ttl"><h4>Buttons</h4></div><span class="cap">action</span></div>
           <div class="panel-body">
             <div class="btnrow">
-              <button class="btn btn-primary">Summon shadow</button>
+              <button class="btn btn-primary">Create agent</button>
               <button class="btn btn-ghost">Cancel</button>
-              <button class="btn btn-danger">Dismiss</button>
+              <button class="btn btn-danger">Archive</button>
             </div>
           </div>
         </div>
@@ -144,8 +144,8 @@
         <div class="panel">
           <div class="panel-head"><div class="ttl"><h4>Inputs</h4></div><span class="cap">form</span></div>
           <div class="panel-body">
-            <div class="field"><label for="ci">Objective title</label><input id="ci" class="input" placeholder="e.g. Refactor the Keeper queue" /></div>
-            <div class="field"><label for="cs">Grade floor</label><select id="cs" class="select"><option>A — Vanguard</option><option>S — Sovereign</option></select></div>
+            <div class="field"><label for="ci">Objective title</label><input id="ci" class="input" placeholder="e.g. Refactor the task queue" /></div>
+            <div class="field"><label for="cs">Grade floor</label><select id="cs" class="select"><option>A — Excellent</option><option>S — Exceptional</option></select></div>
           </div>
         </div>
 
@@ -174,7 +174,7 @@
 
         <!-- status dots + avatars -->
         <div class="panel">
-          <div class="panel-head"><div class="ttl"><h4>Status &amp; Shadows</h4></div><span class="cap">presence</span></div>
+          <div class="panel-head"><div class="ttl"><h4>Status &amp; Agents</h4></div><span class="cap">presence</span></div>
           <div class="panel-body">
             <div class="dotlist">
               <div class="d"><span class="sdot success"></span>Idle · ready<span class="mono">circle</span></div>
@@ -206,7 +206,7 @@
             <div class="drow-group">
               <div class="drow-head"><span class="t">Context</span><span class="rule"></span><span class="mono">4 keys</span></div>
               <div class="drow"><span class="k">Model</span><span class="v">Claude Opus 4.6</span></div>
-              <div class="drow"><span class="k">Codex ID</span><span class="v mono">SH-0271</span></div>
+              <div class="drow"><span class="k">Codex ID</span><span class="v mono">AG-0271</span></div>
               <div class="drow"><span class="k">Status</span><span class="v"><span class="badge b-success" style="font-size:10px"><span class="bdot"></span>Distilled</span></span></div>
               <div class="drow"><span class="k">Budget</span><span class="v metercell"><span class="track"><span class="fill" style="width:31%"></span></span><span class="mono">31%</span></span></div>
             </div>
@@ -221,10 +221,10 @@
               <div class="tnode" data-open={treeOpen}>
                 <button class="trow" onclick={() => (treeOpen = !treeOpen)}>
                   <svg class="chev" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3 9 7 5 11" /></svg>
-                  <span class="ti">Objective #O-118 · Refactor Keeper queue</span><span class="tmeta">3 · 12m</span>
+                  <span class="ti">Objective #O-118 · Refactor task queue</span><span class="tmeta">3 · 12m</span>
                 </button>
                 <div class="tkids">
-                  <div class="tnode"><div class="trow leaf"><span class="chev"></span><span class="ti">Edited keeper/queue.rs</span><span class="tmeta">+42 −11</span></div></div>
+                  <div class="tnode"><div class="trow leaf"><span class="chev"></span><span class="ti">Edited jobs/queue.rs</span><span class="tmeta">+42 −11</span></div></div>
                   <div class="tnode"><div class="trow leaf"><span class="chev"></span><span class="ti">Ran cargo test</span><span class="tmeta">ok · 1.4s</span></div></div>
                 </div>
               </div>
@@ -239,8 +239,8 @@
             <div class="codeblock" data-open={codeOpen}>
               <div class="ch"><span class="lbl">tool_call · run_command</span></div>
               <div class="clip">
-                <pre><span class="cm"># cargo test keeper::queue</span>
-<span class="ky">$</span> cargo test keeper::queue
+                <pre><span class="cm"># cargo test jobs::queue</span>
+<span class="ky">$</span> cargo test jobs::queue
 <span class="st">ok</span> · 14 passed · 1.42s</pre>
                 {#if !codeOpen}<div class="fade"></div>{/if}
               </div>
@@ -271,9 +271,9 @@
           <div class="panel-head"><div class="ttl"><h4>Empty State</h4></div><span class="cap">zero data</span></div>
           <div class="empty">
             <div class="glyph" aria-hidden="true"></div>
-            <h4>No shadows summoned</h4>
-            <p>The bridge is quiet. Extract a shadow to begin your first objective.</p>
-            <button class="btn btn-primary" style="margin-top:var(--s2)">Summon shadow</button>
+            <h4>No agents yet</h4>
+            <p>Nothing here yet. Create an agent to begin your first objective.</p>
+            <button class="btn btn-primary" style="margin-top:var(--s2)">Create agent</button>
           </div>
         </div>
       </div>

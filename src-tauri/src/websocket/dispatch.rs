@@ -116,7 +116,7 @@ pub(crate) async fn dispatch_command(
         "db_list_classifications_for_agent" => objectives::db_list_classifications_for_agent(state, args).await,
         "db_get_classification_for_message" => objectives::db_get_classification_for_message(state, args).await,
 
-        // ---- MON-98: Captain / shadow identity ----
+        // ---- MON-98: Supervisor / agent identity ----
         "get_captain_identity" => agents::get_captain_identity(state, args).await,
         "upsert_captain_identity" => agents::upsert_captain_identity(state, args).await,
         "get_shadow_identity" => agents::get_shadow_identity(state, args).await,

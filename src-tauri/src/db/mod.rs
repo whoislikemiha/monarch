@@ -280,9 +280,9 @@ mod tests {
             id: id.to_string(),
             name: id.to_string(),
             project_id: None,
-            shadow_name: Some("Igris".to_string()),
-            shadow_title: Some("Test Shadow".to_string()),
-            shadow_grade: Some("Knight".to_string()),
+            shadow_name: Some("Atlas".to_string()),
+            shadow_title: Some("Test Agent".to_string()),
+            shadow_grade: Some("Junior".to_string()),
             provider: Some("lmstudio".to_string()),
             model: Some("test-model".to_string()),
             thinking_level: Some("off".to_string()),
@@ -667,7 +667,7 @@ mod tests {
             .await
             .expect("wm")
             .expect("row");
-        // No auto-advance — captain decides what's next.
+        // No auto-advance — supervisor decides what's next.
         assert!(wm.active_plan_item_id.is_none());
     }
 

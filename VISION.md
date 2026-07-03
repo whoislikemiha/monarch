@@ -4,7 +4,7 @@
 
 ## What
 
-A growing, evolving system of AI agents that work together, remember, and have identity. Not a task runner — a living fleet you command. Agents do work, but they also know who they are, who you are, what they've done, and what's going on around them. You're at the helm.
+A growing, evolving system of AI agents that work together, remember, and have identity. Not a task runner — a living fleet you command. Agents do work, but they also know who they are, who you are, what they've done, and what's going on around them. You're in control.
 
 ## Why
 
@@ -51,7 +51,7 @@ Permissions are scoped by role. Trust by default, restrict by exception.
 
 ## Quests
 
-A **Quest** is the atomic artifact of work in Monarch — the fractal primitive around which everything else organizes. A quest may be trivial (rename a variable) or vast (ship a new product). Quests contain sub-quests to arbitrary depth. Every significant action a shadow takes belongs to some quest.
+A **Quest** is the atomic artifact of work in Monarch — the fractal primitive around which everything else organizes. A quest may be trivial (rename a variable) or vast (ship a new product). Quests contain sub-quests to arbitrary depth. Every significant action an agent takes belongs to some quest.
 
 Quests unify what would otherwise be separate systems:
 
@@ -63,11 +63,11 @@ Quests unify what would otherwise be separate systems:
 
 ### Fractal Structure
 
-Quests are scale-invariant. A one-line fix is a quest. An epic multi-month initiative is a quest. Quests nest with no depth limit. The shadow hierarchy mirrors the quest hierarchy — top-level quests go to orchestrators, sub-quests go to leads, atomic quests go to workers.
+Quests are scale-invariant. A one-line fix is a quest. An epic multi-month initiative is a quest. Quests nest with no depth limit. The agent hierarchy mirrors the quest hierarchy — top-level quests go to orchestrators, sub-quests go to leads, atomic quests go to workers.
 
 ### Grades
 
-Every quest has a grade mirroring the shadow grade system:
+Every quest has a grade mirroring the agent grade system:
 
 - **E** — trivial atomic change
 - **D** — small, single function
@@ -90,26 +90,26 @@ Terminal states: `done`, `abandoned`, `superseded` (a fork winner replaces this 
 
 ### Roles
 
-The Quest system introduces supporting roles alongside existing shadows:
+The Quest system introduces supporting roles alongside existing agents:
 
 - **Classifier** — a small always-on model (local) that tags every user prompt with complexity. Gates everything downstream.
 - **Architect** — a heavy one-shot decomposer invoked when the classifier flags complexity. Has codebase + web tools.
 - **Steward** — a continuous lightweight observer that maintains the quest tree as reality unfolds. Handles status transitions, drift detection, scope expansion.
 - **Judge** — on-demand adjudicator when completion is contested.
 
-Existing shadows (orchestrator, lead, worker) execute the tree. They read quest state through context injection each turn, signal completion via `claim_complete`, and may call `request_replan` when the plan no longer fits reality.
+Existing agents (orchestrator, lead, worker) execute the tree. They read quest state through context injection each turn, signal completion via `claim_complete`, and may call `request_replan` when the plan no longer fits reality.
 
 ### Forks & Exploration
 
-A quest may be marked `explore_n=K` at decomposition — Monarch spawns K worker shadows in parallel, each in its own worktree with a different approach. Monarch picks the winner; losing forks are preserved as abandoned quests, worktrees archived not deleted. Nothing is lost — losing forks remain Time Travel anchors and Memory Keeper sources.
+A quest may be marked `explore_n=K` at decomposition — Monarch spawns K worker agents in parallel, each in its own worktree with a different approach. Monarch picks the winner; losing forks are preserved as abandoned quests, worktrees archived not deleted. Nothing is lost — losing forks remain Time Travel anchors and Memory Curator sources.
 
 ### Context Injection
 
-Shadows don't remember which quest they're on — they read it each turn. A "you are here" block prepends every shadow turn with the current quest tree, the shadow's current node, and the available quest operations. The tree becomes the reasoning spine — drift is visible in the shadow's own context, not just in an external panel.
+Agents don't remember which quest they're on — they read it each turn. A "you are here" block prepends every agent turn with the current quest tree, the agent's current node, and the available quest operations. The tree becomes the reasoning spine — drift is visible in the agent's own context, not just in an external panel.
 
 ### EXP
 
-Completing a quest awards EXP to the assigned shadow, scaled by grade (E=1, D=3, C=10, B=30, A=100, S=500 base) and modified by completion quality (disputes, drift, judge verdicts, fork outcomes). Parent shadows receive partial credit for delegated children. Losing forks still earn 30% of grade base — exploration has value. Total EXP drives avatar visual tiers and eligibility for grade promotion.
+Completing a quest awards EXP to the assigned agent, scaled by grade (E=1, D=3, C=10, B=30, A=100, S=500 base) and modified by completion quality (disputes, drift, judge verdicts, fork outcomes). Parent agents receive partial credit for delegated children. Losing forks still earn 30% of grade base — exploration has value. Total EXP drives avatar visual tiers and eligibility for grade promotion.
 
 ## Memory
 
@@ -119,26 +119,26 @@ Each agent has persistent memory across sessions — who they are, what they've 
 
 Memory has to be efficient — enough to be useful, not so much it drowns the context window.
 
-- **Core identity** — always loaded. Who am I, who's the captain, my role. Tiny footprint.
+- **Core identity** — always loaded. Who am I, who I report to, my role. Tiny footprint.
 - **Hot memory** — recent and important. Current task, last interactions, active project context. Loaded by default.
 - **Warm memory** — relevant to current work. Past tasks in the same area, related learnings. Surfaced automatically when the task overlaps.
 - **Cold memory** — everything else. Full history, old conversations, archived learnings. Retrieved on explicit search or when Monarch detects relevance.
 
-### Memory Keeper
+### Memory Curator
 
-A dedicated background agent (or system process — implementation TBD) that maintains the fleet's memory:
+A dedicated background agent (or system process — implementation TBD) that maintains shared memory across the agents:
 
 - Distills completed tasks into clean memory entries
 - Updates functional memories so agents don't work with stale knowledge
 - Merges duplicates, prunes contradictions
 - Promotes/demotes memories between layers based on relevance and recency
-- The fleet's librarian — observes the audit trail and keeps the books
+- The system's librarian — observes the audit trail and keeps the books
 
 ### Quests as Memory Seeds
 
-Completed quests are the primary distillation trigger for the Memory Keeper. When a quest reaches `done`, the Keeper reads its full transcript — messages and tool calls filtered by `quest_id` — and produces a graded memory entry. Memory is no longer ad-hoc: it inherits the structure of the work that produced it.
+Completed quests are the primary distillation trigger for the Memory Curator. When a quest reaches `done`, the Curator reads its full transcript — messages and tool calls filtered by `quest_id` — and produces a graded memory entry. Memory is no longer ad-hoc: it inherits the structure of the work that produced it.
 
-Specialization score falls out directly: a shadow with 50 completed auth-related quests *is* the auth expert, no labels required. Warm memory surfacing uses quest-similarity (current quest title and description against past quest summaries) rather than just recency.
+Specialization score falls out directly: an agent with 50 completed auth-related quests *is* the auth expert, no labels required. Warm memory surfacing uses quest-similarity (current quest title and description against past quest summaries) rather than just recency.
 
 ## Context Control
 
@@ -176,7 +176,7 @@ Every agent action is atomic and documented — tool calls with full diffs, who 
 
 - **Quest Timeline** — quests laid out horizontally by start time, branches for forks. Click any quest to jump to its state.
 - **Rollback** — revert to a previous state. Undo the last N actions, or go back to before a quest started.
-- **Branch from Quest** — right-click any completed quest to fork from there. New worktree, new shadow, new quest lineage — original preserved.
+- **Branch from Quest** — right-click any completed quest to fork from there. New worktree, new agent, new quest lineage — original preserved.
 
 The quest tree IS the rewind index. Session ancestry and quest branching compose: the vision is a full DAG of quests where any node is rewindable, branchable, and preserved even when abandoned.
 
@@ -201,9 +201,11 @@ Monarch exposes a web interface so you can interact with the fleet from your pho
 
 The desktop app is the brain. The mobile view is a remote control.
 
-## Shadow Avatars & Visual Identity
+## Agent Avatars & Visual Identity
 
-The fleet should feel alive, not like a list of process IDs. Every shadow gets an animated avatar that reflects what it's doing in real-time. You glance at Monarch and instantly know the state of your army without reading a single line of text.
+> **Note (superseded):** an earlier build shipped animated [Rive](https://rive.app) avatars; that system was removed in favor of static image avatars (see [CLAUDE.md](./CLAUDE.md)). The animated-avatar ideas in this section are parked as design notes — aspirational, not current behavior.
+
+Agents should feel alive, not like a list of process IDs. Every agent gets an animated avatar that reflects what it's doing in real-time. You glance at Monarch and instantly know the state of every agent without reading a single line of text.
 
 ### Rive-Powered Avatars
 
@@ -221,7 +223,7 @@ The state machine maps directly to the agent lifecycle:
 | Waiting (API/build) | Tapping foot, hourglass above head | Blocked |
 | Error / Crashed | Stagger back, red flash, recovering stance | Needs attention |
 | Task complete | Fist pump, energy burst, brief glow | Victory |
-| Summoned | Dramatic entrance animation | New shadow rises |
+| Created | Entrance animation | New agent appears |
 
 Transitions between states blend smoothly — no jarring cuts. Rive's nested state machines allow sub-states (e.g., "working" contains typing, reading, tool use as sub-animations).
 
@@ -229,22 +231,22 @@ Transitions between states blend smoothly — no jarring cuts. Rive's nested sta
 
 Avatars appear at three levels of visibility:
 
-1. **Agent sidebar** — Small (32-48px) live avatar next to each agent name. Replaces/augments the status indicator. The whole army at a glance.
-2. **Agent detail view** — Large (128px+) avatar in the header. Full animation detail. You're face-to-face with your shadow.
-3. **War Room** — Dedicated command view showing all active agents as animated avatars in a scene. Think RTS command screen — shadows are out there working. You see 5 reading, 2 coding, 1 waiting. Instant situational awareness.
+1. **Agent sidebar** — Small (32-48px) live avatar next to each agent name. Replaces/augments the status indicator. The whole roster at a glance.
+2. **Agent detail view** — Large (128px+) avatar in the header. Full animation detail. You're face-to-face with the agent.
+3. **Roster overview** — A dedicated view showing all active agents as animated avatars in a scene. An at-a-glance picture of who's doing what: you see 5 reading, 2 coding, 1 waiting. Instant situational awareness.
 
 ### Interactive Avatars
 
 Avatars respond to user interaction via Rive listeners:
 
-- Hover → shadow acknowledges (looks at cursor, subtle reaction)
-- Click → shadow salutes or reacts based on personality
-- Drag a task onto it → catch animation, shadow starts working
+- Hover → agent acknowledges (looks at cursor, subtle reaction)
+- Click → agent reacts based on personality
+- Drag a task onto it → catch animation, agent starts working
 - Right-click → context menu (assign task, view stats, inspect context)
 
-### Shadow Stats & Progression
+### Agent Stats & Progression
 
-Every shadow accumulates stats over its lifetime, tracked in the DB and surfaced visually:
+Every agent accumulates stats over its lifetime, tracked in the DB and surfaced visually:
 
 - **Total EXP** — accumulated from completed quests, grade-weighted (E=1, D=3, C=10, B=30, A=100, S=500 base) with modifiers for disputes, drift, judge verdicts, and fork outcomes
 - **Grade breakdown** — per-grade completion counts, indicating capability ceiling and growth trajectory
@@ -253,38 +255,38 @@ Every shadow accumulates stats over its lifetime, tracked in the DB and surfaced
 - **Session stats** — total sessions, average duration, longest streak
 - **Tool usage** — most-used tools, tool call counts, success rates
 - **Performance** — quests completed, error rate, average time-to-completion, dispute rate
-- **Specialization score** — derived from quest history, shows what the shadow is becoming (auth expert, frontend specialist, test writer)
+- **Specialization score** — derived from quest history, shows what the agent is becoming (auth expert, frontend specialist, test writer)
 
 Stats feed back into the avatar system:
 
-- EXP thresholds unlock visual tiers (base silhouette → minor glow → particle effects → grade promotion eligibility → named shadow candidacy)
-- A shadow with 80% frontend quests could gain paint-splash particle effects
+- EXP thresholds unlock visual tiers (base silhouette → minor glow → particle effects → grade promotion eligibility → named-agent candidacy)
+- An agent with 80% frontend quests could gain paint-splash particle effects
 - A heavy test writer gets a shield motif
 - High dispute or error rate shows battle scars
 - More EXP = more imposing presence
 
-### Shadow Art Direction
+### Agent Art Direction
 
-The visual language follows the Solo Leveling shadow army aesthetic:
+The visual language leans on a dark, minimal aesthetic:
 
 - **Base form** — dark silhouette with glowing accents (purple/blue energy)
-- **Named shadows** (Igris, etc.) — unique character designs, more detail
-- **Grade-based appearance** — S-rank shadows look more imposing, complex particle effects, stronger glow. E-rank are simpler, subtler
-- **Personality expression** — subtle idle differences. A methodical shadow stands still; a fast one fidgets
-- **Evolution** — shadows visually evolve as they accumulate experience. Not just cosmetic — it's a signal of capability
+- **Named agents** — standout agents earn unique character designs, more detail
+- **Grade-based appearance** — higher-grade agents look more imposing, with complex particle effects and stronger glow. Lower-grade ones are simpler, subtler
+- **Personality expression** — subtle idle differences. A methodical agent stands still; a fast one fidgets
+- **Evolution** — agents visually evolve as they accumulate experience. Not just cosmetic — it's a signal of capability
 
-### War Room
+### Roster Overview
 
-The War Room is a dedicated view — a visual command center for the entire fleet:
+A dedicated view — a visual overview of the entire roster:
 
-- All active shadows displayed as avatars, each running its own state machine
+- All active agents displayed as avatars, each running its own state machine
 - Spatial layout by team/hierarchy or user arrangement
-- Click any shadow to jump to its detail view
-- Activity pulse — the room gets more energetic as more shadows are active
+- Click any agent to jump to its detail view
+- Activity pulse — the view gets more energetic as more agents are active
 - Completion/error events are visually obvious without notifications
-- Idle on a second monitor — you feel your army working
+- Idle on a second monitor — you see every agent working
 
-The War Room turns Monarch from a tool into a command experience.
+This overview turns Monarch from a tool into a command experience.
 
 ## Voice Input
 

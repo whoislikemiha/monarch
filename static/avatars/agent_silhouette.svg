@@ -15,7 +15,7 @@
   <!-- Glow pupils -->
   <circle cx="91" cy="86" r="1" fill="#e9d5ff"/>
   <circle cx="109" cy="86" r="1" fill="#e9d5ff"/>
-  <!-- Shadow / aura ring -->
+  <!-- Aura ring -->
   <circle cx="100" cy="100" r="96" stroke="#7c3aed" stroke-width="1.5" opacity="0.3"/>
   <circle cx="100" cy="100" r="88" stroke="#a855f7" stroke-width="0.5" opacity="0.15"/>
 </svg>

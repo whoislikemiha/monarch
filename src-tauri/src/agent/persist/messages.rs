@@ -517,7 +517,7 @@ pub(super) async fn apply_insert_memory(
     payload: crate::db::InsertMemoryPayload,
 ) -> Result<(), MonarchError> {
     // MON-100: embed the summary before insert. If the embedder
-    // is not initialised (captain hasn't downloaded the model)
+    // is not initialised (supervisor hasn't downloaded the model)
     // we still write the row — FTS5 search keeps working off
     // title+summary+content; only the HNSW vector path is
     // skipped until the next rebuild after init.

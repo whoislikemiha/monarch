@@ -1,7 +1,7 @@
 //! MON-99 (Slice A): Debug-only smoke-test Tauri command for the memory
-//! substrate. Lets the captain insert a memory by hand from devtools to
+//! substrate. Lets the supervisor insert a memory by hand from devtools to
 //! exercise embed → DB insert → HNSW rebuild end-to-end before Slice B's
-//! Keeper writes the first real one.
+//! Curator writes the first real one.
 //!
 //! Gated at runtime via `cfg!(debug_assertions)` rather than `#[cfg(...)]`
 //! on the function so the signature is always compiled and the generated

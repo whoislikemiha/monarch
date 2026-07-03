@@ -367,7 +367,7 @@
   });
 
   // MON-100: parsed compaction_tick payload. Returns null when the row
-  // isn't a Keeper tick or the payload doesn't decode — both fall back to
+  // isn't a Curator tick or the payload doesn't decode — both fall back to
   // the generic event renderer.
   interface CompactionPayload {
     keeperRunId: number | null;
@@ -416,15 +416,15 @@
   }
 
   function keeperLabel(trigger: string): string {
-    if (trigger === "objective_close") return "Keeper objective close";
-    if (trigger === "continuous") return "Keeper checkpoint";
-    return "Keeper note";
+    if (trigger === "objective_close") return "Curator objective close";
+    if (trigger === "continuous") return "Curator checkpoint";
+    return "Curator note";
   }
 
   function keeperHint(trigger: string): string {
     if (trigger === "objective_close") return "Summary produced when the objective was marked done.";
     if (trigger === "continuous") return "Background memory checkpoint from context compaction.";
-    return "Keeper memory summary.";
+    return "Curator memory summary.";
   }
 
   interface ActionPayload {
@@ -520,6 +520,17 @@
       rationale: typeof obj.rationale === "string" ? obj.rationale : "",
     };
   }
+
+  // Display labels for persisted actor/role values (the stored values stay
+  // canonical for the backend; these are cosmetic only).
+  const ACTOR_LABELS: Record<string, string> = {
+    monarch: "You",
+    captain: "Supervisor",
+    keeper: "Curator",
+    chat_shadow: "Agent",
+  };
+  const actorLabel = (actor: string | null | undefined): string =>
+    actor ? (ACTOR_LABELS[actor] ?? actor) : "—";
 
   function manualEventLabel(kind: string): string {
     if (kind === "scope_change") return "scope changed";
@@ -960,7 +971,7 @@
 
     <!-- Timeline -->
     {#if objectiveState.roots.length === 0 && !objectiveState.loading}
-      <p class="empty">No objectives yet for this shadow.</p>
+      <p class="empty">No objectives yet for this agent.</p>
     {:else}
       <div class="timeline">
         {#each objectiveState.roots as root (root.id)}
@@ -1397,14 +1408,14 @@
                               class="event-row event-toggle compaction-row"
                               onclick={() => objectiveStore.toggleEventExpand(agentId, ev.id)}
                               aria-expanded={keeperOpen}
-                              title={cp ? keeperHint(cp.trigger) : "Keeper memory summary"}
+                              title={cp ? keeperHint(cp.trigger) : "Curator memory summary"}
                             >
                               <span class="event-disclosure">{keeperOpen ? "▾" : "▸"}</span>
-                              <span class="compaction-icon" title="Keeper compaction tick">◈</span>
+                              <span class="compaction-icon" title="Curator compaction tick">◈</span>
                               <span class="event-type compaction-type">
-                                {cp ? keeperLabel(cp.trigger) : "Keeper summary"}
+                                {cp ? keeperLabel(cp.trigger) : "Curator summary"}
                               </span>
-                              <span class="muted small">{ev.actor ?? "—"}</span>
+                              <span class="muted small">{actorLabel(ev.actor)}</span>
                               <span class="muted small">{formatRelative(ev.createdAt)}</span>
                               {#if cp}
                                 <span class="claims-pill" title="{cp.claimsCount} atomic claims persisted">
@@ -1425,7 +1436,7 @@
                             <div class="event-row memory-suggestion-row">
                               <span class="memory-suggestion-icon" title="Executor memory suggestion">◇</span>
                               <span class="event-type memory-suggestion-type">memory suggestion</span>
-                              <span class="muted small">{ev.actor ?? "—"}</span>
+                              <span class="muted small">{actorLabel(ev.actor)}</span>
                               <span class="muted small">{formatRelative(ev.createdAt)}</span>
                             </div>
                             {#if suggestion}
@@ -1450,7 +1461,7 @@
                             <div class="event-row objective-change-row">
                               <span class="objective-change-icon">●</span>
                               <span class="event-type objective-change-type">{manualEventLabel(ev.eventType)}</span>
-                              <span class="muted small">{ev.actor ?? "—"}</span>
+                              <span class="muted small">{actorLabel(ev.actor)}</span>
                               <span class="muted small">{formatRelative(ev.createdAt)}</span>
                             </div>
                             {#if text}
@@ -1462,7 +1473,7 @@
                           {:else}
                             <div class="event-row">
                               <span class="event-type">{ev.eventType}</span>
-                              <span class="muted small">{ev.actor ?? "—"}</span>
+                              <span class="muted small">{actorLabel(ev.actor)}</span>
                               <span class="muted small">{formatRelative(ev.createdAt)}</span>
                             </div>
                             {#if ev.payloadJson}

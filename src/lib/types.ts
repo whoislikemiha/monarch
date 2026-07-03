@@ -1,24 +1,24 @@
-// Shadow grades — from Solo Leveling, highest to lowest
+// Agent seniority tiers, highest to lowest
 export type ShadowGrade =
-  | "Grand Marshal"
-  | "Marshal"
-  | "General"
-  | "Elite Knight"
-  | "Knight"
-  | "Elite"
-  | "Normal";
+  | "Principal"
+  | "Staff"
+  | "Senior"
+  | "Mid"
+  | "Junior"
+  | "Trainee"
+  | "Intern";
 
 export const SHADOW_GRADES: ShadowGrade[] = [
-  "Grand Marshal",
-  "Marshal",
-  "General",
-  "Elite Knight",
-  "Knight",
-  "Elite",
-  "Normal",
+  "Principal",
+  "Staff",
+  "Senior",
+  "Mid",
+  "Junior",
+  "Trainee",
+  "Intern",
 ];
 
-// Shadow identity — who this agent is in the army
+// Agent identity — who this agent is on the team
 export interface ShadowIdentity {
   shadowName: string;
   shadowTitle: string;
@@ -56,7 +56,7 @@ export interface Agent {
   sessionId?: string;
   sessions: SessionRecord[];
   sourceSessionId?: string; // Session ancestry to replay when restoring/continuing
-  /** MON-66: ISO timestamp when the shadow was archived, or undefined if active. */
+  /** MON-66: ISO timestamp when the agent was archived, or undefined if active. */
   archivedAt?: string;
   /**
    * MON-50: cached lifetime cost from `agent_stats.total_cost`. Loaded

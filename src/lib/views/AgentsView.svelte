@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * AGENTS lens (who). Shows the solo workspace for the selected shadow, or an
+   * AGENTS lens (who). Shows the solo workspace for the selected agent, or an
    * invitation when nothing is selected.
    */
   import { agentStore } from "$lib/stores/agentStore.svelte";
@@ -17,8 +17,8 @@
   {:else}
     <div class="empty">
       <div class="glyph" aria-hidden="true"></div>
-      <h4>The fleet stands ready</h4>
-      <p>Select a shadow from the rail, or extract a new one to begin. This is where you watch and talk to your agents.</p>
+      <h4>No agents yet</h4>
+      <p>Select an agent from the rail, or create a new one to begin. This is where you watch and talk to your agents.</p>
     </div>
   {/if}
 </div>

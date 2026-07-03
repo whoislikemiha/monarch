@@ -501,7 +501,7 @@ impl Database {
     /// MON-100: Messages across all of an agent's sessions newer than the
     /// supplied timestamp (NULL = all). Ordered ascending by timestamp so
     /// the rendered slice reads chronologically. Excludes the synthetic
-    /// `toolResult` rows? — no: the Keeper benefits from seeing tool output
+    /// `toolResult` rows? — no: the Curator benefits from seeing tool output
     /// inline so it can claim things like "Tool X returned Y", so we keep
     /// every role.
     pub async fn list_agent_messages_since_internal(
@@ -528,7 +528,7 @@ impl Database {
     }
 
     /// MON-100: Sum of `messages.tokens` across the agent's sessions newer
-    /// than the last successful Keeper run. Used to seed
+    /// than the last successful Curator run. Used to seed
     /// `LiveAgentState.tokens_since_last_compaction` on Monarch restart so
     /// the trigger keeps working without requiring an in-memory counter to
     /// survive process death.

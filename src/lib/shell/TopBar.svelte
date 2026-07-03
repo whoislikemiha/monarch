@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Persistent top chrome: brand · context breadcrumb · Agents⇄Projects lens
-   * toggle · ⌘K (stub) · theme switch · captain chip.
+   * toggle · ⌘K (stub) · theme switch · supervisor chip.
    *
    * Pure presentation + the view/theme stores. No agent logic lives here.
    */
@@ -68,9 +68,9 @@
     </select>
   </label>
 
-  <div class="captain" title="Captain">
+  <div class="supervisor" title="Supervisor">
     <span class="cap-dot" aria-hidden="true"></span>
-    <span class="cap-label">Captain</span>
+    <span class="cap-label">Supervisor</span>
   </div>
 </header>
 
@@ -185,7 +185,7 @@
   }
   .theme-select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
-  .captain {
+  .supervisor {
     display: flex;
     align-items: center;
     gap: var(--s2);
@@ -194,12 +194,12 @@
     border: 1px solid var(--border-subtle);
     border-radius: var(--r-full);
   }
-  .captain .cap-dot {
+  .supervisor .cap-dot {
     width: 18px;
     height: 18px;
     border-radius: var(--r-full);
     background: var(--bg-overlay);
     border: 1px solid var(--accent-border-subtle);
   }
-  .captain .cap-label { font-size: 11px; color: var(--text-secondary); }
+  .supervisor .cap-label { font-size: 11px; color: var(--text-secondary); }
 </style>

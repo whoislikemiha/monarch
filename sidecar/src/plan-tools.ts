@@ -228,12 +228,12 @@ export function createPlanTools(agentId: string, emit: EmitFn) {
 			name: "block_plan_item",
 			label: "Block Plan Item",
 			description:
-				"Mark a plan item blocked on something external. Reason is required so the captain knows what is needed.",
+				"Mark a plan item blocked on something external. Reason is required so the supervisor knows what is needed.",
 			promptSnippet:
 				"block_plan_item(reason, item_id?) - mark a plan item blocked; reason is required.",
 			promptGuidelines: [
-				"Use block_plan_item when an item cannot proceed without external input or action — captain decision, environment fix, upstream dependency.",
-				"State the blocker explicitly so the captain can resolve it without rereading the timeline.",
+				"Use block_plan_item when an item cannot proceed without external input or action — supervisor decision, environment fix, upstream dependency.",
+				"State the blocker explicitly so the supervisor can resolve it without rereading the timeline.",
 			],
 			parameters: Type.Object({
 				reason: Type.String({

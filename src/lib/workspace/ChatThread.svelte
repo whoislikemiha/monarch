@@ -72,7 +72,7 @@
         {#if pane.scope}
           Ask about “{pane.scope.label}” — {agent.name} answers with that work in mind.
         {:else}
-          Talk to {agent.name}. Shares the same memory as the shadow doing the work.
+          Talk to {agent.name}. Shares the same memory as the agent doing the work.
         {/if}
       </p>
     </div>

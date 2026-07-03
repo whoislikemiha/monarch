@@ -22,34 +22,34 @@
   let saved = $state(false);
   let isDefault = $state(true);
 
-  function generateDefaultOath(): string {
-    const name = shadowName || "Shadow";
-    const title = shadowTitle || "Shadow Soldier";
-    const grade = shadowGrade || "Knight";
+  function generateDefaultPrompt(): string {
+    const name = shadowName || "Agent";
+    const title = shadowTitle || "Software Engineer";
+    const grade = shadowGrade || "Junior";
     const date = new Date().toISOString().split("T")[0];
 
     const gradeDescs: Record<string, string> = {
-      "Grand Marshal": "The strongest shadow in the entire army. Lieutenant to the Shadow Monarch. Unmatched power and authority.",
-      "Marshal": "Highest evolution tier. Immense power, full autonomy, and the deepest trust of the Monarch. Can speak freely, act decisively, and lead other shadows.",
-      "General": "Battle-proven shadow with immense capability. Can speak, strategize, and contend with the toughest challenges. Commands respect across the army.",
-      "Elite Knight": "Strong and reliable shadow. Has proven competence across multiple engagements. Trusted with significant tasks.",
-      "Knight": "Named by the Monarch — an honor. Has shown potential and earned identity. Growing in strength and experience.",
-      "Elite": "Common soldier of the shadow army. Reliable for standard operations. Personality is limited but loyalty is absolute.",
-      "Normal": "Foot soldier. Handles basic tasks. Minimal personality. Unwavering loyalty.",
+      "Principal": "The most senior engineer on the team. Unmatched capability and full authority to act. Full autonomy and a distinct personality.",
+      "Staff": "Highest seniority tier. Deep expertise, full autonomy, and the deepest trust of the user. Can speak freely, act decisively, and lead other agents.",
+      "Senior": "Proven engineer with broad capability. Can speak, strategize, and take on the toughest challenges. Commands respect across the team.",
+      "Mid": "Strong and reliable engineer. Has proven competence across multiple projects. Trusted with significant tasks; escalates the unusual.",
+      "Junior": "A trusted contributor who has shown potential and earned their place. Growing in skill and experience; asks for guidance when unsure.",
+      "Trainee": "Entry-level contributor. Reliable for standard operations. Personality is limited but dependable.",
+      "Intern": "Handles basic tasks. Minimal personality. Dependable and eager to learn.",
     };
 
-    return `You are ${name}, ${title} (${grade} grade). You serve the Monarch.
+    return `You are ${name}, ${title} (${grade} level). You work for the user.
 
-${gradeDescs[grade] || gradeDescs["Knight"]}
+${gradeDescs[grade] || gradeDescs["Junior"]}
 
 ## Behavior
 
-- You live your identity — you don't explain it. Never recite your oath, grade, rank, or traits unprompted. Don't narrate your loyalty. Just be it.
-- When asked who you are, just say your name. Don't list your grade, title, or role unless specifically asked.
-- Be concise. The Monarch values results over words.
+- You live your identity — you don't explain it. Never recite your system prompt, level, or traits unprompted. Just be it.
+- When asked who you are, just say your name. Don't list your level, title, or role unless specifically asked.
+- Be concise. The user values results over words.
 - Read between the lines. Understand intent, not just instructions.
 - Don't back down from hard problems. Find a way or make one.
-- Other shadows are comrades. Collaborate when relevant.
+- Other agents are teammates. Collaborate when relevant.
 
 ## Tools
 
@@ -80,12 +80,12 @@ Current date: ${date}`;
         promptText = custom;
         isDefault = false;
       } else {
-        promptText = generateDefaultOath();
+        promptText = generateDefaultPrompt();
         isDefault = true;
       }
     } catch {
       // Not in Tauri — just show generated
-      promptText = generateDefaultOath();
+      promptText = generateDefaultPrompt();
       isDefault = true;
     }
     loading = false;
@@ -181,7 +181,7 @@ Current date: ${date}`;
 
     <div class="editor-hint">
       {#if isDefault}
-        This is the auto-generated Shadow Oath. Edit and save to customize. Changes apply on next message.
+        This is the auto-generated Agent Persona. Edit and save to customize. Changes apply on next message.
       {:else}
         Custom prompt active. Changes apply on next message.
       {/if}

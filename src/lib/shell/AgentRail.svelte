@@ -1,13 +1,13 @@
 <script lang="ts">
   /**
-   * Left rail — the fleet. Slice 1 ships the collapsible frame (header,
-   * Active/All filter, Extract, collapse toggle) with a placeholder body;
+   * Left rail — the agent roster. Slice 1 ships the collapsible frame (header,
+   * Active/All filter, New agent, collapse toggle) with a placeholder body;
    * slice 2 fills it with the project-grouped roster.
    */
   import type { Agent, Project } from "$lib/types";
   import { invoke } from "$lib/api";
   import { agentStore } from "$lib/stores/agentStore.svelte";
-  import ShadowRow from "./ShadowRow.svelte";
+  import AgentRow from "./AgentRow.svelte";
   import EditAgentDialog from "$lib/EditAgentDialog.svelte";
   import ConfirmDialog from "$lib/ConfirmDialog.svelte";
 
@@ -21,7 +21,7 @@
   // --- Roster management: context menu + confirm/edit dialogs ---
   let menu = $state<{ x: number; y: number; agent: Agent } | null>(null);
   let editing = $state<Agent | null>(null);
-  let confirm = $state<{ kind: "dismiss" | "delete"; agent: Agent } | null>(null);
+  let confirm = $state<{ kind: "archive" | "delete"; agent: Agent } | null>(null);
 
   function openMenu(e: MouseEvent, agent: Agent) {
     e.preventDefault();
@@ -55,7 +55,7 @@
     const c = confirm;
     confirm = null;
     if (!c) return;
-    if (c.kind === "dismiss") agentStore.archiveAgent(c.agent.id);
+    if (c.kind === "archive") agentStore.archiveAgent(c.agent.id);
     else agentStore.deleteAgent(c.agent.id);
   }
 
@@ -92,12 +92,12 @@
 
 {#if collapsed}
   <div class="rail collapsed">
-    <button class="tab" title="Show fleet" onclick={() => agentStore.toggleSidebarCollapsed()}>
+    <button class="tab" title="Show agents" onclick={() => agentStore.toggleSidebarCollapsed()}>
       <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M6 3l5 5-5 5" />
       </svg>
     </button>
-    <button class="tab" title="Extract a shadow" onclick={() => onextract?.()}>
+    <button class="tab" title="Create agent" onclick={() => onextract?.()}>
       <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M8 3v10M3 8h10" />
       </svg>
@@ -106,7 +106,7 @@
 {:else}
   <aside class="rail">
     <div class="rail-head">
-      <span class="title">Fleet</span>
+      <span class="title">Agents</span>
       <span class="count mono">{agentStore.agents.filter((a) => !a.archivedAt).length}</span>
       <div class="grow"></div>
       <div class="filter" role="tablist" aria-label="Roster filter">
@@ -121,7 +121,7 @@
           onclick={() => agentStore.setSidebarShowAll(true)}
         >All</button>
       </div>
-      <button class="collapse" title="Hide fleet" onclick={() => agentStore.toggleSidebarCollapsed()}>
+      <button class="collapse" title="Hide agents" onclick={() => agentStore.toggleSidebarCollapsed()}>
         <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M10 3l-5 5 5 5" />
         </svg>
@@ -132,26 +132,26 @@
       <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M8 3v10M3 8h10" />
       </svg>
-      Extract shadow
+      New agent
     </button>
 
     <div class="rail-body">
       {#if agentStore.agents.length === 0}
-        <div class="rail-empty">No shadows yet. Extract one to begin.</div>
+        <div class="rail-empty">No agents yet. Create one to begin.</div>
       {:else}
         {#each groups as group (group.project?.id ?? "ungrouped")}
           <div class="group">
             <div class="group-label">
-              <span class="slash">/</span>{group.project?.name ?? "Shadows"}
+              <span class="slash">/</span>{group.project?.name ?? "Agents"}
               <span class="group-count mono">{group.agents.length}</span>
             </div>
             <div class="group-rows">
               {#each group.agents as agent (agent.id)}
-                <ShadowRow
+                <AgentRow
                   {agent}
                   oncontextmenu={openMenu}
-                  ondismiss={(a) => (confirm = { kind: "dismiss", agent: a })}
-                  onsummon={(a) => agentStore.summonAgent(a.id)}
+                  onarchive={(a) => (confirm = { kind: "archive", agent: a })}
+                  onresume={(a) => agentStore.summonAgent(a.id)}
                 />
               {/each}
             </div>
@@ -165,12 +165,12 @@
 {#if menu}
   <button class="ctx-scrim" aria-label="Close menu" onclick={() => (menu = null)} oncontextmenu={(e) => { e.preventDefault(); menu = null; }}></button>
   <div class="ctx" style="left:{menu.x}px; top:{menu.y}px" role="menu">
-    <button role="menuitem" onclick={() => { const a = menu!.agent; menu = null; editing = a; }}>Edit shadow</button>
+    <button role="menuitem" onclick={() => { const a = menu!.agent; menu = null; editing = a; }}>Edit agent</button>
     <button role="menuitem" onclick={() => { const a = menu!.agent; menu = null; saveTemplate(a); }}>Save as template</button>
     {#if menu.agent.archivedAt}
-      <button role="menuitem" onclick={() => { const a = menu!.agent; menu = null; agentStore.summonAgent(a.id); }}>Summon back</button>
+      <button role="menuitem" onclick={() => { const a = menu!.agent; menu = null; agentStore.summonAgent(a.id); }}>Resume</button>
     {:else}
-      <button role="menuitem" onclick={() => { const a = menu!.agent; menu = null; confirm = { kind: "dismiss", agent: a }; }}>Dismiss</button>
+      <button role="menuitem" onclick={() => { const a = menu!.agent; menu = null; confirm = { kind: "archive", agent: a }; }}>Archive</button>
     {/if}
     <div class="ctx-div"></div>
     <button role="menuitem" class="danger" onclick={() => { const a = menu!.agent; menu = null; confirm = { kind: "delete", agent: a }; }}>Delete permanently</button>
@@ -182,17 +182,17 @@
 {/if}
 
 <ConfirmDialog
-  open={confirm?.kind === "dismiss"}
-  title="Dismiss {confirm?.agent.name}?"
-  message="The shadow leaves the active roster. History, sessions, and identity are preserved — summon it back anytime from All."
-  confirmLabel="Dismiss"
+  open={confirm?.kind === "archive"}
+  title="Archive {confirm?.agent.name}?"
+  message="The agent leaves the active roster. History, sessions, and identity are preserved — resume it anytime from All."
+  confirmLabel="Archive"
   onconfirm={runConfirm}
   oncancel={() => (confirm = null)}
 />
 <ConfirmDialog
   open={confirm?.kind === "delete"}
   title="Permanently delete {confirm?.agent.name}?"
-  message="Irreversible. All history, sessions, and stats for this shadow are deleted."
+  message="Irreversible. All history, sessions, and stats for this agent are deleted."
   confirmLabel="Delete permanently"
   danger
   onconfirm={runConfirm}

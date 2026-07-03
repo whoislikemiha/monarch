@@ -1,5 +1,5 @@
 import ContextInspectorTool from "./tools/ContextInspectorTool.svelte";
-import ShadowStatsTool from "./tools/ShadowStatsTool.svelte";
+import AgentStatsTool from "./tools/AgentStatsTool.svelte";
 import PlaceholderTool from "./tools/PlaceholderTool.svelte";
 import ObjectiveTimelineTool from "./tools/ObjectiveTimelineTool.svelte";
 import ClassifierSettingsTool from "./tools/ClassifierSettingsTool.svelte";
@@ -19,7 +19,7 @@ export const TOOLS: ToolDefinition[] = [
     title: "Identity",
     order: 5,
     hasBackend: true,
-    // person / user icon — captain + shadow identity editor
+    // person / user icon — supervisor + agent identity editor
     icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
     component: IdentityTool,
   },
@@ -50,12 +50,12 @@ export const TOOLS: ToolDefinition[] = [
     component: ContextInspectorTool,
   },
   {
-    id: "shadow-stats",
+    id: "agent-stats",
     title: "Stats",
     order: 15,
     hasBackend: true,
     icon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`,
-    component: ShadowStatsTool,
+    component: AgentStatsTool,
   },
   {
     id: "objective-timeline",

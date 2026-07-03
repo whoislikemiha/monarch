@@ -1,4 +1,4 @@
-# Monarch — Contributor Onboarding
+# Monarch — Architecture & Deep Dive
 
 Welcome. This doc is the long version of "everything you need to know to be productive in this repo." It walks through the architecture, data model, lifecycle of an agent, the sidecar protocol, the frontend, conventions, build flow, and what is and isn't implemented yet.
 
@@ -17,7 +17,7 @@ monarch/
 │   ├── Cargo.toml      # Rust deps
 │   └── build.rs        # Tauri build hook
 ├── sidecar/            # Long-lived Node.js process hosting the Pi SDK runtime
-│   ├── src/            # index.ts, runtime-manager.ts, protocol.ts, shadow-oath.ts, ui-bridge.ts, model-resolver.ts, stored-content.ts, memory-tools.ts
+│   ├── src/            # index.ts, runtime-manager.ts, protocol.ts, agent-persona.ts, ui-bridge.ts, model-resolver.ts, stored-content.ts, memory-tools.ts
 │   ├── tsconfig.json
 │   └── package.json
 ├── prompts/            # Legacy bundled prompt templates (not used by the current flow)
@@ -222,7 +222,7 @@ CREATE TABLE objective_nodes (
   actual_tokens         INTEGER,
   estimated_duration_ms INTEGER,
   actual_duration_ms    INTEGER,
-  summary               TEXT,                    -- Memory-Keeper-distilled on done (Slice 8)
+  summary               TEXT,                    -- Memory-Curator-distilled on done (Slice 8)
   kind                  TEXT NOT NULL DEFAULT 'objective'  -- P1: 'campaign' | 'objective'
 );
 
@@ -230,7 +230,7 @@ CREATE TABLE objective_events (
   id                     TEXT PRIMARY KEY,
   objective_id               TEXT NOT NULL REFERENCES objective_nodes(id) ON DELETE CASCADE,
   event_type             TEXT NOT NULL,          -- coherent_action | tool_call | action_outcome | status_change | ...
-  actor                  TEXT,                   -- concrete writer id/name, usually shadow_id
+  actor                  TEXT,                   -- concrete writer id/name, usually the agent id
   payload_json           TEXT,
   created_at             TEXT NOT NULL DEFAULT (datetime('now')),
   parent_event_id        TEXT REFERENCES objective_events(id) ON DELETE CASCADE,
@@ -279,7 +279,7 @@ CREATE INDEX idx_objective_refs_objective           ON objective_refs(objective_
 CREATE INDEX idx_messages_objective             ON messages(objective_id);
 ```
 
-`objective_events` is the execution narrative spine. Top-level `coherent_action` events describe what the executor is doing; child `tool_call`, `action_outcome`, and `executor_decision` events attach evidence and decisions to the action. MON-124 additions: `tool_call` payloads carry a normalized `target` (file path for path-bearing tools, command for bash) extracted from the full args at record time, and a `chat_spawned` child event is recorded when the captain opens a chat scoped to an action — the timeline renders both as artifact chips. The stream is **flat and chronological**: a tool call with no current narrated action is recorded top-level (`parent_event_id NULL`) and renders as a bare tool row — narration augments the timeline, it never gates it. Narration itself is objective-free: with no current objective, events land on the agent's scratch objective (`scratch-{agent_id}`, silent get-or-create). Grouping is tool-driven only — `set_current_action` opens an action and subsequent tools nest under it; there is no text-harvesting of chat into headlines. The workspace timeline reads this spine through `db_list_agent_timeline(agent_id, before, limit)`: cursor-paged on top-level events (`(created_at, id)` newest-first) across the agent's assigned objectives (campaign roots excluded), returning each page's nested children and objective metadata in one response. `actor` remains the concrete writer id/name; `author` answers which semantic role wrote the event. `agent_working_memory` stores L2 v0 for fast rehydration (`current_action`, `recent_actions`, current objective path) plus the active/next plan-item slice. Durable `objective_plan_items` store the intended route, and `objective_events.plan_item_id` links actual coherent actions back to the active plan item without making timeline actions into plan rows. Rich objective fields (`scope`, `current_direction`, `rationale`) are the captain-facing what/why layer; `objective_refs` links external artifacts while keeping the objective canonical.
+`objective_events` is the execution narrative spine. Top-level `coherent_action` events describe what the executor is doing; child `tool_call`, `action_outcome`, and `executor_decision` events attach evidence and decisions to the action. MON-124 additions: `tool_call` payloads carry a normalized `target` (file path for path-bearing tools, command for bash) extracted from the full args at record time, and a `chat_spawned` child event is recorded when the supervisor opens a chat scoped to an action — the timeline renders both as artifact chips. The stream is **flat and chronological**: a tool call with no current narrated action is recorded top-level (`parent_event_id NULL`) and renders as a bare tool row — narration augments the timeline, it never gates it. Narration itself is objective-free: with no current objective, events land on the agent's scratch objective (`scratch-{agent_id}`, silent get-or-create). Grouping is tool-driven only — `set_current_action` opens an action and subsequent tools nest under it; there is no text-harvesting of chat into headlines. The workspace timeline reads this spine through `db_list_agent_timeline(agent_id, before, limit)`: cursor-paged on top-level events (`(created_at, id)` newest-first) across the agent's assigned objectives (campaign roots excluded), returning each page's nested children and objective metadata in one response. `actor` remains the concrete writer id/name; `author` answers which semantic role wrote the event. `agent_working_memory` stores L2 v0 for fast rehydration (`current_action`, `recent_actions`, current objective path) plus the active/next plan-item slice. Durable `objective_plan_items` store the intended route, and `objective_events.plan_item_id` links actual coherent actions back to the active plan item without making timeline actions into plan rows. Rich objective fields (`scope`, `current_direction`, `rationale`) are the supervisor-facing what/why layer; `objective_refs` links external artifacts while keeping the objective canonical.
 
 ### Session ancestry — the key concept
 
@@ -313,7 +313,7 @@ The fresh-session reset happens **in Rust** (`new_session`/`switch_session` call
 
 ---
 
-## 5. Agent (shadow) lifecycle
+## 5. Agent lifecycle
 
 There are four lifecycle transitions worth knowing: **spawn**, **run**, **restore**, and **recover-from-crash**. They all converge on the same `create_session` + `load_session` sidecar command pair.
 
@@ -331,13 +331,13 @@ Rust ([`src-tauri/src/agent/manager.rs`](./src-tauri/src/agent/manager.rs) `spaw
 1. Ensures the sidecar process is alive (`ensure_sidecar`).
 2. Re-persists agent/session rows (defensive, in case frontend skipped it).
 3. Records the `agent_id → session_id` mapping in `state.session_map`.
-4. Builds a `create_session` JSON command including shadow identity and the custom prompt override (read from disk).
+4. Builds a `create_session` JSON command including agent identity and the custom prompt override (read from disk).
 5. Sends it to the sidecar.
 6. **Caches the create command JSON** in `AgentState.create_cmd_json` — this is replayed during crash recovery.
 
 Sidecar ([`sidecar/src/runtime-manager.ts`](./sidecar/src/runtime-manager.ts) `createSession`):
 
-1. Picks the system prompt: `customPrompt` if non-empty, otherwise `buildSystemPrompt(shadow, cwd)` from [`shadow-oath.ts`](./sidecar/src/shadow-oath.ts).
+1. Picks the system prompt: `customPrompt` if non-empty, otherwise `buildSystemPrompt(shadow, cwd)` from [`agent-persona.ts`](./sidecar/src/agent-persona.ts).
 2. Creates a `DefaultResourceLoader` with `systemPromptOverride: () => promptRef.current` — Pi calls this closure, so runtime prompt edits are picked up automatically.
 3. Creates an in-memory Pi `AgentSession` via `createAgentSession`.
 4. Registers custom providers (LM Studio, OpenRouter) against the session.
@@ -399,7 +399,7 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 
 | Command                   | Purpose |
 |---------------------------|---------|
-| `create_session`          | Spawn a Pi session for an agent. Includes provider, model, cwd, shadow identity, custom prompt. |
+| `create_session`          | Spawn a Pi session for an agent. Includes provider, model, cwd, agent identity, custom prompt. |
 | `destroy_session`         | Clean up a session. |
 | `prompt`                  | Send a user message. If already streaming, becomes a `followUp`. |
 | `abort`                   | Cancel the in-flight turn. |
@@ -410,7 +410,7 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 | `load_session`            | Inject an array of messages into the session (used on restore and recovery). |
 | `set_custom_prompt`       | Replace the active system prompt; also updates the `promptRef` closure. |
 | `extension_ui_response`   | Reply to a pending Pi extension UI request. |
-| `keeper_run`              | Ask the sidecar Keeper worker to distill a recent message slice into memory claims. Carries `trigger` (`continuous` or `objective_close`) so future prompt/model tiers can branch. |
+| `keeper_run`              | Ask the sidecar Curator worker to distill a recent message slice into memory claims. Carries `trigger` (`continuous` or `objective_close`) so future prompt/model tiers can branch. |
 | `memory_search_response`  | Reply to a pending sidecar memory lookup request before a user turn is forwarded to Pi. |
 
 ### Sidecar → Rust (events)
@@ -422,8 +422,8 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 | `event`                   | Wrapper around a Pi SDK runtime event (`message_*`, `tool_execution_*`, `turn_*`, `queue_update`, `compaction_*`, …) or a Monarch-authored inner event such as `memory_suggestion`. |
 | `extension_ui_request`    | Pi needs user input (select / confirm / input / editor). Includes a `requestId` for the eventual `extension_ui_response`. |
 | `classification`          | Per-user-turn classifier result, emitted independently of the Pi turn. |
-| `keeper_result`           | Keeper worker output for a `keeper_run`; Rust persists claims and run metadata. |
-| `keeper_rewrite_applied`  | Confirmation that the sidecar compacted Pi's in-memory message array after a Keeper run. |
+| `keeper_result`           | Curator worker output for a `keeper_run`; Rust persists claims and run metadata. |
+| `keeper_rewrite_applied`  | Confirmation that the sidecar compacted Pi's in-memory message array after a Curator run. |
 | `memory_search_request`   | Sidecar asks Rust for relevant memories before forwarding a non-streaming user prompt. Rust answers with `memory_search_response`; timeout is non-blocking. |
 | `error`                   | Sidecar-level error (parse failure, model setup failure, ...). |
 
@@ -439,14 +439,14 @@ One JSON object per line, both directions. The full schema lives in [`sidecar/sr
 | `objective-created-for-agent-{id}` | `{ id, agentId }` | An objective was created for an agent — including auto-created current objectives, which P1 branches under the project's campaign root (not a fresh per-turn root; project-less agents create nothing). The Objective Timeline listens here so an empty timeline wakes up. |
 | `objective-updated-{rootId}` / `objective-event-{objectiveId}` | `{ id, ... }` | Objective tree or event-log invalidation. Consumed by both the toolbox inspector (per-objective refetch) and the workspace timeline (`timelineStore` debounces these into a head-page refresh of `db_list_agent_timeline`). |
 
-Objective close lifecycle: `db_update_objective` compares the previous and updated status. A transition to `done` records a `status_change` event, clears `agents.current_objective_id` only when it still points at that objective, and dispatches a Keeper run with `trigger='objective_close'`, `objective_id` populated, and a slice anchored at `objective_nodes.started_at ?? created_at`. Keeper results use the run row's objective provenance for memory `source_objective_id` and `compaction_tick` events, not the agent's later current objective.
+Objective close lifecycle: `db_update_objective` compares the previous and updated status. A transition to `done` records a `status_change` event, clears `agents.current_objective_id` only when it still points at that objective, and dispatches a Curator run with `trigger='objective_close'`, `objective_id` populated, and a slice anchored at `objective_nodes.started_at ?? created_at`. Curator results use the run row's objective provenance for memory `source_objective_id` and `compaction_tick` events, not the agent's later current objective.
 
 `LiveAgentState` is defined in Rust at `src-tauri/src/agent/state.rs`; the TypeScript shape is generated via `specta` + `tauri-specta` into `src/lib/bindings.ts`. To regenerate after a Rust change, run `cargo run -- --export-bindings` from `src-tauri/` — the generated file is post-processed to route through `$lib/api` so the WS fallback still works in non-Tauri environments.
 
 ### Example message shapes
 
 ```json
-{"type":"create_session","agentId":"agent-1","cwd":"/home/me/proj","provider":"anthropic","model":"claude-sonnet-4-5","thinkingLevel":"medium","shadow":{"name":"Aurora","title":"Scout","grade":"Knight","id":"agent-1"},"customPrompt":null}
+{"type":"create_session","agentId":"agent-1","cwd":"/home/me/proj","provider":"anthropic","model":"claude-sonnet-4-5","thinkingLevel":"medium","shadow":{"name":"Aurora","title":"Scout","grade":"Junior","id":"agent-1"},"customPrompt":null}
 ```
 
 ```json
@@ -479,11 +479,11 @@ Model discovery lives in [`src-tauri/src/models.rs`](./src-tauri/src/models.rs) 
 App.svelte                       — root: agents[], activeId, session restore, keybindings
 ├── Sidebar.svelte               — active + saved agents
 ├── SpawnDialog.svelte           — modal chrome for the new-agent flow
-│   └── SpawnForm.svelte         — form body (shadow identity, cwd, save-as-template)
+│   └── SpawnForm.svelte         — form body (agent identity, cwd, save-as-template)
 │       ├── TemplateSelector.svelte — load/apply/delete AgentTemplateRow chips
 │       └── ModelSelector.svelte    — provider, model picker, LM Studio ctx, thinking
 ├── AgentView.svelte             — main workspace per active agent
-│   ├── AgentHeader.svelte       — name, model, shadow grade
+│   ├── AgentHeader.svelte       — name, model, agent grade
 │   ├── AgentControls.svelte     — thinking level, token/cost counter, abort
 │   ├── MessageList.svelte       — rendered display items
 │   │   ├── AssistantMessage.svelte  — text / thinking / tool call blocks
@@ -615,7 +615,7 @@ Resolved by [`src-tauri/src/persistence.rs`](./src-tauri/src/persistence.rs) usi
 Lifecycle:
 
 1. **Spawn:** Rust reads `{agent_id}.md` if present and passes its contents as `customPrompt` in `create_session`. Empty / missing → `null`.
-2. **Fallback:** the sidecar's `createSession` uses `buildSystemPrompt(shadow, cwd)` from [`sidecar/src/shadow-oath.ts`](./sidecar/src/shadow-oath.ts) when there's no override. The resulting prompt includes shadow identity (name, title, grade), current date, and cwd.
+2. **Fallback:** the sidecar's `createSession` uses `buildSystemPrompt(shadow, cwd)` from [`sidecar/src/agent-persona.ts`](./sidecar/src/agent-persona.ts) when there's no override. The resulting prompt includes agent identity (name, title, grade), current date, and cwd.
 3. **Runtime edit:** `PromptEditor.svelte` → `save_agent_prompt` (writes the file) + `set_custom_prompt` command (patches the live session). The sidecar updates the mutable `promptRef.current` closure that `DefaultResourceLoader.systemPromptOverride` reads from, so all subsequent Pi prompt rebuilds see the new value.
 
 The per-agent `.md` file is the source of truth for prompt overrides and is safe to edit externally.
@@ -630,7 +630,7 @@ From CLAUDE.md and reinforced by the code:
 2. **Use the sidecar protocol, not the Pi CLI.** There is no `pi --rpc` subprocess; the sidecar hosts Pi SDK sessions in-process.
 3. **Session ancestry is canonical.** Continuing a conversation creates a new session row with `parent_session_id`. `get_messages_with_ancestry` is the only correct way to load history.
 4. **Prompts are files.** `~/.config/monarch/prompts/{agent_id}.md`. The `custom_prompt` column on `agents` is legacy.
-5. **Shadow identity is optional.** If a shadow is set, the default prompt comes from `buildSystemPrompt`. Custom prompts override it.
+5. **Agent identity is optional.** If an agent identity is set, the default prompt comes from `buildSystemPrompt`. Custom prompts override it.
 6. **Sidecar is singleton.** One Node process, many agents, keyed by `agentId`.
 
 ### Easy traps
@@ -688,9 +688,9 @@ A quick map of the delta between [VISION.md](./VISION.md) and reality. Not exhau
 |---|---|---|
 | Multi-agent delegation & hierarchy | ❌ | Agents are flat; no parent/child or role-based dispatch. |
 | Tool-call interception & approval flows | ❌ | Events flow through Rust but there's no gate to pause a tool call. Tracked under the *Agent loop* project in Linear. |
-| Memory keeper / layered memory | ⚠️ Partial | P2 substrate, Keeper writes, and user-turn retrieval are wired. Editing, project sharing, reranking/evals, stale-file validation, and polished Inspector workflows remain roadmap work. |
+| Memory curator / layered memory | ⚠️ Partial | P2 substrate, Curator writes, and user-turn retrieval are wired. Editing, project sharing, reranking/evals, stale-file validation, and polished Inspector workflows remain roadmap work. |
 | Executor narration / L2 working memory | ⚠️ Partial | Backend substrate, sidecar narration tools, nested timeline rendering, and Agent View `Now`/recent-action strip are wired. P4b extends the strip with active/next plan context. |
-| Durable execution plans | ⚠️ Partial | `objective_plan_items`, active/next plan slice in L2, action-to-plan links, sidecar plan tools, manual plan panel, plan lifecycle rows, and action chips are wired. Future work: richer plan editing, chat-shadow/architect plan manipulation, and decomposition. |
+| Durable execution plans | ⚠️ Partial | `objective_plan_items`, active/next plan slice in L2, action-to-plan links, sidecar plan tools, manual plan panel, plan lifecycle rows, and action chips are wired. Future work: richer plan editing, chat-agent/architect plan manipulation, and decomposition. |
 | Rich objective model / editor | ⚠️ Partial | P5 backend metadata and `objective_refs` are wired. Objective detail/editor UI is next. |
 | Context inspector / manipulation UI | ❌ | No way to see what Pi actually has in context. Tracked under *Memory & context tools*. |
 | Time travel / branching UI | ⚠️ Partial | Session ancestry supports branching in the data model, but no UI for rewind/fork. |
@@ -718,7 +718,7 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `agent/sidecar.rs` | Sidecar spawn, stdin/stdout I/O, crash recovery. |
 | `agent/event_handler.rs` | Inbound sidecar event dispatch + snapshot emission. |
 | `agent/persist/` | Single-consumer persistence pipeline; messages.rs, objectives.rs, util.rs. |
-| `agent/keeper.rs` | Keeper trigger/result handling + memory-slice rendering. |
+| `agent/keeper.rs` | Curator trigger/result handling + memory-slice rendering. |
 | `agent/objective_prompt.rs` | Objective-prompt heuristics + `rehydrate_user_content`. |
 | `agent/commands.rs` | Tauri command wrappers + request DTOs. |
 | `agent/state.rs` | `LiveAgentState` event-to-state assembly. |
@@ -740,7 +740,7 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `index.ts` | Stdin/stdout JSONL loop. |
 | `runtime-manager.ts` | Session registry, Pi `AgentSession` management. |
 | `protocol.ts` | Command + event type definitions. |
-| `shadow-oath.ts` | `buildSystemPrompt(shadow, cwd)` for default prompts. |
+| `agent-persona.ts` | `buildSystemPrompt(shadow, cwd)` for default prompts. |
 | `ui-bridge.ts` | Extension UI request/response routing. |
 | `model-resolver.ts` | Dynamic model registration + thinking-level resolution. |
 | `stored-content.ts` | Stored message content parsing + normalization helpers. |
@@ -755,7 +755,7 @@ The Linear board has **Agent loop** and **Memory & context tools** projects with
 | `lib/types.ts` | Shared TypeScript types. |
 | `lib/Sidebar.svelte` | Agent list + saved agents. |
 | `lib/SpawnDialog.svelte` | Modal shell for the new-agent flow. |
-| `lib/SpawnForm.svelte` | Form body: shadow identity, cwd, save-as-template, handleSpawn. |
+| `lib/SpawnForm.svelte` | Form body: agent identity, cwd, save-as-template, handleSpawn. |
 | `lib/TemplateSelector.svelte` | Template chip row, loads via `db_list_agent_templates`. |
 | `lib/ModelSelector.svelte` | Provider, model picker, auth status, thinking level, LM Studio context — reusable. |
 | `lib/providers.ts` | `PROVIDERS`, `REFRESHABLE_PROVIDERS`, `THINKING_LEVELS` catalogue. |

@@ -2,9 +2,9 @@
   /**
    * Inline first-person report at the close of an objective (MON-124). The
    * timeline segment for a finished objective ends (visually: begins —
-   * newest-first) with the shadow's own account: summary, grade, and an
+   * newest-first) with the agent's own account: summary, grade, and an
    * expandable breakdown of decisions / learnings / artifacts / open threads.
-   * Read-only — the report is the shadow's artifact.
+   * Read-only — the report is the agent's artifact.
    */
   import type { ObjectiveReportView } from "$lib/toolbox/objectiveStore.svelte";
   import EventIcon from "$lib/ui/EventIcon.svelte";

@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * The "now" strip: what the shadow is doing this instant, which objective
+   * The "now" strip: what the agent is doing this instant, which objective
    * it's going after, and its position in the plan. Sits at the top of the
    * timeline pane. Pure projection of working memory + the current
    * objective's plan items. Always rendered — "conversational, no objective"
@@ -12,7 +12,7 @@
     workingMemory: WorkingMemoryPayload | null;
     planItems: PlanItemRow[];
     streaming: boolean;
-    /** Metadata of the objective the shadow is currently going after. */
+    /** Metadata of the objective the agent is currently going after. */
     currentObjective?: ObjectiveRow | null;
   }
   let { workingMemory, planItems, streaming, currentObjective = null }: Props = $props();

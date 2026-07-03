@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * One bare tool call in the timeline stream (MON-124 flat chronology) — a
-   * tool the shadow ran with no narrated action above it. Narration AUGMENTS
+   * tool the agent ran with no narrated action above it. Narration AUGMENTS
    * the timeline; its absence doesn't hide work. Same data-row grammar as the
    * nested tool rows inside action cards, at stream level.
    */

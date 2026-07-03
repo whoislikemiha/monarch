@@ -181,7 +181,7 @@ impl Database {
             .await?)
     }
 
-    /// MON-99: List memories for an agent (shadow-scoped, non-archived), ordered newest-first.
+    /// MON-99: List memories for an agent (agent-scoped, non-archived), ordered newest-first.
     pub async fn list_memories_for_agent_internal(
         &self,
         agent_id: &str,
@@ -316,7 +316,7 @@ impl Database {
             .await?)
     }
 
-    /// MON-99: Insert a Keeper run provenance row. Returns the new id.
+    /// MON-99: Insert a Curator run provenance row. Returns the new id.
     pub async fn insert_keeper_run_internal(
         &self,
         agent_id: &str,
@@ -341,7 +341,7 @@ impl Database {
             .await?)
     }
 
-    /// MON-100: Most recent successful Keeper run for an agent, or None.
+    /// MON-100: Most recent successful Curator run for an agent, or None.
     /// Drives slice anchoring (we replay messages newer than this row's
     /// `completed_at`) and the synthesized scaffold's prior summary (its
     /// `output_summary`).
@@ -370,7 +370,7 @@ impl Database {
             .await?)
     }
 
-    /// MON-103: load one Keeper run by id so result persistence can use the
+    /// MON-103: load one Curator run by id so result persistence can use the
     /// run row's trigger / objective provenance instead of whatever objective happens
     /// to be current when the async model call returns.
     pub async fn get_keeper_run_internal(
@@ -396,7 +396,7 @@ impl Database {
             .await?)
     }
 
-    /// MON-99: Mark a Keeper run as completed (ok | failed | partial).
+    /// MON-99: Mark a Curator run as completed (ok | failed | partial).
     pub async fn complete_keeper_run_internal(
         &self,
         run_id: i64,

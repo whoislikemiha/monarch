@@ -188,7 +188,7 @@ pub(super) fn recompute_plan_slice_tx(
 /// slice and write it back. We filter by the L2 payload's own
 /// `currentObjectiveId` (not `agents.current_objective_id`) because action
 /// transitions update L2 directly and the column-side pointer can lag —
-/// L2 is the authoritative live state for which objective a shadow is on.
+/// L2 is the authoritative live state for which objective an agent is on.
 fn sync_plan_l2_tx(
     tx: &rusqlite::Transaction<'_>,
     objective_id: &str,
@@ -634,7 +634,7 @@ impl Database {
     /// Mark a plan item active. At most one item per objective may be active —
     /// any sibling currently in `active` is silently reset to `pending`
     /// (the caller owns explicit completion / skip / block; the reset is
-    /// a defensive invariant, not a status transition the captain sees).
+    /// a defensive invariant, not a status transition the supervisor sees).
     pub async fn start_plan_item_internal(
         &self,
         item_id: &str,
@@ -855,7 +855,7 @@ impl Database {
 //
 // P4b: plan commands are exposed both as Tauri commands (frontend) and
 // consumed via the sidecar event pipeline (ws.rs / persist.rs → internal
-// methods) so the captain can propose and the executor can advance a plan
+// methods) so the supervisor can propose and the executor can advance a plan
 // directly. Both end up calling the same `*_internal` methods, so plan
 // state stays consistent across origins.
 

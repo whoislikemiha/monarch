@@ -10,7 +10,7 @@
   import { onMount, onDestroy } from "svelte";
   import type { Agent } from "$lib/types";
   import { invoke } from "$lib/api";
-  import ShadowHeader from "./ShadowHeader.svelte";
+  import AgentHeader from "./AgentHeader.svelte";
   import TimelinePane from "./TimelinePane.svelte";
   import type { AskPayload } from "./timelineModel";
   import ChatThread from "./ChatThread.svelte";
@@ -43,12 +43,12 @@
   onDestroy(() => binding.destroy());
 
   /** Timeline action → open a chat tile scoped to that piece of work, and
-   * record a durable `chat_spawned` event under the action so "the captain
+   * record a durable `chat_spawned` event under the action so "the supervisor
    * intervened here" stays on the work record (MON-124) — chips on the card
    * outlive the pane. Recording is best-effort and never blocks the chat. */
   function askAbout(action: AskPayload) {
     const ctx =
-      `[The captain is asking about this piece of your work: "${action.intent}"` +
+      `[The supervisor is asking about this piece of your work: "${action.intent}"` +
       (action.outcome ? ` (outcome: ${action.outcome})` : "") +
       `. Answer with that context in mind.]`;
     const wasOpen = chatStore.hasScopedPane(agent.id, action.id);
@@ -70,14 +70,14 @@
   /** Chat chip on a card → re-open / focus that scoped conversation. */
   function reopenChat(scopeId: string, label: string) {
     const ctx =
-      `[The captain re-opened the conversation about this piece of your work: "${label}". ` +
+      `[The supervisor re-opened the conversation about this piece of your work: "${label}". ` +
       `Answer with that context in mind.]`;
     chatStore.openScopedPane(agent.id, { id: scopeId, kind: "action", label, context: ctx });
   }
 </script>
 
 <div class="solo">
-  <ShadowHeader {agent} {binding} />
+  <AgentHeader {agent} {binding} />
 
   <TileStack ids={tiles} axis={orient} onreorder={reorder} {size} {setSize}>
     {#snippet header(id)}

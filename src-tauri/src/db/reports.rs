@@ -163,10 +163,10 @@ impl Database {
             .await?)
     }
 
-    /// MON-122: P6 Slice D — attribute a objective's report to the Keeper run
+    /// MON-122: P6 Slice D — attribute a objective's report to the Curator run
     /// that distilled it. Returns `true` if a report row was updated, `false`
     /// when no report exists for the objective. Idempotent on the
-    /// `(objective_id, run_id)` pair — re-running the Keeper for the same objective
+    /// `(objective_id, run_id)` pair — re-running the Curator for the same objective
     /// simply rewrites the attribution.
     pub async fn attribute_objective_report_to_keeper_run_internal(
         &self,
@@ -190,12 +190,12 @@ impl Database {
 
 // ---- MON-119: P6 Slice A — first-person objective reports ----
 //
-// Captain-initiated saves go through `db_save_objective_report` and write
+// Supervisor-initiated saves go through `db_save_objective_report` and write
 // directly via `upsert_objective_report_internal` (matching the
 // `db_create_objective_ref` precedent). Sidecar-originated writes (Slice B)
 // flow through `PersistCommand::WriteObjectiveReport` instead so they preserve
 // ordering against surrounding objective events. Both paths emit on
-// `objective-report-{objective_id}` so the captain UI (Slice C) can subscribe
+// `objective-report-{objective_id}` so the supervisor UI (Slice C) can subscribe
 // once and see writes regardless of origin.
 
 #[tauri::command]

@@ -116,11 +116,11 @@ pub(super) enum PersistCommand {
     SaveClassification {
         payload: SaveClassificationPayload,
     },
-    /// MON-100: insert one Keeper-produced atomic claim. The consumer embeds
+    /// MON-100: insert one Curator-produced atomic claim. The consumer embeds
     /// `payload.summary` via `MemoryIndex::embed_to_blob` before the insert
     /// so the new row carries an embedding immediately. If the embedder is
     /// not initialised the row is still written (without an embedding) and
-    /// the subsequent `RebuildHnsw` simply skips it — the captain can still
+    /// the subsequent `RebuildHnsw` simply skips it — the supervisor can still
     /// see the memory in the Inspector and FTS5 retrieval still works.
     InsertMemory {
         agent_id: String,
@@ -136,7 +136,7 @@ pub(super) enum PersistCommand {
         tokens_out: Option<i64>,
     },
     /// MON-122: P6 Slice D — attribute a objective's first-person report to the
-    /// Keeper run that distilled it. Sent from `handle_keeper_result` after a
+    /// Curator run that distilled it. Sent from `handle_keeper_result` after a
     /// successful `objective_close` run that had a report row. No-op when no
     /// report exists for the objective. Rides the pipeline so the write is
     /// serialized with the in-flight `InsertMemory` / `CompleteKeeperRun`
@@ -156,7 +156,7 @@ pub(super) enum PersistCommand {
     /// MON-119: P6 Slice A — upsert a first-person objective report. The
     /// sidecar `complete_objective(report)` tool in Slice B is the intended
     /// producer; this variant lives here so the pipeline is ready when
-    /// that wiring lands. Captain-initiated saves bypass the pipeline and
+    /// that wiring lands. Supervisor-initiated saves bypass the pipeline and
     /// go straight through the `db_save_objective_report` Tauri command,
     /// matching the `db_create_objective_ref` precedent.
     WriteObjectiveReport {
@@ -166,10 +166,10 @@ pub(super) enum PersistCommand {
     /// first-person report. The apply upserts the report into
     /// `objective_reports`, then for a terminal `outcome` (`done` / `abandoned`)
     /// transitions the objective's status and runs the same objective-close side
-    /// effects as the captain's `db_update_objective` path (status_change
-    /// event, clear current-objective pointer, dispatch objective-close Keeper).
+    /// effects as the supervisor's `db_update_objective` path (status_change
+    /// event, clear current-objective pointer, dispatch objective-close Curator).
     /// Report write happens before the status transition so the objective-close
-    /// Keeper tick (Slice D) sees the report.
+    /// Curator tick (Slice D) sees the report.
     CompleteObjective {
         agent_id: String,
         objective_id: String,
@@ -238,7 +238,7 @@ pub(super) enum PersistCommand {
         reason: String,
     },
     /// MON-100: full-rebuild the per-agent HNSW index from current DB
-    /// embeddings. Runs last in a Keeper-tick burst so the index is
+    /// embeddings. Runs last in a Curator-tick burst so the index is
     /// consistent before the next read. P3d (MON-97) replaces this with
     /// incremental insert.
     RebuildHnsw {
@@ -701,7 +701,7 @@ mod tests {
 
     // ---- P6 Slice D (MON-122): AttributeObjectiveReport apply path -----------
 
-    /// Seed a objective, upsert a first-person report on it, and insert a Keeper
+    /// Seed a objective, upsert a first-person report on it, and insert a Curator
     /// run row. Returns `(objective_id, report_id, run_id)` for the test to drive
     /// the attribute command.
     async fn seed_objective_report_and_run(db: &Database) -> (String, String, i64) {
@@ -766,7 +766,7 @@ mod tests {
         .await
         .expect("apply first");
 
-        // Re-running the Keeper for the same objective must overwrite cleanly,
+        // Re-running the Curator for the same objective must overwrite cleanly,
         // not violate uniqueness.
         PersistCommand::AttributeObjectiveReport {
             agent_id: "agent-1".to_string(),
@@ -792,7 +792,7 @@ mod tests {
         let mut ctx = PersistContext::default();
 
         // Objective exists, report does not. Objective-close runs can still fire on
-        // objectives that never produced a report (e.g. captain-edited close),
+        // objectives that never produced a report (e.g. supervisor-edited close),
         // and the apply must not error on that path.
         let objective_id = seed_objective(&db).await;
         let run_id = db

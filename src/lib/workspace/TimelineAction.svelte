@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * One coherent action in the work timeline, as a drill-in CARD. The shadow's
+   * One coherent action in the work timeline, as a drill-in CARD. The agent's
    * narration ("intent") is the headline; the outcome is the resolution. The
    * card expands to a typed child list — tool calls (mono data-rows), explicit
    * decisions, spawned chats — and carries artifact chips in its footer.

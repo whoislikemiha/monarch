@@ -47,7 +47,7 @@ export function createReportTools(agentId: string, emit: EmitFn) {
 				"Call complete_objective exactly once per objective, when work on it is finished — it is the last thing you do on that objective.",
 				"The report is your own first-person account: what the objective was, what you decided and why, what you learned, what you produced, what is left.",
 				"outcome 'done' or 'abandoned' closes the objective; 'partial' or 'blocked' record the report but leave the objective open.",
-				"learned[] are your own suggestions to the Keeper — durable lessons, not a transcript. grade is your self-assessment; the Keeper or captain may override it.",
+				"learned[] are your own suggestions to the curator — durable lessons, not a transcript. grade is your self-assessment; the curator or supervisor may override it.",
 			],
 			parameters: Type.Object({
 				report: Type.Object({
@@ -85,7 +85,7 @@ export function createReportTools(agentId: string, emit: EmitFn) {
 					),
 					learned: Type.Array(Type.String(), {
 						description:
-							"Durable lessons worth keeping — your own suggestions to the Keeper. One assertion per entry.",
+							"Durable lessons worth keeping — your own suggestions to the curator. One assertion per entry.",
 					}),
 					artifacts: Type.Array(
 						Type.Object({

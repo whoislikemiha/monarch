@@ -9,7 +9,7 @@
     onsend: (text: string) => void;
     onstop?: () => void;
   }
-  let { streaming, placeholder = "Message this shadow…", onsend, onstop }: Props = $props();
+  let { streaming, placeholder = "Message this agent…", onsend, onstop }: Props = $props();
 
   let value = $state("");
   let textarea: HTMLTextAreaElement | undefined = $state();

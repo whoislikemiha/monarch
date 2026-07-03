@@ -13,7 +13,7 @@ import {
 import { randomUUID } from "node:crypto";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import { type ImageContent } from "@mariozechner/pi-ai";
-import { buildSystemPrompt } from "./shadow-oath.js";
+import { buildSystemPrompt } from "./agent-persona.js";
 import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
 import { createNarrationTools } from "./narration-tools.js";
 import { createPlanTools } from "./plan-tools.js";
@@ -567,7 +567,7 @@ export class RuntimeManager {
 	 * know which messages predate the run; the synthesized scaffold replaces
 	 * `[0..tailAnchor]` with `[user: "Previous context …", assistant: "Acknowledged"]`
 	 * and the tail (anything Pi appended during the round trip) survives
-	 * untouched. Captain-facing chat UI reads from the canonical SQLite
+	 * untouched. Supervisor-facing chat UI reads from the canonical SQLite
 	 * `messages` table, so this rewrite only ever affects what the LLM sees.
 	 *
 	 * On failure: emit `keeper_result` with an `error` field and skip the

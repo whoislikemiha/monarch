@@ -81,7 +81,7 @@ pub(super) async fn apply_record_objective_event(
     let id = db.record_objective_event_internal(&payload).await?;
     // Mirrors the `db_record_objective_event` Tauri command's broadcast
     // so the ObjectiveTimelineTool wakes regardless of how the event
-    // was authored (UI button, Keeper tick, executor, …).
+    // was authored (UI button, Curator tick, executor, …).
     let app_opt = app.lock().clone();
     if let Some(app) = app_opt {
         emit_event(
@@ -102,8 +102,8 @@ pub(super) async fn apply_write_objective_report(
 ) -> Result<(), MonarchError> {
     let objective_id = payload.objective_id.clone();
     let id = db.upsert_objective_report_internal(&payload).await?;
-    // Same broadcast shape as RecordObjectiveEvent so the captain UI
-    // (Slice C) wakes when a Keeper or executor write lands,
+    // Same broadcast shape as RecordObjectiveEvent so the supervisor UI
+    // (Slice C) wakes when a Curator or executor write lands,
     // matching how `db_save_objective_report` Tauri command emits.
     let app_opt = app.lock().clone();
     if let Some(app) = app_opt {
@@ -124,7 +124,7 @@ pub(super) async fn apply_complete_objective(
     objective_id: String,
     report: ObjectiveReport,
 ) -> Result<(), MonarchError> {
-    // 1. Persist the report first — the objective-close Keeper tick
+    // 1. Persist the report first — the objective-close Curator tick
     //    (Slice D) must see it. The structured report is stored
     //    verbatim as the JSON `payload`.
     let payload_json = serde_json::to_string(&report)?;
@@ -175,9 +175,9 @@ pub(super) async fn apply_complete_objective(
         .await?;
         let after = db.get_objective_internal(&objective_id).await?;
         // 3. Run the same objective-close side effects as the
-        //    captain's `db_update_objective` path: status_change
+        //    supervisor's `db_update_objective` path: status_change
         //    event, clear the agent current-objective pointer,
-        //    dispatch the objective-close Keeper run. Reached via
+        //    dispatch the objective-close Curator run. Reached via
         //    `AppHandle::state()` because the persist consumer
         //    is not handed `AgentManager` directly.
         if let Some(app) = app_opt {

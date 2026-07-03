@@ -1,6 +1,6 @@
 //! File/folder path suggestions for the `@`-mention autocomplete (MON-76).
 //!
-//! One Tauri command — `list_paths` — takes the shadow's cwd and the text the
+//! One Tauri command — `list_paths` — takes the agent's cwd and the text the
 //! user has typed after `@`. Leading `../` segments shift the search anchor
 //! upward; the remainder is a fuzzy-match needle over every path the walker
 //! surfaces beneath that anchor.

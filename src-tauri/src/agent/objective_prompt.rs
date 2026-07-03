@@ -168,7 +168,7 @@ pub(super) fn objective_description_from_prompt(text: &str) -> Option<String> {
 
 /// MON-100: pull plain text out of a stored `messages.content` value, which
 /// may be a JSON-encoded array of content blocks (assistant), a plain string
-/// (user, free-form), or a tool-result JSON blob. The Keeper benefits from
+/// (user, free-form), or a tool-result JSON blob. The Curator benefits from
 /// reading text fluently; image data and binary blobs are skipped.
 pub(super) fn extract_text_from_stored_content(stored: &str) -> String {
     let trimmed = stored.trim();
@@ -201,7 +201,7 @@ pub(super) fn extract_text_from_stored_content(stored: &str) -> String {
             .collect::<Vec<_>>()
             .join("\n"),
         serde_json::Value::Object(obj) => {
-            // Tool-result JSON: surface `result` + `toolName` so the Keeper
+            // Tool-result JSON: surface `result` + `toolName` so the Curator
             // can claim "tool X returned Y" without tripping on the JSON
             // wrapper.
             let name = obj

@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * Slim header above the solo workspace. Identity + live status, and the
-   * relocated shadow controls (no more floating portrait): thinking level,
+   * relocated agent controls (no more floating portrait): thinking level,
    * model, and an actions menu (new session · compact · prompt · history).
    */
   import type { Agent } from "$lib/types";

@@ -20,10 +20,10 @@
   // svelte-ignore state_referenced_locally
   const seed = agent;
 
-  // Shadow identity
+  // Agent identity
   let shadowName = $state(seed.shadow?.shadowName ?? "");
   let shadowTitle = $state(seed.shadow?.shadowTitle ?? "");
-  let shadowGrade: ShadowGrade = $state((seed.shadow?.shadowGrade as ShadowGrade) ?? "Knight");
+  let shadowGrade: ShadowGrade = $state((seed.shadow?.shadowGrade as ShadowGrade) ?? "Junior");
 
   // Connection / model
   const providers = [
@@ -188,24 +188,24 @@
     role="dialog"
     tabindex="-1"
   >
-    <h2>Edit Shadow</h2>
+    <h2>Edit Agent</h2>
 
-    <!-- Shadow Identity -->
+    <!-- Agent Identity -->
     <div class="section">
-      <span class="label">Shadow Identity</span>
+      <span class="label">Agent Identity</span>
       <div class="row">
         <div class="field">
-          <label class="label" for="edit-shadow-name">Name</label>
+          <label class="label" for="edit-agent-name">Name</label>
           <input
-            id="edit-shadow-name"
+            id="edit-agent-name"
             type="text"
             bind:value={shadowName}
-            placeholder="e.g. Igris, Beru, Tusk"
+            placeholder="e.g. Atlas, Nova, Sage"
           />
         </div>
         <div class="field">
-          <label class="label" for="edit-shadow-grade">Grade</label>
-          <select id="edit-shadow-grade" bind:value={shadowGrade}>
+          <label class="label" for="edit-agent-grade">Grade</label>
+          <select id="edit-agent-grade" bind:value={shadowGrade}>
             {#each SHADOW_GRADES as grade}
               <option value={grade}>{grade}</option>
             {/each}
@@ -213,12 +213,12 @@
         </div>
       </div>
       <div class="field">
-        <label class="label" for="edit-shadow-title">Title</label>
+        <label class="label" for="edit-agent-title">Title</label>
         <input
-          id="edit-shadow-title"
+          id="edit-agent-title"
           type="text"
           bind:value={shadowTitle}
-          placeholder="e.g. Shadow Commander, The First Shadow"
+          placeholder="e.g. Backend Engineer, Tech Lead"
         />
       </div>
     </div>
@@ -313,7 +313,7 @@
             id="edit-cwd"
             type="text"
             bind:value={cwd}
-            placeholder="/home/miha/project"
+            placeholder="/path/to/project"
           />
           <button class="browse-btn" onclick={browseFolder} type="button" title="Browse">
             ...

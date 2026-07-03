@@ -30,9 +30,9 @@ pub struct ClassifierProvider {
     pub model: String,
 }
 
-/// MON-100: Keeper invocation config mirrored on the sidecar side. Rust resolves
+/// MON-100: Curator invocation config mirrored on the sidecar side. Rust resolves
 /// provider/model/systemPrompt from `~/.config/monarch/memory.toml` and ships
-/// it per call so the sidecar stays stateless WRT Keeper config (same shape
+/// it per call so the sidecar stays stateless WRT Curator config (same shape
 /// pattern as `ClassifierInvocationConfig`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -122,7 +122,7 @@ pub(crate) async fn db_delete_agent(state: &WsState, args: Value) -> Result<Valu
     Ok(Value::Null)
 }
 
-// ---- MON-98: Captain / shadow identity ----
+// ---- MON-98: Supervisor / agent identity ----
 
 pub(crate) async fn get_captain_identity(state: &WsState, _args: Value) -> Result<Value, MonarchError> {
     let row = state.db.get_captain_identity_internal().await?;

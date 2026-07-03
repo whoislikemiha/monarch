@@ -1568,7 +1568,7 @@ impl Database {
     /// `Some(new_id)` when one was created.
     ///
     /// Project-less agents stay ephemeral: no project → no campaign → `Ok(None)`
-    /// (the seam where a future per-captain scratch campaign would hook in —
+    /// (the seam where a future per-supervisor scratch campaign would hook in —
     /// roadmap-v2 P1 defers it).
     pub async fn auto_create_current_objective_internal(
         &self,

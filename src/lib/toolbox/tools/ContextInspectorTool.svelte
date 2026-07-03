@@ -137,7 +137,7 @@
       const text = `${shadow.shadowName} · ${shadow.shadowTitle} · ${shadow.shadowGrade}`;
       setupEntries.push({
         id: "setup-shadow",
-        label: "Shadow identity",
+        label: "Agent identity",
         tokens: estimateTokens(text),
         preview: text,
         fullText: text,

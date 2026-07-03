@@ -102,13 +102,13 @@ pub struct AgentStateInner {
 }
 
 /// MON-100: internal dispatch channel for tasks that need `Arc<AgentManager>`
-/// (keeper runs, etc.) but originate from the event-handler path which only
+/// (curator runs, etc.) but originate from the event-handler path which only
 /// has access to `inner` + `live_states`. The event handler enqueues; a
 /// manager-owned consumer task spawned by `start_dispatcher` drains.
 #[derive(Debug)]
 pub(crate) enum InternalDispatch {
-    /// Trigger one continuous-compaction Keeper run for the agent. No-op if
-    /// the Keeper config is empty or a run is already in flight.
+    /// Trigger one continuous-compaction Curator run for the agent. No-op if
+    /// the Curator config is empty or a run is already in flight.
     KeeperRun {
         agent_id: String,
         trigger: KeeperRunTrigger,
@@ -118,7 +118,7 @@ pub(crate) enum InternalDispatch {
     SendSidecarCommand { command: SidecarCommand },
 }
 
-/// MON-100 / MON-103: Keeper runs share plumbing but differ in why they
+/// MON-100 / MON-103: Curator runs share plumbing but differ in why they
 /// fired and which message slice should feed the model.
 #[derive(Debug, Clone)]
 pub(crate) enum KeeperRunTrigger {
@@ -193,7 +193,7 @@ pub struct AgentManager {
     pub(super) persist_tx: mpsc::Sender<PersistCommand>,
     /// MON-100: producer handle for the internal-dispatch task. Cloned into
     /// the reader's `handle_sidecar_event` so trigger checks can enqueue a
-    /// Keeper run without needing `Arc<AgentManager>` themselves. Drained by
+    /// Curator run without needing `Arc<AgentManager>` themselves. Drained by
     /// the consumer spawned in `start_dispatcher`.
     pub(super) dispatch_tx: mpsc::Sender<InternalDispatch>,
     /// MON-100: stash for the dispatcher's receiver, taken once by
@@ -203,7 +203,7 @@ pub struct AgentManager {
     /// `ensure_sidecar`) can pass a db handle to `handle_sidecar_event`
     /// without threading db through every call site of every Tauri command.
     pub(super) db: Arc<Database>,
-    /// Shared memory index used by Keeper writes and MON-101 retrieval.
+    /// Shared memory index used by Curator writes and MON-101 retrieval.
     pub(super) memory_index: Arc<MemoryIndex>,
 }
 
@@ -233,7 +233,7 @@ impl AgentManager {
             app_handle.clone(),
         ));
 
-        // MON-100: dispatcher channel. Bounded — if the Keeper trigger
+        // MON-100: dispatcher channel. Bounded — if the Curator trigger
         // saturates somehow, back-pressure stalls the reader rather than
         // queuing unbounded work.
         let (dispatch_tx, dispatch_rx) = mpsc::channel::<InternalDispatch>(32);
@@ -253,7 +253,7 @@ impl AgentManager {
     }
 
     /// MON-100: spawn the dispatcher task that owns `Arc<Self>` so the
-    /// event-handler path can enqueue work like Keeper runs without holding
+    /// event-handler path can enqueue work like Curator runs without holding
     /// a `Self` reference. Idempotent — the receiver is taken once; further
     /// calls are no-ops. Call once after wrapping the manager in `Arc`.
     pub fn start_dispatcher(self: &Arc<Self>, db: Arc<Database>) {
@@ -288,8 +288,8 @@ impl AgentManager {
 
     /// MON-100: assemble the slice + ship a `KeeperRun` command.
     ///
-    /// Silent no-op when `memory.toml` has no Keeper model configured (the
-    /// captain hasn't opted in) OR when a run is already in flight for this
+    /// Silent no-op when `memory.toml` has no Curator model configured (the
+    /// supervisor hasn't opted in) OR when a run is already in flight for this
     /// agent (debounces concurrent threshold crossings while the model is
     /// answering). Errors propagate so the dispatcher logs them.
     pub(crate) async fn dispatch_keeper_run(
@@ -316,7 +316,7 @@ impl AgentManager {
         let model_id = format!("{}/{}", km.provider, km.model);
 
         // Slice anchor. Continuous compaction resumes after the last
-        // successful Keeper run; objective-close distillation scopes to the
+        // successful Curator run; objective-close distillation scopes to the
         // objective's own lifetime.
         let last_run = db
             .last_successful_keeper_run_internal(agent_id)
@@ -348,7 +348,7 @@ impl AgentManager {
 
         // Cap the slice to the most recent ~30k tokens to keep first-run
         // distillations within the model's context window. Confirmed scope
-        // with the captain — first-time setup runs against fresh
+        // with the supervisor — first-time setup runs against fresh
         // conversations, so worst-case clipping is rare.
         let mut budget: i64 = 30_000;
         let mut newest_first: Vec<MessageRow> = Vec::new();
@@ -362,8 +362,8 @@ impl AgentManager {
         newest_first.reverse();
         let kept = newest_first;
 
-        // BM25 top-K=5 over `memories_fts` keyed on the captain's most
-        // recent user prompt. Cheapest signal that lets the Keeper avoid
+        // BM25 top-K=5 over `memories_fts` keyed on the supervisor's most
+        // recent user prompt. Cheapest signal that lets the Curator avoid
         // re-claiming what's already known. Vector retrieval lands in
         // MON-101.
         let related_query = kept
@@ -389,7 +389,7 @@ impl AgentManager {
         };
 
         // P6 Slice D (MON-122): fold the first-person objective report into the
-        // slice on objective-close runs so the Keeper sees the executor's own
+        // slice on objective-close runs so the Curator sees the executor's own
         // framing alongside the raw stream. Continuous runs never include a
         // report even when a current objective happens to be set.
         let objective_close_report: Option<String> = match &trigger {
@@ -582,7 +582,15 @@ impl AgentManager {
         } = req;
 
         let now = chrono_now();
-        let effective_cwd = cwd.as_deref().unwrap_or(".").to_string();
+        // A missing/blank working directory defaults to the user's home
+        // directory (portable across machines), falling back to "." only if
+        // the home directory can't be resolved.
+        let effective_cwd = match cwd.as_deref().map(str::trim) {
+            Some(c) if !c.is_empty() => c.to_string(),
+            _ => dirs::home_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| ".".to_string()),
+        };
         let (project_id, project_instructions) =
             crate::project::resolve_project(db, &effective_cwd).await?;
 
@@ -651,11 +659,11 @@ impl AgentManager {
         }
 
         let shadow = shadow_spec.as_ref().map(|_| ShadowConfig {
-            name: shadow_name.clone().unwrap_or_else(|| "Shadow".to_string()),
+            name: shadow_name.clone().unwrap_or_else(|| "Agent".to_string()),
             title: shadow_title
                 .clone()
-                .unwrap_or_else(|| "Shadow Soldier".to_string()),
-            grade: shadow_grade.clone().unwrap_or_else(|| "Knight".to_string()),
+                .unwrap_or_else(|| "Team Member".to_string()),
+            grade: shadow_grade.clone().unwrap_or_else(|| "Junior".to_string()),
             id: id.clone(),
         });
 
@@ -812,10 +820,10 @@ impl AgentManager {
         }
     }
 
-    /// MON-98: Push an updated captain identity payload to all live agent
-    /// sessions. Each agent's `setCustomPrompt` will update its stored captain
+    /// MON-98: Push an updated supervisor identity payload to all live agent
+    /// sessions. Each agent's `setCustomPrompt` will update its stored supervisor
     /// payload and rebuild the system prompt so the next turn uses the new
-    /// identity. `payload = None` clears the captain section.
+    /// identity. `payload = None` clears the supervisor section.
     pub async fn refresh_captain_identity(
         &self,
         payload: Option<String>,
@@ -837,8 +845,8 @@ impl AgentManager {
         Ok(())
     }
 
-    /// MON-98: Push an updated shadow identity payload to a single live agent
-    /// session. `payload = None` clears the shadow section.
+    /// MON-98: Push an updated agent identity payload to a single live agent
+    /// session. `payload = None` clears the agent section.
     pub async fn refresh_shadow_identity(
         &self,
         agent_id: &str,
@@ -1119,7 +1127,7 @@ mod tests {
         );
         assert!(slice.contains("## OBJECTIVE REPORT (first-person from the executor)"));
         assert!(slice.contains("shipped slice D"));
-        // The raw stream marker stays present so the Keeper can still find it.
+        // The raw stream marker stays present so the Curator can still find it.
         assert!(slice.contains("## RECENT ACTIVITY"));
     }
 

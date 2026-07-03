@@ -385,7 +385,7 @@ pub enum SidecarEvent {
         latency_ms: Option<i32>,
         error: Option<String>,
     },
-    /// MON-100: Keeper run result. `claims` + `compaction_summary` populated
+    /// MON-100: Curator run result. `claims` + `compaction_summary` populated
     /// on success; `error` populated on failure. The sidecar handles the Pi
     /// `state.messages` rewrite inline; Rust only persists rows + resets the
     /// live token counter on success.
@@ -414,7 +414,7 @@ pub enum SidecarEvent {
 }
 
 /// MON-100: atomic claim shape. Mirrors `AtomicClaim` in
-/// `sidecar/src/protocol.ts`. `kind` is open-string on the wire — the Keeper
+/// `sidecar/src/protocol.ts`. `kind` is open-string on the wire — the Curator
 /// system prompt restricts it to fact/decision/constraint/convention/
 /// preference/correction/landmark, but Rust persists whatever the model
 /// emits to keep the substrate forward-compatible with prompt evolution.
@@ -725,7 +725,7 @@ pub fn apply_event(state: &mut LiveAgentState, event: &InnerEvent) -> ApplyOutco
                     // trigger — uncached input + freshly-cached input + output.
                     // Deliberately EXCLUDES `cache_read`: that is the prior
                     // context re-read every turn, so counting it made the sum
-                    // grow ~quadratically and fire the Keeper roughly every
+                    // grow ~quadratically and fire the Curator roughly every
                     // turn (≈0 realized savings, see MON-123). New material is
                     // the right unit for "enough happened to distill." Live-
                     // context size is Pi's native compaction's concern now.

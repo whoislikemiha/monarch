@@ -232,7 +232,7 @@ pub(super) async fn handle_sidecar_event(
             // post-event sum) and only at "natural" boundaries — TurnEnd
             // for the soft threshold, MessageEnd for the hard threshold.
             // The dispatcher consumes via `Arc<AgentManager>` since
-            // Keeper dispatch needs the sidecar pipe + db.
+            // Curator dispatch needs the sidecar pipe + db.
             maybe_trigger_keeper(dispatch_tx, live_states, &agent_id, &inner_event).await;
         }
 
@@ -401,7 +401,7 @@ pub(super) async fn handle_sidecar_event(
 }
 
 /// MON-100: append a `DisplayItem::Status` to the agent's live state and
-/// emit a snapshot. Used by Keeper observability events so the captain sees
+/// emit a snapshot. Used by Curator observability events so the supervisor sees
 /// "Memories distilled" / "Context compacted" rows land in the chat thread.
 pub(super) async fn push_status_for_agent(
     app: &AppHandle,

@@ -23,7 +23,7 @@ import type {
  * snake-case shape the executor's `complete_objective` tool emits and Rust stores
  * verbatim in `objective_reports.payload` (see `sidecar/src/report-tools.ts` and
  * `src-tauri/src/sidecar_protocol.rs` `ObjectiveReport`). Read-only here — the
- * report is the shadow's artifact, not captain-editable.
+ * report is the agent's artifact, not supervisor-editable.
  */
 export interface ObjectiveReportView {
   summary: string;
@@ -69,7 +69,7 @@ export function parseObjectiveReport(row: ObjectiveReportRow): ObjectiveReportVi
     };
   } catch {
     // Malformed payload must not crash the timeline — keep the raw text so the
-    // captain at least sees something, and degrade the structured view.
+    // user at least sees something, and degrade the structured view.
     return { ...base, raw: row.payload };
   }
 }
@@ -82,8 +82,8 @@ export function parseObjectiveReport(row: ObjectiveReportRow): ObjectiveReportVi
  * Tree shape is derived on demand from `tree` (flat list from the backend
  * `get_objective_tree_for_root` call). Sub-objectives with a different assignee
  * still show up inside their root's tree — that's intentional so a
- * Monarch looking at a shadow sees the full context the shadow works
- * inside, not just the nodes the shadow "owns".
+ * user looking at an agent sees the full context the agent works
+ * inside, not just the nodes the agent "owns".
  */
 export interface AgentObjectiveState {
   agentId: string;
@@ -174,7 +174,7 @@ class ObjectiveStore {
       });
       // P1: objectives branch under a campaign root, so group by root_id and
       // render the campaign tree(s) rather than treating each objective as a
-      // root. When the shadow has no assigned work yet, fall back to the
+      // root. When the agent has no assigned work yet, fall back to the
       // project's campaign root so the (empty) campaign still shows and capture
       // has a placement target.
       let rootIds = [...new Set(all.map((q) => q.rootId))];

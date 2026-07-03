@@ -16,7 +16,7 @@ use crate::error::MonarchError;
 
 use super::AgentManager;
 
-/// Shadow identity block carried inside `SpawnAgentRequest`. Mirrors the
+/// Agent identity block carried inside `SpawnAgentRequest`. Mirrors the
 /// frontend's nested `config.shadow` object (name/title/grade), which the
 /// backend then maps into the sidecar-facing `ShadowConfig` by injecting the
 /// synthesized agent id at command-build time.
@@ -204,7 +204,7 @@ pub async fn switch_agent_session(
     state.switch_session(&app, &db, agent_id, session_id).await
 }
 
-// ---- MON-98: Captain / shadow identity commands ----
+// ---- MON-98: Supervisor / agent identity commands ----
 
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

@@ -1,10 +1,13 @@
 # Monarch
 
+![Monarch](docs/screenshot.png)
+<!-- TODO(owner): add a real screenshot or GIF of the running app at docs/screenshot.png -->
+
 **A desktop command center for running a fleet of AI coding agents.**
 
-Monarch lets you run several AI coding agents ("shadows") side by side, each with its own identity, memory, and conversation history — instead of juggling a pile of terminal tabs with no shared visibility. It's built as a real multi-process desktop app: a Rust/Tauri core that owns all state, a Svelte 5 frontend that renders it, and a long-lived Node sidecar that hosts the actual agent runtime ([Pi SDK](https://github.com/badlogic/pi-mono)) and streams events back.
+Monarch lets you run several AI coding agents side by side, each with its own identity, memory, and conversation history — instead of juggling a pile of terminal tabs with no shared visibility. It's built as a real multi-process desktop app: a Rust/Tauri core that owns all state, a Svelte 5 frontend that renders it, and a long-lived Node sidecar that hosts the actual agent runtime ([Pi SDK](https://github.com/badlogic/pi-mono)) and streams events back.
 
-> Monarch is under active, solo development — expect rough edges. See [VISION.md](./VISION.md) for where it's headed, [ONBOARDING.md](./ONBOARDING.md) for the full architecture/data-model walkthrough, and [`thoughts/`](./thoughts/) for the running design log (research plans, implementation notes, and open design docs written as the project evolves).
+> Monarch is under active development — expect rough edges. See [VISION.md](./VISION.md) for where it's headed, [ONBOARDING.md](./ONBOARDING.md) for the full architecture/data-model walkthrough, and [`thoughts/`](./thoughts/) for the running design log (research plans, implementation notes, and open design docs written as the project evolves).
 
 ## Why
 
@@ -12,11 +15,11 @@ Running multiple coding agents in separate terminals gives you no shared visibil
 
 ## Features
 
-- **Fleet of agents ("shadows")** — spin up multiple named agents in parallel, each with its own model, persona, and working memory.
+- **Fleet of agents** — spin up multiple named agents in parallel, each with its own model, persona, and working memory.
 - **Durable session history** — every conversation is persisted with explicit ancestry (fork/continue/new-session are distinct, tracked moves), not just an in-memory scrollback that vanishes on restart.
 - **Live execution timeline** — a flat, chronological, tool-driven feed of what each agent actually did (narrated actions, grouped tool calls, decisions), not a raw log dump.
 - **Objectives** — lightweight goal tracking that spans sessions, so "what is this agent working on" is a queryable concept, not just chat history.
-- **Working memory + Keeper** — agents accumulate and search long-term memory across sessions via an embedded vector index, with a periodic "Keeper" pass that distills and prunes it.
+- **Working memory + Curator** — agents accumulate and search long-term memory across sessions via an embedded vector index, with a periodic "Curator" pass that distills and prunes it.
 - **Per-turn complexity classification** — a cheap, advisory classifier tags each user turn to inform future routing/automation.
 - **Model-agnostic** — built on Pi SDK, with curated model catalogs for Anthropic and OpenAI Codex, per-model thinking-level configuration, and provider auth handled centrally.
 - **Toolbox** — an extensible dock of per-agent tools (session browser, context inspector, classifier settings, stats) with a typed frontend/backend contract for adding new ones.
@@ -64,6 +67,25 @@ See [ONBOARDING.md](./ONBOARDING.md) for the full data model, lifecycle walkthro
   - macOS: Xcode Command Line Tools (`xcode-select --install`).
   - Windows: Microsoft C++ Build Tools and the WebView2 runtime.
 
+## Authentication / API keys
+
+Monarch ships without credentials — you supply your own. On startup it reads provider auth from either source:
+
+- **Pi subscription login** — `~/.pi/agent/auth.json`, created when you log in through Pi. Covers Anthropic (Claude) and OpenAI Codex.
+- **Environment variables** — set any of:
+  - `ANTHROPIC_API_KEY` — Claude models.
+  - `OPENAI_API_KEY` — OpenAI models.
+  - `OPENROUTER_API_KEY` — models routed via OpenRouter.
+  - `LMSTUDIO_BASE_URL` — local models served by [LM Studio](https://lmstudio.ai/) (defaults to `http://127.0.0.1:1234`).
+
+Keys must be present in the environment that **launches the app** — they are inherited by the Node sidecar that talks to the providers. Copy [`.env.example`](./.env.example) to `.env` and fill in what you use, or export the variables in your shell before starting Monarch.
+
+## First run / prerequisites
+
+- The first `cargo build` downloads ONNX Runtime binaries — **network access is required** for that initial build.
+- The working-memory feature downloads the `bge-small-en-v1.5` embedding model from HuggingFace on first use.
+- `node` must be on your `PATH` at runtime — the Rust core spawns the Node sidecar as a child process.
+
 ## Running in dev
 
 ```bash
@@ -79,6 +101,9 @@ npm run build:sidecar
 # run the desktop app
 npm run tauri dev
 ```
+
+> **Linux / Wayland:** if the app window comes up blank, launch it with
+> `WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11 npm run tauri dev`.
 
 ## Building
 

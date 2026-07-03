@@ -6,7 +6,7 @@
    *
    * D4 (locked in `thoughts/plan/MON-99.md`): the Save button is gated
    * on the embedder being initialised — without a downloaded model we
-   * cannot embed memories at insert time, so configuring the Keeper
+   * cannot embed memories at insert time, so configuring the Curator
    * before the embedder is ready is a footgun. The "Download model"
    * button is the only available action while status is false.
    */
@@ -24,7 +24,7 @@
   let saving = $state(false);
   let error = $state<string | null>(null);
 
-  // Local form state — only the fields the captain edits in Slice A.
+  // Local form state — only the fields the supervisor edits in Slice A.
   // Embedding model id and models_dir are display-only (defaults are fine).
   let keeperEnabled = $state(false);
   let provider = $state("anthropic");
@@ -149,13 +149,13 @@
         </button>
         <p class="hint">
           ~127 MiB on first download. Required before saving the
-          Keeper configuration.
+          Curator configuration.
         </p>
       {/if}
     </section>
 
     <section class="card" class:disabled={!embedderReady}>
-      <div class="card-title">Keeper</div>
+      <div class="card-title">Curator</div>
       <label class="toggle">
         <input
           type="checkbox"
@@ -186,7 +186,7 @@
       </div>
       {#if !keeperEnabled}
         <p class="hint">
-          Without a Keeper model, the agent loop runs unchanged and no
+          Without a Curator model, the agent loop runs unchanged and no
           memories form at objective-close.
         </p>
       {/if}
@@ -214,12 +214,12 @@
       </div>
       <p class="hint">
         Soft fires at the next turn-end once activity since the last successful
-        Keeper run crosses this; hard forces a clean cut at any message-end.
+        Curator run crosses this; hard forces a clean cut at any message-end.
       </p>
 
       <details bind:open={promptExpanded} class="prompt-details">
         <summary class="prompt-summary">
-          Keeper system prompt (read-only, ships from code)
+          Curator system prompt (read-only, ships from code)
         </summary>
         <pre class="prompt-text">{resolved.keeperSystemPrompt}</pre>
       </details>

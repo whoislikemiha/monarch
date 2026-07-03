@@ -2,8 +2,8 @@
   /**
    * PROJECTS lens (what). Project picker → campaign tree (S2) + objective
    * detail (S3). The campaign is per-project; we drive objectiveStore through a
-   * "lens" agent in that project (the active shadow when it belongs there, else
-   * the project's first shadow).
+   * "lens" agent in that project (the active agent when it belongs there, else
+   * the project's first agent).
    */
   import type { ObjectiveRow } from "$lib/bindings";
   import { agentStore } from "$lib/stores/agentStore.svelte";
@@ -55,7 +55,7 @@
     <div class="empty">
       <div class="glyph" aria-hidden="true"></div>
       <h4>No projects yet</h4>
-      <p>Extract a shadow inside a git project and its campaign will appear here.</p>
+      <p>Create an agent inside a git project and its campaign will appear here.</p>
     </div>
   {:else}
     <header class="phead">
@@ -79,7 +79,7 @@
               onselect={(o) => (selectedObjective = o)}
             />
           {:else}
-            <div class="hint mono">No shadow assigned to {selectedProject?.name ?? "this project"} yet.</div>
+            <div class="hint mono">No agent assigned to {selectedProject?.name ?? "this project"} yet.</div>
           {/if}
         </div>
       </section>

@@ -232,7 +232,7 @@ impl Database {
                     );",
                 );
 
-                // MON-66: archive lifecycle for shadows. NULL = active.
+                // MON-66: archive lifecycle for agents. NULL = active.
                 let _ = conn.execute_batch(
                     "ALTER TABLE agents ADD COLUMN archived_at TEXT;",
                 );
@@ -496,11 +496,11 @@ impl Database {
                         ON classifications(message_id);",
                 );
 
-                // MON-98: Captain identity (L1a) and shadow identity (L1b).
+                // MON-98: Supervisor identity (L1a) and agent identity (L1b).
                 // `captain` is a singleton (CHECK id = 1). `current_version`
                 // is an unguarded integer pointer (no FK) to sidestep the
                 // circular-reference bootstrapping problem; integrity is
-                // enforced in `ensure_captain_bootstrap`. Shadow versions are
+                // enforced in `ensure_captain_bootstrap`. Agent versions are
                 // append-only rows keyed by agent; `agents.identity_version_id`
                 // is the live pointer.
                 let _ = conn.execute_batch(
@@ -533,10 +533,10 @@ impl Database {
                     "ALTER TABLE agents ADD COLUMN identity_version_id INTEGER;",
                 );
 
-                // MON-99: P2 — shadow memory (L3 knowledge tree).
+                // MON-99: P2 — agent memory (L3 knowledge tree).
                 // `memories` already exists (initial schema); extend it with
                 // P2 columns via ALTER TABLE (idempotent — errors are swallowed).
-                // `memory_keeper_runs` is provenance per Keeper invocation.
+                // `memory_keeper_runs` is provenance per Curator invocation.
                 // `memories_fts` mirrors title+summary+content for BM25 retrieval.
                 for col_stmt in &[
                     "ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'self'",
@@ -592,7 +592,7 @@ impl Database {
                 // Slice A; the structured shape (summary/outcome/decisions/
                 // learned/artifacts/open_threads/reflection/grade) lands with
                 // the sidecar tool in Slice B. `distilled_by_keeper_run_id`
-                // is populated by Slice D when the Keeper consumes the report.
+                // is populated by Slice D when the Curator consumes the report.
                 let _ = conn.execute_batch(
                     "CREATE TABLE IF NOT EXISTS objective_reports (
                         id TEXT PRIMARY KEY,

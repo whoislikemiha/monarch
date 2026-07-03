@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * v2 command-center shell. Owns boot, global keybindings, zoom, and the
-   * persistent frame (TopBar · FleetRail · PanelHost · notifications). All
+   * persistent frame (TopBar · AgentRail · PanelHost · notifications). All
    * surface content lives in the views/workspace/board/panels trees; this file
    * stays thin.
    *
@@ -13,7 +13,7 @@
   import "./lib/ui/styles/atoms.css";
 
   import TopBar from "./lib/shell/TopBar.svelte";
-  import FleetRail from "./lib/shell/FleetRail.svelte";
+  import AgentRail from "./lib/shell/AgentRail.svelte";
   import PanelHost from "./lib/shell/PanelHost.svelte";
   import NotificationStack from "./lib/NotificationStack.svelte";
   import SpawnDialog from "./lib/SpawnDialog.svelte";
@@ -161,7 +161,7 @@
 <main class="shell">
   <TopBar {crumbs} />
   <div class="body">
-    <FleetRail onextract={() => (showSpawnDialog = true)} />
+    <AgentRail onextract={() => (showSpawnDialog = true)} />
     <PanelHost />
   </div>
 </main>

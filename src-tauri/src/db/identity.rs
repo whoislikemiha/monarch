@@ -7,7 +7,7 @@ use super::Database;
 
 // ---- Row types ----
 
-/// MON-98: Current captain identity (L1a). Returned by `get_captain_identity`.
+/// MON-98: Current supervisor identity (L1a). Returned by `get_captain_identity`.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptainIdentityRow {
@@ -18,7 +18,7 @@ pub struct CaptainIdentityRow {
     pub edit_note: Option<String>,
 }
 
-/// MON-98: Current shadow identity version (L1b). Returned by `get_shadow_identity`.
+/// MON-98: Current agent identity version (L1b). Returned by `get_shadow_identity`.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ShadowIdentityRow {
@@ -33,13 +33,13 @@ pub struct ShadowIdentityRow {
 // ---- impl Database ----
 
 impl Database {
-    /// MON-98: Ensure the captain singleton row exists with at least one
+    /// MON-98: Ensure the supervisor singleton row exists with at least one
     /// identity version. Called once from `Database::new` after `init_schema`.
     pub async fn ensure_captain_bootstrap(&self) -> Result<(), MonarchError> {
         self.conn
             .call(|conn| {
                 conn.execute(
-                    "INSERT OR IGNORE INTO captain (id, name, current_version) VALUES (1, 'Captain', NULL)",
+                    "INSERT OR IGNORE INTO captain (id, name, current_version) VALUES (1, 'Supervisor', NULL)",
                     [],
                 )?;
                 let needs_seed: bool = conn
@@ -67,7 +67,7 @@ impl Database {
         Ok(())
     }
 
-    // ---- Captain identity (L1a) ----
+    // ---- Supervisor identity (L1a) ----
 
     pub async fn get_captain_identity_internal(&self) -> Result<CaptainIdentityRow, MonarchError> {
         self.conn
@@ -152,7 +152,7 @@ impl Database {
             .map_err(MonarchError::from)
     }
 
-    // ---- Shadow identity (L1b) ----
+    // ---- Agent identity (L1b) ----
 
     pub async fn get_shadow_identity_internal(
         &self,

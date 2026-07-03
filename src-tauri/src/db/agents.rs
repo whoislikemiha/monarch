@@ -28,7 +28,7 @@ pub struct AgentRow {
     pub updated_at: String,
     /// MON-66: ISO timestamp when the agent was archived, or None if active.
     /// Archive preserves the DB row (history, sessions, stats) but removes
-    /// the shadow from the default active roster. See `archive_agent_internal`.
+    /// the agent from the default active roster. See `archive_agent_internal`.
     pub archived_at: Option<String>,
     /// MON-73: "image" | null (null = monogram fallback).
     pub avatar_type: Option<String>,

@@ -54,7 +54,7 @@
 
 <div class="tree">
   {#if roots.length === 0}
-    <div class="empty mono">No campaign yet for this shadow.</div>
+    <div class="empty mono">No campaign yet for this agent.</div>
   {/if}
   {#each roots as root (root.id)}
     {@const p = progress(root)}

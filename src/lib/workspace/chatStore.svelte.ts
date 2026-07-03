@@ -1,6 +1,6 @@
 /**
  * Workspace tiles — the timeline and any number of chat panes, as one ordered,
- * arrangeable stack. The captain drags tiles to reorder them, resizes them, and
+ * arrangeable stack. The supervisor drags tiles to reorder them, resizes them, and
  * closes chats; the timeline is just another tile (id = TIMELINE_TILE) so it can
  * be moved among the chats.
  *

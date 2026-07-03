@@ -9,7 +9,7 @@
   }
 
   const BUILT_IN_PRESETS: AvatarPreset[] = [
-    { label: "Shadow", path: "/avatars/shadow_silhouette.svg" },
+    { label: "Silhouette", path: "/avatars/agent_silhouette.svg" },
   ];
 
   let {

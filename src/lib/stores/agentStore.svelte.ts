@@ -128,7 +128,7 @@ class AgentStore {
   openTabs: string[] = $state([]);
   activeTabId: string | null = $state(null);
   sidebarCollapsed = $state(false);
-  /** MON-66: Active / All toggle for the sidebar. Active hides archived shadows. */
+  /** MON-66: Active / All toggle for the sidebar. Active hides archived agents. */
   sidebarShowAll = $state(false);
 
   // --- Private helpers / counters --------------------------------------
@@ -238,7 +238,7 @@ class AgentStore {
           stderrLines: [],
           contextWindow: row.contextWindow || undefined,
           shadow: row.shadowName
-            ? { shadowName: row.shadowName, shadowTitle: row.shadowTitle || "", shadowGrade: (row.shadowGrade as any) || "Knight" }
+            ? { shadowName: row.shadowName, shadowTitle: row.shadowTitle || "", shadowGrade: (row.shadowGrade as any) || "Junior" }
             : undefined,
           sessionId: latestSession?.id,
           sessions: sessions.map((s) => ({
@@ -264,12 +264,12 @@ class AgentStore {
       const agentIdSet = new Set(loaded.map((a) => a.id));
       this.openTabs = this.openTabs.filter((id) => agentIdSet.has(id));
       // If the active agent got filtered out (e.g. flipped to Active mode
-      // while focused on an archived shadow), fall back to the first visible.
+      // while focused on an archived agent), fall back to the first visible.
       if (this.activeTabId && !agentIdSet.has(this.activeTabId)) {
         this.activeTabId = loaded.find((a) => !a.archivedAt)?.id ?? null;
       }
       // Default-select the first non-archived agent when nothing else is active,
-      // so a fresh start lands on a usable shadow instead of a dismissed one.
+      // so a fresh start lands on a usable agent instead of an archived one.
       if (!this.activeTabId) {
         this.activeTabId = loaded.find((a) => !a.archivedAt)?.id ?? null;
       }
@@ -392,7 +392,7 @@ class AgentStore {
     this.counter++;
     const id = options?.agentId || `agent-${Date.now()}-${this.counter}`;
     const name = config?.shadow?.shadowName || `Agent ${this.counter}`;
-    const cwd = config?.cwd || "/home/miha";
+    const cwd = config?.cwd || "";
     const sessionId = options?.sessionId || `session-${Date.now()}-${this.counter}`;
     const agent: Agent = {
       id,
@@ -677,7 +677,7 @@ class AgentStore {
         provider: agent.provider || null,
         model: agent.model || null,
         thinkingLevel: agent.thinkingLevel || null,
-        cwd: agent.cwd || "/home/miha",
+        cwd: agent.cwd || "",
         shadow: agent.shadow ?? null,
         contextWindow: agent.contextWindow ?? null,
       });
@@ -760,7 +760,7 @@ class AgentStore {
   }
 
   /**
-   * MON-73: Persist user edits to an agent (name, shadow identity, model,
+   * MON-73: Persist user edits to an agent (name, agent identity, model,
    * provider, thinking level, cwd, avatar) and reflect them in the in-memory
    * roster immediately.
    */
@@ -803,7 +803,7 @@ class AgentStore {
           ? {
               shadowName: payload.shadowName,
               shadowTitle: payload.shadowTitle || payload.shadowName,
-              shadowGrade: (payload.shadowGrade as any) || "Knight",
+              shadowGrade: (payload.shadowGrade as any) || "Junior",
             }
           : undefined,
         avatarType: payload.avatarType,
@@ -851,8 +851,8 @@ class AgentStore {
   }
 
   /**
-   * MON-66 dismiss primitive. Kills the runtime, removes from the active
-   * roster, and archives the DB row (preserving history for `Summon back`).
+   * MON-66 archive primitive. Kills the runtime, removes from the active
+   * roster, and archives the DB row (preserving history for `Resume`).
    * The confirm dialog lives in App.svelte; this assumes the user already
    * said yes.
    */
@@ -880,9 +880,9 @@ class AgentStore {
   }
 
   /**
-   * MON-66 summon-back. Unarchive without confirm — the operation is
-   * trivially reversible (user can dismiss again), unlike delete. Only
-   * updates the current in-memory row; the shadow is not respawned (it
+   * MON-66 resume. Unarchive without confirm — the operation is
+   * trivially reversible (user can archive again), unlike delete. Only
+   * updates the current in-memory row; the agent is not respawned (it
    * stays `stopped` until the user explicitly re-engages it).
    */
   async summonAgent(id: string): Promise<void> {
@@ -890,7 +890,7 @@ class AgentStore {
       await invoke("db_unarchive_agent", { agentId: id });
       this.agents = this.agents.map((a) => (a.id === id ? { ...a, archivedAt: undefined } : a));
     } catch (e) {
-      console.error("Failed to summon agent:", e);
+      console.error("Failed to resume agent:", e);
     }
   }
 

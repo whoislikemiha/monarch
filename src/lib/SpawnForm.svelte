@@ -27,8 +27,8 @@
   let contextWindow: number | undefined = $state(undefined);
   let modelsStatus = $state<ModelsStatus>({ loading: false, error: null, count: 0 });
 
-  // Extract is gated on provider + model only. Loading/error states drive the
-  // hint copy but do not themselves disable the button — see MON-79.
+  // Creating an agent is gated on provider + model only. Loading/error states
+  // drive the hint copy but do not themselves disable the button — see MON-79.
   let canSpawn = $derived.by(() => {
     if (!provider) return false;
     if (provider === "openai-codex") return true;
@@ -65,13 +65,13 @@
       .catch(() => {});
   });
 
-  let cwd = $state("/home/miha");
+  let cwd = $state("");
   let detectedProject: DetectedProject | null = $state(null);
 
-  // Shadow identity
+  // Agent identity
   let shadowName = $state("");
   let shadowTitle = $state("");
-  let shadowGrade: ShadowGrade = $state("Knight");
+  let shadowGrade: ShadowGrade = $state("Junior");
 
   let saveAsTemplate = $state(false);
 
@@ -145,7 +145,7 @@
       contextWindow,
     };
 
-    // Attach shadow identity if a name is provided
+    // Attach agent identity if a name is provided
     const sName = shadowName.trim();
     if (sName) {
       config.shadow = {
@@ -208,7 +208,7 @@
       id="cwd"
       type="text"
       bind:value={cwd}
-      placeholder="/home/miha/project"
+      placeholder="/path/to/project"
     />
     <button class="browse-btn" onclick={browseFolder} title="Browse">
       ...
@@ -230,20 +230,20 @@
 {/if}
 
 <div class="section">
-  <span class="label">Shadow Identity</span>
+  <span class="label">Agent Identity</span>
   <div class="row">
     <div class="field">
-      <label class="label" for="shadow-name">Name</label>
+      <label class="label" for="agent-name">Name</label>
       <input
-        id="shadow-name"
+        id="agent-name"
         type="text"
         bind:value={shadowName}
-        placeholder="e.g. Igris, Beru, Tusk"
+        placeholder="e.g. Atlas, Nova, Sage"
       />
     </div>
     <div class="field">
-      <label class="label" for="shadow-grade">Grade</label>
-      <select id="shadow-grade" bind:value={shadowGrade}>
+      <label class="label" for="agent-grade">Grade</label>
+      <select id="agent-grade" bind:value={shadowGrade}>
         {#each SHADOW_GRADES as grade}
           <option value={grade}>{grade}</option>
         {/each}
@@ -251,17 +251,17 @@
     </div>
   </div>
   <div class="field">
-    <label class="label" for="shadow-title">Title</label>
+    <label class="label" for="agent-title">Title</label>
     <input
-      id="shadow-title"
+      id="agent-title"
       type="text"
       bind:value={shadowTitle}
-      placeholder="e.g. Shadow Commander, The First Shadow"
+      placeholder="e.g. Backend Engineer, Tech Lead"
     />
   </div>
 </div>
 
-<label class="template-save-check" title={shadowName.trim() ? "" : "Set a shadow name to enable"}>
+<label class="template-save-check" title={shadowName.trim() ? "" : "Set an agent name to enable"}>
   <input
     type="checkbox"
     bind:checked={saveAsTemplate}
@@ -280,7 +280,7 @@
 <div class="actions">
   <button class="btn-cancel" onclick={oncancel}>Cancel</button>
   <button class="btn-spawn" onclick={handleSpawn} disabled={!canSpawn}>
-    Extract
+    Create agent
     <span class="shortcut">Ctrl+Enter</span>
   </button>
 </div>

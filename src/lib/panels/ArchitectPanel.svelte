@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Architect panel — placeholder. The Architect (per-project planning shadow:
+   * Architect panel — placeholder. The Architect (per-project planning agent:
    * triage + reasoning trail + proposed objectives) has no backend yet, so this
    * is a deliberate "coming online" empty state, registered now so the rail and
    * layout reserve its place.

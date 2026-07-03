@@ -12,7 +12,7 @@ use super::manager::{AgentManagerInner, AgentStateEntry, InternalDispatch};
 use super::persist::PersistCommand;
 use super::WsBroadcast;
 
-/// MON-100: render the Keeper's input slice as plain text. The Keeper
+/// MON-100: render the Curator's input slice as plain text. The Curator
 /// system prompt teaches the model the section structure (PRIOR SUMMARY /
 /// RELATED MEMORIES / RECENT ACTIVITY); this helper produces that layout
 /// verbatim so the prompt text and the rendering stay in lockstep.
@@ -40,7 +40,7 @@ pub(super) fn render_keeper_slice(
     }
     // P6 Slice D (MON-122): the executor's first-person report on the closing
     // objective, included only for objective-close runs. Placed before the raw stream
-    // so the Keeper reads the executor's own framing first; the JSON shape is
+    // so the Curator reads the executor's own framing first; the JSON shape is
     // kept verbatim (the report tool already trims field sizes) and the LLM
     // is told via the section header that this is first-person.
     if let Some(report) = objective_report {
@@ -64,7 +64,7 @@ pub(super) fn render_keeper_slice(
     s
 }
 
-/// MON-100: enqueue a Keeper run when the running token sum crosses a
+/// MON-100: enqueue a Curator run when the running token sum crosses a
 /// threshold at the right boundary. Soft threshold fires at `TurnEnd` (next
 /// natural breakpoint after crossing); hard threshold fires at `MessageEnd`
 /// regardless. Reads thresholds from `memory.toml` per call — the file is
@@ -188,7 +188,7 @@ pub(super) async fn handle_keeper_result(
     let summary = compaction_summary.unwrap_or_default();
     let session_id = inner.lock().session_map.get(agent_id).cloned();
 
-    // Resolve the Keeper run provenance once. Objective-close runs must attach
+    // Resolve the Curator run provenance once. Objective-close runs must attach
     // memories/events to the objective that closed, even if the agent has moved
     // on and auto-created a new current objective before the model returns.
     let run_row = db.get_keeper_run_internal(run_id).await.ok().flatten();
@@ -257,7 +257,7 @@ pub(super) async fn handle_keeper_result(
     }
 
     // P6 Slice D (MON-122): attribute the closing objective's first-person report
-    // to this Keeper run. Objective-close runs only; other triggers leave the
+    // to this Curator run. Objective-close runs only; other triggers leave the
     // report attribution alone. No-op when no report row exists for the objective
     // — logged inside the apply path so dispatch here can stay declarative.
     if trigger == "objective_close" {
@@ -309,9 +309,9 @@ pub(super) async fn handle_keeper_result(
         })
         .await;
 
-    // MON-123: visible signal in the chat thread. The Keeper no longer
+    // MON-123: visible signal in the chat thread. The Curator no longer
     // rewrites live context (Pi's native compaction owns the window now); this
-    // status row confirms the Keeper succeeded and N memories landed in L3.
+    // status row confirms the Curator succeeded and N memories landed in L3.
     let memories_label = if claims.len() == 1 {
         "1 memory".to_string()
     } else {
@@ -322,7 +322,7 @@ pub(super) async fn handle_keeper_result(
         ws_tx,
         live_states,
         agent_id,
-        format!("◈ Keeper distilled {} (run #{})", memories_label, run_id),
+        format!("◈ Curator distilled {} (run #{})", memories_label, run_id),
     )
     .await;
 }

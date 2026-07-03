@@ -4,7 +4,7 @@
 
   let { agentContext }: ToolProps = $props();
 
-  // ── Captain state (global) ────────────────────────────────────────────────
+  // ── Supervisor state (global) ────────────────────────────────────────────
   let captainName = $state("");
   let captainPayload = $state("");
   let captainDirty = $state(false);
@@ -12,7 +12,7 @@
   let captainError = $state<string | null>(null);
   let captainLoading = $state(false);
 
-  // ── Shadow state (per-agent) ──────────────────────────────────────────────
+  // ── Agent state (per-agent) ──────────────────────────────────────────────
   let shadowPayload = $state("");
   let shadowDirty = $state(false);
   let shadowSaving = $state(false);
@@ -33,7 +33,7 @@
   const overBudget = $derived(combinedTokens > COMBINED_TOKEN_CAP);
   const nearBudget = $derived(combinedTokens > TOKEN_WARN_THRESHOLD && !overBudget);
 
-  // ── Load captain identity on mount ───────────────────────────────────────
+  // ── Load supervisor identity on mount ────────────────────────────────────
   async function loadCaptain() {
     captainLoading = true;
     captainError = null;
@@ -54,7 +54,7 @@
     }
   }
 
-  // ── Load shadow identity when agent changes ───────────────────────────────
+  // ── Load agent identity when agent changes ───────────────────────────────
   async function loadShadow(agentId: string) {
     shadowLoading = true;
     shadowError = null;
@@ -91,7 +91,7 @@
     captainError = null;
     try {
       await invoke("upsert_captain_identity", {
-        req: { name: captainName || "Captain", payload: captainPayload, editNote: null },
+        req: { name: captainName || "Supervisor", payload: captainPayload, editNote: null },
       });
       captainDirty = false;
     } catch (e) {
@@ -138,28 +138,28 @@
     <p class="budget-warning warn-text">Approaching limit.</p>
   {/if}
 
-  <!-- ── Captain identity (L1a) ─────────────────────────────────────────── -->
+  <!-- ── Supervisor identity (L1a) ──────────────────────────────────────── -->
   <div class="section">
-    <div class="section-title">Captain (L1a — global)</div>
+    <div class="section-title">Supervisor (L1a — global)</div>
 
     {#if captainLoading}
       <p class="empty">Loading…</p>
     {:else}
       <div class="field-row">
-        <label class="field-label" for="captain-name">Name</label>
+        <label class="field-label" for="supervisor-name">Name</label>
         <input
-          id="captain-name"
+          id="supervisor-name"
           class="field-input"
           type="text"
           bind:value={captainName}
           oninput={onCaptainInput}
-          placeholder="Captain"
+          placeholder="Supervisor"
         />
       </div>
 
-      <label class="field-label textarea-label" for="captain-payload">Identity</label>
+      <label class="field-label textarea-label" for="supervisor-payload">Identity</label>
       <textarea
-        id="captain-payload"
+        id="supervisor-payload"
         class="payload-area"
         rows={6}
         bind:value={captainPayload}
@@ -184,23 +184,23 @@
     {/if}
   </div>
 
-  <!-- ── Shadow identity (L1b) ──────────────────────────────────────────── -->
+  <!-- ── Agent identity (L1b) ───────────────────────────────────────────── -->
   <div class="section">
-    <div class="section-title">Shadow (L1b — this agent)</div>
+    <div class="section-title">Agent (L1b — this agent)</div>
 
     {#if !agentContext}
       <p class="empty">No agent selected.</p>
     {:else if shadowLoading}
       <p class="empty">Loading…</p>
     {:else}
-      <label class="field-label textarea-label" for="shadow-payload">Identity</label>
+      <label class="field-label textarea-label" for="agent-payload">Identity</label>
       <textarea
-        id="shadow-payload"
+        id="agent-payload"
         class="payload-area"
         rows={6}
         bind:value={shadowPayload}
         oninput={onShadowInput}
-        placeholder="Shadow-specific traits, oath, specialties…"
+        placeholder="Agent-specific traits, persona, specialties…"
       ></textarea>
 
       <div class="token-hint">~{shadowTokens} tokens</div>

@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * One shadow in the fleet rail: avatar (grade ring + presence pip) · name +
-   * rank · status + spend · full model name · stop/dismiss control.
+   * One agent in the roster rail: avatar (grade ring + presence pip) · name +
+   * level · status + spend · full model name · stop/archive control.
    */
   import type { Agent } from "$lib/types";
   import { agentStore } from "$lib/stores/agentStore.svelte";
@@ -12,10 +12,10 @@
   interface Props {
     agent: Agent;
     oncontextmenu?: (e: MouseEvent, agent: Agent) => void;
-    ondismiss?: (agent: Agent) => void;
-    onsummon?: (agent: Agent) => void;
+    onarchive?: (agent: Agent) => void;
+    onresume?: (agent: Agent) => void;
   }
-  let { agent, oncontextmenu, ondismiss, onsummon }: Props = $props();
+  let { agent, oncontextmenu, onarchive, onresume }: Props = $props();
 
   let live = $derived(liveAgentStore.byAgent.get(agent.id));
   let streaming = $derived(!!live?.isStreaming);
@@ -58,9 +58,9 @@
           <svg viewBox="0 0 24 24" width="9" height="9" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5" /></svg>
         </button>
       {:else if archived}
-        <button class="act rowbtn" title="Summon back" aria-label="Summon {agent.name}" onclick={(e) => { e.stopPropagation(); onsummon?.(agent); }}>↺</button>
+        <button class="act rowbtn" title="Resume" aria-label="Resume {agent.name}" onclick={(e) => { e.stopPropagation(); onresume?.(agent); }}>↺</button>
       {:else}
-        <button class="act rowbtn dismiss" title="Dismiss" aria-label="Dismiss {agent.name}" onclick={(e) => { e.stopPropagation(); ondismiss?.(agent); }}>×</button>
+        <button class="act rowbtn archive" title="Archive" aria-label="Archive {agent.name}" onclick={(e) => { e.stopPropagation(); onarchive?.(agent); }}>×</button>
       {/if}
     </div>
     {#if model}<div class="model mono" title={model}>{model}</div>{/if}
@@ -125,5 +125,5 @@
   }
   .row:hover .rowbtn { opacity: 1; }
   .rowbtn:hover { background: var(--bg-raised); color: var(--text-primary); }
-  .rowbtn.dismiss:hover { color: var(--status-error); }
+  .rowbtn.archive:hover { color: var(--status-error); }
 </style>

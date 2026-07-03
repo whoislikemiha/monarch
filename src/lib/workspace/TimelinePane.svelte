@@ -1,10 +1,10 @@
 <script lang="ts">
   /**
    * The work TIMELINE — the heart of the workspace. A live, narrated view of
-   * what the shadow is doing AND a scrollable record of everything it did:
+   * what the agent is doing AND a scrollable record of everything it did:
    * NOW + plan up top, then the stream of coherent actions (newest-first)
    * grouped into objective segments, paged from `db_list_agent_timeline`
-   * (MON-124). ~20 entries preload; older pages lazy-load as the captain
+   * (MON-124). ~20 entries preload; older pages lazy-load as the user
    * scrolls toward the past. The active card live-merges running tools from
    * the agent's in-flight state so the timeline never lags the work.
    */
@@ -50,7 +50,7 @@
       : [],
   );
 
-  /** Metadata for the objective the shadow is going after right now — feed
+  /** Metadata for the objective the agent is going after right now — feed
    * cache first, objective trees as fallback. */
   let currentObjective = $derived.by(() => {
     const oid = workingMemory?.currentObjectiveId;
@@ -211,7 +211,7 @@
     pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
   }
   $effect(() => {
-    // Re-run on stream growth; honor the captain's scroll position.
+    // Re-run on stream growth; honor the user's scroll position.
     segments;
     if (!pinned) return;
     tick().then(() => {
@@ -371,7 +371,7 @@
     </div>
   {:else}
     <div class="empty mono">
-      No work yet. Ask this shadow to do something and watch it narrate here.
+      No work yet. Ask this agent to do something and watch it narrate here.
     </div>
   {/if}
 

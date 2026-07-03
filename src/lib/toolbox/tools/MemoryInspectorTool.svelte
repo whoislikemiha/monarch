@@ -6,8 +6,8 @@
    *
    * Read-only in Slice A. No edit / archive / promote affordances —
    * those are P12. Selecting a memory shows full provenance (source
-   * objective, file refs, supersedes chain) so the captain can verify the
-   * Keeper's writes once Slice B (MON-100) lands.
+   * objective, file refs, supersedes chain) so the supervisor can verify the
+   * Curator's writes once Slice B (MON-100) lands.
    */
   import { invoke } from "$lib/api";
   import type { MemoryRow } from "$lib/bindings";
@@ -21,6 +21,15 @@
   let selectedId = $state<number | null>(null);
 
   const SCOPES = ["self", "project", "captain"] as const;
+
+  // Display labels for the persisted scope values (the "captain" scope value is
+  // wire/DB-coupled; only its human-readable label is neutralized here).
+  const SCOPE_LABELS: Record<string, string> = {
+    self: "self",
+    project: "project",
+    captain: "supervisor",
+  };
+  const scopeLabel = (scope: string): string => SCOPE_LABELS[scope] ?? scope;
 
   let byScope = $derived.by(() => {
     const map: Record<string, MemoryRow[]> = {
@@ -137,8 +146,8 @@
       <aside class="tree">
         {#if memories.length === 0 && !loading}
           <p class="empty">
-            No memories yet. The Keeper will write some when a objective closes
-            (MON-100). For now you can use <code>memory_smoke_insert</code>
+            No memories yet. The Curator will write some when an objective closes.
+            For now you can use <code>memory_smoke_insert</code>
             from the dev console to populate one.
           </p>
         {:else}
@@ -146,7 +155,7 @@
             {@const roots = rootsForScope(scope)}
             <section class="scope">
               <div class="scope-title">
-                {scope}
+                {scopeLabel(scope)}
                 <span class="scope-count">{byScope[scope]?.length ?? 0}</span>
               </div>
               {#if roots.length === 0}
@@ -168,7 +177,7 @@
           <div class="detail-header">
             <h3 class="detail-title">{selected.title || "(untitled)"}</h3>
             <div class="badges">
-              <span class="badge badge-scope">{selected.scope}</span>
+              <span class="badge badge-scope">{scopeLabel(selected.scope)}</span>
               {#if selected.kind}
                 <span class="badge badge-kind">{selected.kind}</span>
               {/if}

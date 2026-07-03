@@ -1,6 +1,6 @@
 /**
- * Maps the shadow rank ladder onto the design-system E→S grade ramp.
- * Rank names are the product vocabulary; the E–S letters + `--grade-*` tokens
+ * Maps the agent seniority ladder onto the design-system E→S grade ramp.
+ * Seniority tiers are the product vocabulary; the E–S letters + `--grade-*` tokens
  * are the visual rarity ladder (see global.css / theme files).
  */
 import type { ShadowGrade } from "$lib/types";
@@ -8,13 +8,13 @@ import type { ShadowGrade } from "$lib/types";
 export type GradeLetter = "E" | "D" | "C" | "B" | "A" | "S";
 
 const RANK_TO_GRADE: Record<ShadowGrade, GradeLetter> = {
-  Normal: "E",
-  Elite: "D",
-  Knight: "C",
-  "Elite Knight": "B",
-  General: "A",
-  Marshal: "S",
-  "Grand Marshal": "S",
+  Intern: "E",
+  Trainee: "D",
+  Junior: "C",
+  Mid: "B",
+  Senior: "A",
+  Staff: "S",
+  Principal: "S",
 };
 
 export function gradeLetter(rank: ShadowGrade | undefined | null): GradeLetter {

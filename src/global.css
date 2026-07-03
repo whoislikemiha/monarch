@@ -18,8 +18,8 @@
   --text-muted: #8f7aa8;
   --text-on-accent: #140d22;
 
-  /* Shadow (agent) name — intentionally fixed purple across all themes */
-  --shadow-name: #be95ff;
+  /* Agent name — intentionally fixed purple across all themes */
+  --agent-name: #be95ff;
 
   /* Accent */
   --accent: #be95ff;

@@ -2,7 +2,7 @@
 //!
 //! Validated by MON-91 spike (instant-distance + ort, recall@10 = 1.000 on
 //! 10k real embeddings, p99 query latency 1.26 ms). The index is rebuilt
-//! from DB embeddings on cold start and after each Keeper run. No background
+//! from DB embeddings on cold start and after each Curator run. No background
 //! rebuild worker (P3c) or incremental insert (P3d) — P2 volumes are small
 //! enough for brute full-rebuild.
 //!
@@ -151,7 +151,7 @@ impl MemoryIndex {
     }
 
     /// Rebuild the in-process HNSW index from raw (memory_id, embedding_blob) pairs.
-    /// Called at startup (if embedder is ready) and after each Keeper run.
+    /// Called at startup (if embedder is ready) and after each Curator run.
     pub async fn rebuild(&self, data: Vec<(i64, Vec<u8>)>) -> Result<(), MonarchError> {
         let index = self.index.clone();
         tokio::task::spawn_blocking(move || {

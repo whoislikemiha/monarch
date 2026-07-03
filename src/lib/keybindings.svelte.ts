@@ -33,7 +33,7 @@ const isMac =
 
 export const DEFAULT_BINDINGS: KeyBindingDef[] = [
   // Global
-  { id: "global.spawn-agent", label: "Extract shadow", group: "Global", defaultKeys: "Ctrl+n", editable: true },
+  { id: "global.spawn-agent", label: "Create agent", group: "Global", defaultKeys: "Ctrl+n", editable: true },
   { id: "global.settings", label: "Toggle settings", group: "Global", defaultKeys: "Ctrl+,", editable: true },
   { id: "global.toggle-sidebar", label: "Toggle sidebar", group: "Global", defaultKeys: "Ctrl+b", editable: true },
   { id: "global.focus-chat", label: "Focus chat input", group: "Global", defaultKeys: "/", editable: true, hint: "when not in input" },
@@ -60,7 +60,7 @@ export const DEFAULT_BINDINGS: KeyBindingDef[] = [
   { id: "zoom.scroll", label: "Zoom with scroll", group: "Zoom", defaultKeys: "Ctrl+Scroll", editable: false },
 
   // Dialog
-  { id: "dialog.confirm-spawn", label: "Confirm extract", group: "Dialog", defaultKeys: "Ctrl+Enter", editable: true },
+  { id: "dialog.confirm-spawn", label: "Confirm create", group: "Dialog", defaultKeys: "Ctrl+Enter", editable: true },
 ];
 
 // --- Reactive state ---

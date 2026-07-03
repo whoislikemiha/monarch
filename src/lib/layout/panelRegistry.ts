@@ -12,7 +12,7 @@ import type { ToolProps } from "$lib/toolbox/types";
 import IdentityTool from "$lib/toolbox/tools/IdentityTool.svelte";
 import MemoryInspectorTool from "$lib/toolbox/tools/MemoryInspectorTool.svelte";
 import ContextInspectorTool from "$lib/toolbox/tools/ContextInspectorTool.svelte";
-import ShadowStatsTool from "$lib/toolbox/tools/ShadowStatsTool.svelte";
+import AgentStatsTool from "$lib/toolbox/tools/AgentStatsTool.svelte";
 import ArchitectPanel from "$lib/panels/ArchitectPanel.svelte";
 import SessionHistoryTool from "$lib/toolbox/tools/SessionHistoryTool.svelte";
 
@@ -54,7 +54,7 @@ export const PANELS: PanelDef[] = [
     id: "stats",
     title: "Stats",
     icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`,
-    component: ShadowStatsTool,
+    component: AgentStatsTool,
   },
   {
     id: "identity",

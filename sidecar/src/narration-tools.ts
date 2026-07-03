@@ -102,7 +102,7 @@ export function createNarrationTools(agentId: string, emit: EmitFn) {
 			promptSnippet:
 				"record_decision(decision, rationale?) - record an explicit approach or scope decision.",
 			promptGuidelines: [
-				"Use record_decision only for decisions that would help the Monarch or a future agent understand why the work went this way.",
+				"Use record_decision only for decisions that would help the user or a future agent understand why the work went this way.",
 				"Do not use it as a scratchpad or to persist raw chain-of-thought; include rationale only when it is explicitly useful.",
 			],
 			parameters: Type.Object({

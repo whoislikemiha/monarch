@@ -4,7 +4,7 @@ import type { ObjectiveReportRow } from "../bindings";
 
 /**
  * P6 Slice C (MON-121): the parser is the load-bearing piece — if a payload
- * shape drifts the captain-facing report silently empties. These cover the
+ * shape drifts the supervisor-facing report silently empties. These cover the
  * wire shape the executor emits today plus the two degraded paths the parser
  * must survive (malformed JSON, missing fields).
  */

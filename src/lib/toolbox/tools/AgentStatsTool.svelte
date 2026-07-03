@@ -89,14 +89,14 @@
   {:else if stats}
     <!-- Identity + Experience -->
     <div class="section identity">
-      <div class="shadow-name">
+      <div class="agent-name">
         {agentContext.agent.shadow?.shadowName ?? agentContext.agent.name}
       </div>
       {#if agentContext.agent.shadow?.shadowTitle}
-        <div class="shadow-title">{agentContext.agent.shadow.shadowTitle}</div>
+        <div class="agent-title">{agentContext.agent.shadow.shadowTitle}</div>
       {/if}
       {#if agentContext.agent.shadow?.shadowGrade}
-        <div class="shadow-grade">{agentContext.agent.shadow.shadowGrade}</div>
+        <div class="agent-grade">{agentContext.agent.shadow.shadowGrade}</div>
       {/if}
       {#if primarySpec}
         <div class="primary-spec">{primarySpec} Specialist</div>
@@ -214,20 +214,20 @@
     border-bottom: 1px solid var(--border-subtle);
   }
 
-  .shadow-name {
+  .agent-name {
     font-size: 13px;
     font-weight: 600;
     color: var(--text-primary);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
-  .shadow-title {
+  .agent-title {
     font-size: 11px;
     color: var(--accent);
     font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   }
 
-  .shadow-grade {
+  .agent-grade {
     font-size: 10px;
     color: var(--text-muted);
   }

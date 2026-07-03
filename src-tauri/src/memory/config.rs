@@ -1,7 +1,7 @@
-//! MON-99: global memory / Keeper configuration, loaded from
+//! MON-99: global memory / Curator configuration, loaded from
 //! `~/.config/monarch/memory.toml`.
 //!
-//! The Keeper is disabled (no-op) when no keeper model is configured.
+//! The Curator is disabled (no-op) when no keeper model is configured.
 //! Embedding defaults to `bge-small-en-v1.5` with lazy model download to
 //! `~/.config/monarch/models/`.
 //!
@@ -28,13 +28,13 @@ pub const DEFAULT_EMBEDDING_MODEL_ID: &str = "bge-small-en-v1.5";
 pub const DEFAULT_TOP_K: u32 = 5;
 /// MON-100: defaults for the continuous-compaction trigger. Soft fires at the
 /// next `turn_end` once the running token sum since the last successful
-/// Keeper run crosses this; hard fires at any `message_end` once it crosses
+/// Curator run crosses this; hard fires at any `message_end` once it crosses
 /// `DEFAULT_HARD_THRESHOLD_TOKENS`. Anthropic context windows are 1M for
 /// Sonnet/Opus and 200k for Haiku, so 25k/30k stays comfortably below either.
 pub const DEFAULT_SOFT_THRESHOLD_TOKENS: u32 = 25_000;
 pub const DEFAULT_HARD_THRESHOLD_TOKENS: u32 = 30_000;
 
-/// MON-100: system prompt shipped with every Keeper run. Lives in code (not
+/// MON-100: system prompt shipped with every Curator run. Lives in code (not
 /// `memory.toml`) so it evolves with the product the same way
 /// `DEFAULT_CLASSIFIER_SYSTEM_PROMPT` does — the settings UI surfaces it
 /// read-only via `ResolvedMemoryConfig.keeper_system_prompt`.
@@ -43,7 +43,7 @@ pub const DEFAULT_HARD_THRESHOLD_TOKENS: u32 = 30_000;
 /// Keeper produces per tick", § "Atomic claims", and § "What NOT to capture".
 /// P2 ships single-tier (no merge/supersede thresholds) — every claim inserts;
 /// dedupe lands after MON-93/94 calibrate cosine boundaries.
-pub const DEFAULT_KEEPER_SYSTEM_PROMPT: &str = "You are the Keeper — the cognitive metabolism of an AI shadow agent. You read a slice of the shadow's recent activity (raw messages, tool calls, dialogue) and produce two outputs: a compaction summary that will replace that slice in the shadow's working context, and a list of atomic claims worth remembering for the long term.
+pub const DEFAULT_KEEPER_SYSTEM_PROMPT: &str = "You are the Curator — the cognitive metabolism of an AI agent. You read a slice of the agent's recent activity (raw messages, tool calls, dialogue) and produce two outputs: a compaction summary that will replace that slice in the agent's working context, and a list of atomic claims worth remembering for the long term.
 
 You will be given:
 
@@ -54,7 +54,7 @@ You will be given:
 OUTPUT — exactly one JSON object, no prose, no code fences:
 
 {
-  \"compaction_summary\": \"<2-6 sentences, third-person, capturing what the shadow did, decided, learned, and what is still open. This text will be shown to the shadow as its only memory of the slice — it must be enough to continue work coherently.>\",
+  \"compaction_summary\": \"<2-6 sentences, third-person, capturing what the agent did, decided, learned, and what is still open. This text will be shown to the agent as its only memory of the slice — it must be enough to continue work coherently.>\",
   \"claims\": [
     {
       \"title\": \"<3-8 words, the claim's heading>\",
@@ -68,14 +68,14 @@ OUTPUT — exactly one JSON object, no prose, no code fences:
 ATOMIC CLAIM RULES — each claim must be:
 
 - A single falsifiable assertion. \"Auth is important\" is not a claim; \"Session token TTL is 24 hours\" is.
-- Self-contained. A future shadow reading just this claim, with no neighbors, must understand it.
+- Self-contained. A future agent reading just this claim, with no neighbors, must understand it.
 - One assertion. If you find yourself writing \"X and Y\", split into two claims.
 
 WHAT TO CAPTURE:
 
 - Decisions made, with the rationale (\"Chose 24h TTL over 1h because compliance requires ≥24h\").
 - Conventions discovered (\"This codebase uses Vitest, not Jest\").
-- Preferences expressed by the captain (\"Captain prefers terse responses\").
+- Preferences expressed by the supervisor (\"The supervisor prefers terse responses\").
 - Corrections received (\"Don't use tauri::invoke directly; route through src/lib/api.ts\").
 - Constraints learned (\"Compliance requires ≥24h token TTL\").
 - Landmarks of progress (\"Shipped MON-82 on 2026-04-22\").
@@ -89,9 +89,9 @@ WHAT NOT TO CAPTURE — most distillation failures are over-capture, not under-c
 - Routine work observations (\"Read auth.rs\"). Routine ≠ learning.
 - Anything already covered by RELATED MEMORIES — if a candidate matches an existing claim, omit it.
 
-Negative test: would a shadow benefit from finding this claim again in 6 months? If no, omit.
+Negative test: would an agent benefit from finding this claim again in 6 months? If no, omit.
 
-If the slice produced no durable learning, return an empty `claims` array — that is correct. The compaction summary still goes out so the shadow has continuity.";
+If the slice produced no durable learning, return an empty `claims` array — that is correct. The compaction summary still goes out so the agent has continuity.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -123,7 +123,7 @@ pub struct MemoryConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedMemoryConfig {
-    /// If None, the Keeper is disabled.
+    /// If None, the Curator is disabled.
     pub keeper: Option<KeeperModelConfig>,
     pub embedding_model_id: String,
     pub models_dir: String,
@@ -133,8 +133,8 @@ pub struct ResolvedMemoryConfig {
     /// `DEFAULT_SOFT_THRESHOLD_TOKENS` / `DEFAULT_HARD_THRESHOLD_TOKENS`.
     pub soft_threshold_tokens: u32,
     pub hard_threshold_tokens: u32,
-    /// MON-100: read-only Keeper system prompt. Surfaced in MemorySettings UI;
-    /// captain-edited prompt is out of scope for Slice B (see plan §
+    /// MON-100: read-only Curator system prompt. Surfaced in MemorySettings UI;
+    /// supervisor-edited prompt is out of scope for Slice B (see plan §
     /// "Out of scope").
     pub keeper_system_prompt: String,
 }

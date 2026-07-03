@@ -238,7 +238,7 @@ pub fn run() {
     });
     let agent_mgr = Arc::new(AgentManager::new(database.clone(), memory_index.clone()));
     // MON-100: kick the internal dispatcher so the event-handler path can
-    // enqueue Keeper runs through the shared `Arc<AgentManager>`. Must come
+    // enqueue Curator runs through the shared `Arc<AgentManager>`. Must come
     // after wrapping in `Arc::new`.
     agent_mgr.start_dispatcher(database.clone());
     let model_cache = Arc::new(ModelCache::new());
