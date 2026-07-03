@@ -29,7 +29,7 @@
 
 <header class="topbar">
   <div class="brand">
-    <span class="mark" aria-hidden="true"></span>
+    <img class="mark" src="/brand-eyes.png" alt="" />
     <span class="word">monarch</span>
   </div>
 
@@ -94,11 +94,12 @@
     padding-right: var(--s2);
   }
   .brand .mark {
-    width: 12px;
-    height: 12px;
-    background: var(--accent);
+    width: 18px;
+    height: 18px;
     border-radius: var(--r-sm);
-    transform: rotate(45deg);
+    object-fit: cover;
+    display: block;
+    flex: none;
   }
   .brand .word {
     font-size: 13px;
