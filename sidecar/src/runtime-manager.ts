@@ -234,19 +234,23 @@ export class RuntimeManager {
 				unknown
 			>;
 			if (
-				forwarded.type === "message_end" &&
+				(forwarded.type === "message_start" || forwarded.type === "message_end") &&
 				typeof forwarded.message === "object" &&
 				forwarded.message !== null &&
 				(forwarded.message as { role?: string }).role === "user"
 			) {
-				const cid = this.popPendingClassification(agentId);
-				if (cid) {
-					forwarded = { ...forwarded, classificationId: cid };
+				if (forwarded.type === "message_end") {
+					const cid = this.popPendingClassification(agentId);
+					if (cid) {
+						forwarded = { ...forwarded, classificationId: cid };
+					}
 				}
-				// MON-130: the persisted user message is what the user typed —
-				// strip injected recall blocks from the FORWARDED COPY only
-				// (Pi's live context keeps them; deep-copy so we never mutate
-				// the session's own message object).
+				// MON-130: what the user typed is what Monarch shows and
+				// stores — strip injected recall blocks from the FORWARDED
+				// COPY only (Pi's live context keeps them; deep-copy so we
+				// never mutate the session's own message object). Both
+				// boundaries matter: the live chat bubble is built from
+				// message_start, persistence from message_end.
 				forwarded = {
 					...forwarded,
 					message: stripInjectedFromUserMessage(
