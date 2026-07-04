@@ -10,6 +10,8 @@
   import type { ActionView, ToolCallView } from "./timelineModel";
   import { elapsedClock, fmtDuration, relTime } from "./timelineModel";
   import EventIcon from "$lib/ui/EventIcon.svelte";
+  import ToolCallDetail from "./ToolCallDetail.svelte";
+  import { SvelteSet } from "svelte/reactivity";
 
   interface Props {
     action: ActionView;
@@ -32,6 +34,13 @@
   /** Active cards open by default; finished cards collapse to the summary. */
   let manualExpand = $state<boolean | null>(null);
   let expanded = $derived(manualExpand ?? phase === "active");
+
+  /** MON-130: per-tool expanded detail (full input/output on demand). */
+  let openTools = new SvelteSet<string>();
+  function toggleTool(toolCallId: string) {
+    if (openTools.has(toolCallId)) openTools.delete(toolCallId);
+    else openTools.add(toolCallId);
+  }
 
   let time = $derived(
     phase === "active" ? elapsedClock(action.startedAt, nowMs) : relTime(action.completedAt ?? action.startedAt, nowMs),
@@ -56,7 +65,7 @@
       aria-expanded={expanded}
       title={action.intent}
     >
-      <span class="intent">{action.intent}</span>
+      <span class="intent" class:clamped={!expanded}>{action.intent}</span>
       {#if time}<span class="time mono" class:live={phase === "active"}>{time}</span>{/if}
     </button>
 
@@ -102,7 +111,14 @@
     {#if expanded}
       <div class="children">
         {#each toolList as tool (tool.eventId)}
-          <div class="tool" class:error={tool.isError} class:running={tool.status === "running"}>
+          <button
+            class="tool"
+            class:error={tool.isError}
+            class:running={tool.status === "running"}
+            onclick={() => toggleTool(tool.toolCallId)}
+            aria-expanded={openTools.has(tool.toolCallId)}
+            title={openTools.has(tool.toolCallId) ? "Collapse" : "Show full input"}
+          >
             <EventIcon kind="tool" size={10} tone={tool.isError ? "error" : "neutral"} muted={!tool.isError} />
             <span class="t-name mono">{tool.toolName}</span>
             {#if tool.target}
@@ -121,7 +137,10 @@
                 <span class="t-status ok">done</span>
               {/if}
             </span>
-          </div>
+          </button>
+          {#if openTools.has(tool.toolCallId)}
+            <ToolCallDetail {tool} />
+          {/if}
         {/each}
         {#each action.decisions as d (d.eventId)}
           <div class="decision">
@@ -183,7 +202,11 @@
   .intent {
     font-size: 12.5px; color: var(--text-primary); font-weight: 500; line-height: 1.45;
     min-width: 0;
-    /* Headlines are headlines — clamp; full text lives in the title attr. */
+    overflow-wrap: anywhere;
+  }
+  /* Collapsed headlines are headlines — clamp; expanding the card shows the
+   * full intent (MON-130). */
+  .intent.clamped {
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -214,12 +237,18 @@
   }
   .tool {
     display: flex; align-items: baseline; gap: var(--s3);
-    font-size: 10.5px; min-width: 0; padding: 1px 0;
+    min-width: 0; padding: 1px 0; width: 100%;
+    background: none; border: none; margin: 0;
+    font: inherit; color: inherit; text-align: left; cursor: pointer;
+    border-radius: var(--r-sm);
   }
-  .t-name { color: var(--text-secondary); flex: none; min-width: 44px; }
+  .tool:hover { background: var(--bg-raised); }
+  .tool:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .t-name { color: var(--text-secondary); flex: none; min-width: 44px; font-size: 10.5px; }
   .t-target {
     color: var(--text-muted); min-width: 0; flex: 1;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 10.5px;
   }
   .t-target.dim { opacity: 0.7; }
   /* Head truncation: paths keep their TAIL visible (…/module.rs), never the
