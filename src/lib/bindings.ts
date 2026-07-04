@@ -149,6 +149,8 @@ export const commands = {
 	dbGetMessages: (sessionId: string) => typedError<MessageRow[], ErrorDto>(__TAURI_INVOKE("db_get_messages", { sessionId })),
 	// Get messages for a session, including all ancestor sessions (for continued sessions)
 	dbGetMessagesWithAncestry: (sessionId: string) => typedError<MessageRow[], ErrorDto>(__TAURI_INVOKE("db_get_messages_with_ancestry", { sessionId })),
+	// MON-130: full tool input/output for one timeline tool row, on demand.
+	dbGetToolCallDetail: (toolCallId: string) => typedError<ToolCallDetail, ErrorDto>(__TAURI_INVOKE("db_get_tool_call_detail", { toolCallId })),
 	// MON-127: per-agent session list with titles + first-user-message previews.
 	dbListSessionSummaries: (agentId: string) => typedError<SessionSummary[], ErrorDto>(__TAURI_INVOKE("db_list_session_summaries", { agentId })),
 	// MON-127: rename a session (None clears back to the derived preview title).
@@ -1095,6 +1097,22 @@ export type StreamingMessage = {
 export type TimelineCursor = {
 	createdAt: string,
 	id: string,
+};
+
+/**
+ *  MON-130: full record of one tool call, recovered from the `messages`
+ *  table. The timeline only persists a 500-char `args_preview` in the
+ *  `objective_events` payload; when the user expands a tool row, this is
+ *  fetched on demand by `tool_call_id`. Either side may be `None` when the
+ *  backing message is gone (pruned session, pre-timeline history).
+ */
+export type ToolCallDetail = {
+	toolName: string | null,
+	// Full tool arguments, pretty-printed JSON.
+	argsJson: string | null,
+	// Concatenated text blocks of the tool result.
+	resultText: string | null,
+	isError: boolean | null,
 };
 
 export type ToolDescriptor = {

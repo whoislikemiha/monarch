@@ -77,3 +77,10 @@ pub(crate) async fn db_get_messages_with_ancestry(state: &WsState, args: Value) 
     let messages = state.db.get_messages_with_ancestry(&session_id).await?;
     serde_json::to_value(messages).map_err(MonarchError::from)
 }
+
+/// MON-130: full tool input/output for one timeline tool row.
+pub(crate) async fn db_get_tool_call_detail(state: &WsState, args: Value) -> Result<Value, MonarchError> {
+    let tool_call_id = str_field(&args, "toolCallId")?;
+    let detail = state.db.get_tool_call_detail_internal(&tool_call_id).await?;
+    serde_json::to_value(detail).map_err(MonarchError::from)
+}

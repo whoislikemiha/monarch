@@ -52,6 +52,7 @@ pub(crate) async fn dispatch_command(
         "db_save_message" => sessions::db_save_message(state, args).await,
         "db_get_messages" => sessions::db_get_messages(state, args).await,
         "db_get_messages_with_ancestry" => sessions::db_get_messages_with_ancestry(state, args).await,
+        "db_get_tool_call_detail" => sessions::db_get_tool_call_detail(state, args).await,
 
         // ---- DB: Memories (MON-99) ----
         "db_list_memories_for_agent" => memories::db_list_memories_for_agent(state, args).await,
