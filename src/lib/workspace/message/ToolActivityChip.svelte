@@ -39,6 +39,10 @@
     return null;
   });
 
+  /** MON-130: lead with the narrated intent when the linked action card is
+   * in the loaded feed — "worked · 1 tool call" says nothing. */
+  let intent = $derived(actionId ? timelineStore.actionIntent(agent.id, actionId) : null);
+
   function jump() {
     if (actionId) timelineStore.focusAction(agent.id, actionId);
   }
@@ -55,7 +59,7 @@
 >
   <EventIcon kind="tool" size={10} tone={errored ? "error" : running ? "info" : "neutral"} muted={!errored && !running} />
   <span class="label">
-    {running ? "working" : "worked"} · {executions.length} tool call{executions.length === 1 ? "" : "s"}
+    {#if intent}<span class="intent" title={intent}>{intent}</span> · {:else}{running ? "working" : "worked"} · {/if}{executions.length} tool call{executions.length === 1 ? "" : "s"}
     {#if errored}<span class="err">· error</span>{/if}
   </span>
   {#if running}<span class="pulse" aria-hidden="true"></span>{/if}
@@ -69,6 +73,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--s2);
+    max-width: min(480px, 100%);
     padding: 2px var(--s3);
     background: none;
     border: 1px solid var(--border-subtle);
@@ -83,6 +88,15 @@
     font-family: "JetBrains Mono", monospace;
     font-size: 10px;
     color: var(--text-muted);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Narrated intent is prose, not data — Inter, slightly brighter. */
+  .intent {
+    font-family: "Inter", sans-serif;
+    color: var(--text-secondary);
   }
   .err { color: var(--status-error); }
   .pulse {

@@ -180,6 +180,21 @@ class TimelineStore {
     return null;
   }
 
+  /** MON-130: narrated intent of a loaded action card, for chat activity
+   * chips — `null` for bare tool rows (`live:` ids, top-level tool_call). */
+  actionIntent(agentId: string, actionId: string): string | null {
+    const entry = this.byAgent.get(agentId);
+    if (!entry) return null;
+    const row = entry.entries.find((e) => e.id === actionId);
+    if (!row || row.eventType !== "coherent_action" || !row.payloadJson) return null;
+    try {
+      const p = JSON.parse(row.payloadJson) as { intent?: string };
+      return typeof p.intent === "string" && p.intent.trim() ? p.intent.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Lazily load a closed objective's first-person report. */
   async loadReport(agentId: string, objectiveId: string): Promise<void> {
     const entry = this.ensure(agentId);
