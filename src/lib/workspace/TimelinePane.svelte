@@ -397,6 +397,10 @@
     gap: var(--s3);
     flex: 1;
     min-height: 0;
+    /* Without this the pane's automatic min width is the widest unbreakable
+     * row (mono paths, bash args) — it silently outgrows the tile and every
+     * line looks "cut off" at the edge instead of wrapping. */
+    min-width: 0;
   }
   .stream-scroll {
     flex: 1;

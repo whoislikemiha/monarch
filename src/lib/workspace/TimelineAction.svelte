@@ -230,7 +230,7 @@
   .time { font-size: 9.5px; color: var(--text-muted); margin-left: auto; flex: none; }
   .time.live { color: var(--status-info); font-variant-numeric: tabular-nums; }
 
-  .outcome { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; }
+  .outcome { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; overflow-wrap: anywhere; }
 
   .meta { display: flex; gap: var(--s2); flex-wrap: wrap; padding-top: 1px; }
   .chip {
