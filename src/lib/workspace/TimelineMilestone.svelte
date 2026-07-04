@@ -7,7 +7,7 @@
    * "objective done"); blockers carry the warning tone.
    */
   import type { ObjectiveEventRow } from "$lib/bindings";
-  import { relTime } from "./timelineModel";
+  import { clockTime } from "./timelineModel";
   import EventIcon from "$lib/ui/EventIcon.svelte";
 
   interface Props {
@@ -102,7 +102,7 @@
     <span class="line" aria-hidden="true"></span>
     <span class="d-label">{dividerLabel}</span>
     <span class="line" aria-hidden="true"></span>
-    <span class="d-time mono">{relTime(event.createdAt)}</span>
+    <span class="d-time mono">{clockTime(event.createdAt)}</span>
   </div>
 {:else}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -133,7 +133,7 @@
       <span class="label">{label}</span>
       {#if detail}<span class="detail">{detail}</span>{/if}
     </span>
-    <span class="time mono">{relTime(event.createdAt)}</span>
+    <span class="time mono">{clockTime(event.createdAt)}</span>
   </div>
 {/if}
 
