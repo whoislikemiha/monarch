@@ -1,13 +1,16 @@
 //! MON-99: global memory / Curator configuration, loaded from
 //! `~/.config/monarch/memory.toml`.
 //!
-//! The Curator is disabled (no-op) when no keeper model is configured.
+//! The Curator is ON by default (MON-130): a missing file or a missing
+//! `[keeper]` section resolves to `anthropic/claude-haiku-4-5`, mirroring the
+//! classifier's default. Opt out with a top-level `enabled = false`.
 //! Embedding defaults to `bge-small-en-v1.5` with lazy model download to
 //! `~/.config/monarch/models/`.
 //!
 //! Example `memory.toml`:
 //!
 //! ```toml
+//! enabled = true
 //! top_k = 5
 //!
 //! [keeper]
@@ -33,6 +36,9 @@ pub const DEFAULT_TOP_K: u32 = 5;
 /// Sonnet/Opus and 200k for Haiku, so 25k/30k stays comfortably below either.
 pub const DEFAULT_SOFT_THRESHOLD_TOKENS: u32 = 25_000;
 pub const DEFAULT_HARD_THRESHOLD_TOKENS: u32 = 30_000;
+/// MON-130: Curator model used when `memory.toml` has no `[keeper]` section.
+pub const DEFAULT_KEEPER_PROVIDER: &str = "anthropic";
+pub const DEFAULT_KEEPER_MODEL: &str = "claude-haiku-4-5";
 
 /// MON-100: system prompt shipped with every Curator run. Lives in code (not
 /// `memory.toml`) so it evolves with the product the same way
@@ -110,6 +116,9 @@ pub struct EmbeddingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct MemoryConfig {
+    /// MON-130: master switch. `None` means enabled — the Curator is on by
+    /// default; only an explicit `enabled = false` opts out.
+    pub enabled: Option<bool>,
     pub keeper: Option<KeeperModelConfig>,
     pub embedding: Option<EmbeddingConfig>,
     pub top_k: Option<u32>,
@@ -123,7 +132,8 @@ pub struct MemoryConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedMemoryConfig {
-    /// If None, the Curator is disabled.
+    /// Always populated after resolve (defaults to Haiku, MON-130); gate
+    /// Curator work on `enabled`, not on this being `Some`.
     pub keeper: Option<KeeperModelConfig>,
     pub embedding_model_id: String,
     pub models_dir: String,
@@ -140,7 +150,15 @@ pub struct ResolvedMemoryConfig {
 }
 
 pub fn resolve(raw: MemoryConfig) -> ResolvedMemoryConfig {
-    let enabled = raw.keeper.is_some();
+    // MON-130: on by default. A missing `[keeper]` section used to silently
+    // disable the whole Curator; now it just means "use the default model".
+    let enabled = raw.enabled.unwrap_or(true);
+    let keeper = raw.keeper.or_else(|| {
+        Some(KeeperModelConfig {
+            provider: DEFAULT_KEEPER_PROVIDER.to_string(),
+            model: DEFAULT_KEEPER_MODEL.to_string(),
+        })
+    });
     let models_dir = raw
         .embedding
         .as_ref()
@@ -152,7 +170,7 @@ pub fn resolve(raw: MemoryConfig) -> ResolvedMemoryConfig {
         .and_then(|e| e.model_id.clone())
         .unwrap_or_else(|| DEFAULT_EMBEDDING_MODEL_ID.to_string());
     ResolvedMemoryConfig {
-        keeper: raw.keeper,
+        keeper,
         embedding_model_id,
         models_dir,
         top_k: raw.top_k.unwrap_or(DEFAULT_TOP_K),

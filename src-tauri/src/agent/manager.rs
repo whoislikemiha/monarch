@@ -288,8 +288,8 @@ impl AgentManager {
 
     /// MON-100: assemble the slice + ship a `KeeperRun` command.
     ///
-    /// Silent no-op when `memory.toml` has no Curator model configured (the
-    /// supervisor hasn't opted in) OR when a run is already in flight for this
+    /// Silent no-op when the Curator is disabled (`enabled = false` in
+    /// `memory.toml`, MON-130) OR when a run is already in flight for this
     /// agent (debounces concurrent threshold crossings while the model is
     /// answering). Errors propagate so the dispatcher logs them.
     pub(crate) async fn dispatch_keeper_run(
@@ -299,6 +299,9 @@ impl AgentManager {
         trigger: KeeperRunTrigger,
     ) -> Result<Option<i64>, MonarchError> {
         let cfg = crate::memory::config::resolved().await;
+        if !cfg.enabled {
+            return Ok(None);
+        }
         let Some(km) = cfg.keeper.clone() else {
             return Ok(None);
         };
