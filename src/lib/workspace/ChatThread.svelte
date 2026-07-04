@@ -9,6 +9,8 @@
   import type { LiveBinding } from "./liveBinding.svelte";
   import { chatStore, type ChatPane } from "./chatStore.svelte";
   import { classifierStore } from "$lib/classifierStore.svelte";
+  import { objectiveStore } from "$lib/toolbox/objectiveStore.svelte";
+  import { timelineStore } from "./timelineStore.svelte";
   import MessageStream from "./message/MessageStream.svelte";
   import Composer from "./Composer.svelte";
 
@@ -55,6 +57,15 @@
   );
   let hasMessages = $derived(items.some((i) => i.kind === "user" || i.kind === "assistant"));
 
+  // MON-130: the live working row — current narrated action from working
+  // memory (the same source as the timeline's NOW strip), live-updated.
+  let currentAction = $derived(
+    objectiveStore.byAgent.get(agent.id)?.workingMemory?.currentAction ?? null,
+  );
+  function viewWork() {
+    if (currentAction) timelineStore.focusAction(agent.id, currentAction.eventId);
+  }
+
   let composer: Composer | undefined = $state();
   // Focus a scoped pane when it's freshly opened from a timeline action.
   $effect(() => {
@@ -78,7 +89,15 @@
 
 <div class="thread">
   {#if hasMessages}
-    <MessageStream {agent} {items} userOrdinals={filtered.ordinals} streamingMessage={streamingMine ? live.streamingMessage : null} />
+    <MessageStream
+      {agent}
+      {items}
+      userOrdinals={filtered.ordinals}
+      streamingMessage={streamingMine ? live.streamingMessage : null}
+      working={streamingMine}
+      workingIntent={currentAction?.intent ?? null}
+      onviewwork={currentAction ? viewWork : null}
+    />
   {:else}
     <div class="blank">
       <p class="hint">
