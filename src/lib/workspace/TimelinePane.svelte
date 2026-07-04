@@ -423,9 +423,7 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
     min-width: 0;
   }
   .seg-status { font-size: 9.5px; color: var(--text-muted); flex: none; margin-left: auto; }
