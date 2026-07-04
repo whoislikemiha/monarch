@@ -17,8 +17,8 @@
     buildSegments,
     mergeAllLiveTools,
     mergeLiveTools,
+    clockTime,
     META_TOOLS,
-    relTime,
     type ActionView,
     type AskPayload,
     type ExtraToolRow,
@@ -362,7 +362,7 @@
               </div>
             {:else if item.kind === "tool"}
               <div class="act-wrap" class:flash={flashId === item.event.id} data-action-id={item.event.id}>
-                <TimelineToolRow tool={liveToolOverlay(item.tool)} time={relTime(item.event.createdAt || item.tool.startedAt)} />
+                <TimelineToolRow tool={liveToolOverlay(item.tool)} time={clockTime(item.event.createdAt || item.tool.startedAt)} />
               </div>
             {:else}
               <TimelineMilestone

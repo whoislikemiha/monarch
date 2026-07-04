@@ -8,7 +8,7 @@
    * into the same list (Arc II seam). The active card auto-expands and ticks.
    */
   import type { ActionView, ToolCallView } from "./timelineModel";
-  import { elapsedClock, fmtDuration, relTime } from "./timelineModel";
+  import { clockTime, elapsedClock, fmtDuration } from "./timelineModel";
   import EventIcon from "$lib/ui/EventIcon.svelte";
   import ToolCallDetail from "./ToolCallDetail.svelte";
   import { SvelteSet } from "svelte/reactivity";
@@ -43,7 +43,7 @@
   }
 
   let time = $derived(
-    phase === "active" ? elapsedClock(action.startedAt, nowMs) : relTime(action.completedAt ?? action.startedAt, nowMs),
+    phase === "active" ? elapsedClock(action.startedAt, nowMs) : clockTime(action.completedAt ?? action.startedAt, nowMs),
   );
 
   function toggle() {

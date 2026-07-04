@@ -360,16 +360,22 @@ export function mergeLiveTools(
   return merged;
 }
 
-/** Compact relative time ("8s", "4m", "2h", "3d"). */
-export function relTime(iso: string | null | undefined, nowMs?: number): string | null {
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Wall-clock stamp in local time: "14:32" today, "Jul 3 14:32" earlier,
+ * with the year once it differs. The timeline is a work RECORD — absolute
+ * times, not "1h ago" drift. */
+export function clockTime(iso: string | null | undefined, nowMs?: number): string | null {
   if (!iso) return null;
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return null;
-  const s = Math.max(0, Math.floor(((nowMs ?? Date.now()) - t) / 1000));
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}d`;
+  const d = new Date(t);
+  const now = new Date(nowMs ?? Date.now());
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (d.toDateString() === now.toDateString()) return hm;
+  const day = `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  if (d.getFullYear() === now.getFullYear()) return `${day} ${hm}`;
+  return `${day} ${d.getFullYear()} ${hm}`;
 }
 
 /** Live elapsed clock ("0:42", "12:05", "1:03:09") for the active action. */
