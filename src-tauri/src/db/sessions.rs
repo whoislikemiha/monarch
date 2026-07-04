@@ -1,5 +1,6 @@
 use rusqlite::{params, Row};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::Arc;
 
 use crate::error::MonarchError;
@@ -72,6 +73,22 @@ pub struct MessageRow {
     /// through `save_message_attachment_internal`).
     #[serde(default)]
     pub attachments: Vec<MessageAttachmentRow>,
+}
+
+/// MON-130: full record of one tool call, recovered from the `messages`
+/// table. The timeline only persists a 500-char `args_preview` in the
+/// `objective_events` payload; when the user expands a tool row, this is
+/// fetched on demand by `tool_call_id`. Either side may be `None` when the
+/// backing message is gone (pruned session, pre-timeline history).
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCallDetail {
+    pub tool_name: Option<String>,
+    /// Full tool arguments, pretty-printed JSON.
+    pub args_json: Option<String>,
+    /// Concatenated text blocks of the tool result.
+    pub result_text: Option<String>,
+    pub is_error: Option<bool>,
 }
 
 /// MON-75: one row in `message_attachments`. Exposed to the frontend so
@@ -395,6 +412,105 @@ impl Database {
             .await?)
     }
 
+    /// MON-130: recover the full args + result of one tool call from the
+    /// message store. The assistant message holds a `toolCall` content block
+    /// (`{"type":"toolCall","id":...,"name":...,"arguments":{...}}`); the
+    /// paired `toolResult` row holds `{"toolCallId":...,"isError":...,
+    /// "result":"<stringified {content:[...]}>"}`. LIKE narrows candidates
+    /// (tool-call ids are unique tokens); exact matching happens on the
+    /// parsed JSON so substring collisions can't leak a wrong call.
+    pub async fn get_tool_call_detail_internal(
+        &self,
+        tool_call_id: &str,
+    ) -> Result<ToolCallDetail, MonarchError> {
+        let tool_call_id = tool_call_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut detail = ToolCallDetail {
+                    tool_name: None,
+                    args_json: None,
+                    result_text: None,
+                    is_error: None,
+                };
+                let like = format!("%{}%", tool_call_id);
+
+                let mut stmt = conn.prepare(
+                    "SELECT content FROM messages
+                     WHERE role = 'assistant' AND content LIKE ?1
+                     ORDER BY id DESC LIMIT 8",
+                )?;
+                let candidates = stmt
+                    .query_map(params![like], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                'outer: for content in candidates {
+                    let Ok(Value::Array(blocks)) = serde_json::from_str::<Value>(&content) else {
+                        continue;
+                    };
+                    for block in blocks {
+                        if block.get("type").and_then(Value::as_str) == Some("toolCall")
+                            && block.get("id").and_then(Value::as_str) == Some(&tool_call_id)
+                        {
+                            detail.tool_name = block
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .map(str::to_string);
+                            detail.args_json = block
+                                .get("arguments")
+                                .map(|a| serde_json::to_string_pretty(a).unwrap_or_default());
+                            break 'outer;
+                        }
+                    }
+                }
+
+                let mut stmt = conn.prepare(
+                    "SELECT content FROM messages
+                     WHERE role = 'toolResult' AND content LIKE ?1
+                     ORDER BY id DESC LIMIT 8",
+                )?;
+                let candidates = stmt
+                    .query_map(params![like], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                for content in candidates {
+                    let Ok(obj) = serde_json::from_str::<Value>(&content) else {
+                        continue;
+                    };
+                    if obj.get("toolCallId").and_then(Value::as_str) != Some(&tool_call_id) {
+                        continue;
+                    }
+                    detail.is_error = obj.get("isError").and_then(Value::as_bool);
+                    if detail.tool_name.is_none() {
+                        detail.tool_name = obj
+                            .get("toolName")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                    }
+                    // `result` is a stringified `{content:[{type:"text",text},...]}`.
+                    detail.result_text = obj
+                        .get("result")
+                        .and_then(Value::as_str)
+                        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+                        .and_then(|parsed| {
+                            parsed.get("content").and_then(Value::as_array).map(|arr| {
+                                arr.iter()
+                                    .filter_map(|b| {
+                                        (b.get("type").and_then(Value::as_str) == Some("text"))
+                                            .then(|| b.get("text").and_then(Value::as_str))
+                                            .flatten()
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            })
+                        })
+                        .filter(|s| !s.is_empty());
+                    break;
+                }
+
+                Ok(detail)
+            })
+            .await?)
+    }
+
     pub async fn get_sessions_internal(
         &self,
         agent_id: &str,
@@ -632,4 +748,14 @@ pub async fn db_get_messages_with_ancestry(
     session_id: String,
 ) -> Result<Vec<MessageRow>, MonarchError> {
     db.get_messages_with_ancestry(&session_id).await
+}
+
+/// MON-130: full tool input/output for one timeline tool row, on demand.
+#[tauri::command]
+#[specta::specta]
+pub async fn db_get_tool_call_detail(
+    db: tauri::State<'_, Arc<Database>>,
+    tool_call_id: String,
+) -> Result<ToolCallDetail, MonarchError> {
+    db.get_tool_call_detail_internal(&tool_call_id).await
 }
