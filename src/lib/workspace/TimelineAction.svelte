@@ -66,7 +66,7 @@
 <div class="act" class:active={phase === "active"} class:expanded onclick={onCardClick}>
   <span class="rail" aria-hidden="true">
     <span class="node">
-      <EventIcon kind="action" size={13} tone={phase === "active" ? "info" : "neutral"} muted={phase === "auto"} />
+      <EventIcon kind="action" size={13} tone={phase === "active" ? "info" : "neutral"} />
     </span>
   </span>
 
@@ -78,6 +78,9 @@
       title={action.intent}
     >
       <span class="intent" class:clamped={!expanded}>{action.intent}</span>
+      {#if phase === "auto"}
+        <span class="auto-tag mono" title="Auto-closed — the agent moved on to its next action without recording an outcome">auto</span>
+      {/if}
       {#if time}<span class="time mono" class:live={phase === "active"}>{time}</span>{/if}
     </button>
 
@@ -227,7 +230,17 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
+  /* Explicit auto-closed marker — status is never color-alone. */
+  .auto-tag {
+    flex: none; margin-left: auto;
+    font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--text-muted);
+    border: 1px solid var(--border-subtle); border-radius: var(--r-sm);
+    padding: 0 4px; line-height: 1.5;
+  }
+  /* When the auto tag is present it takes the auto margin; the time follows. */
   .time { font-size: 9.5px; color: var(--text-muted); margin-left: auto; flex: none; }
+  .auto-tag + .time { margin-left: 0; }
   .time.live { color: var(--status-info); font-variant-numeric: tabular-nums; }
 
   .outcome { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; overflow-wrap: anywhere; }
