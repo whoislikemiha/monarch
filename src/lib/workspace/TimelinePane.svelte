@@ -195,6 +195,9 @@
     if (!req || req.agentId !== agent.id || !rootEl) return;
     const el = rootEl.querySelector(`[data-action-id="${req.actionId}"]`);
     if (!el) return;
+    // The user asked to look at THIS card — stop following the live head, or
+    // the next feed refresh snaps back to the bottom mid-scroll (MON-130).
+    pinned = false;
     el.scrollIntoView({ block: "center", behavior: "smooth" });
     flashId = req.actionId;
     const t = setTimeout(() => (flashId = null), 1600);
@@ -209,6 +212,12 @@
     const el = scroller;
     if (!el) return;
     pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  }
+  /** Clicking anything in the stream (expanding a tool, toggling a card)
+   * means the user is reading — stop following the live head. Scrolling back
+   * to the bottom re-pins via onScroll, same as the chat. */
+  function onStreamClick() {
+    pinned = false;
   }
   $effect(() => {
     // Re-run on stream growth; honor the user's scroll position.
@@ -304,7 +313,8 @@
   {#if tl?.loading}
     <div class="empty mono">Loading the work record…</div>
   {:else if hasContent}
-    <div class="stream-scroll" bind:this={scroller} onscroll={onScroll}>
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div class="stream-scroll" bind:this={scroller} onscroll={onScroll} onclick={onStreamClick}>
       {#if tl?.hasMore}
         <div class="more" bind:this={sentinel}>
           <span class="mono">{tl.loadingMore ? "loading earlier work…" : "earlier work"}</span>

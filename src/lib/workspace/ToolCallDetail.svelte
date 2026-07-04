@@ -19,12 +19,18 @@
   let loading = $state(true);
   let failed = $state(false);
 
+  // The live feed replaces row objects on every head refresh (~150ms during
+  // tool bursts), so the `tool` prop changes identity constantly. Re-fetch
+  // only when the call itself or its status actually changes (running→done
+  // pulls in the result) — otherwise the panel flashes "loading…" in a loop.
+  let fetchedKey = "";
   $effect(() => {
-    const id = tool.toolCallId;
+    const key = `${tool.toolCallId}:${tool.status}`;
+    if (key === fetchedKey) return;
+    fetchedKey = key;
     loading = true;
     failed = false;
-    detail = null;
-    invoke<ToolCallDetail>("db_get_tool_call_detail", { toolCallId: id })
+    invoke<ToolCallDetail>("db_get_tool_call_detail", { toolCallId: tool.toolCallId })
       .then((d) => (detail = d))
       .catch(() => (failed = true))
       .finally(() => (loading = false));
@@ -36,7 +42,7 @@
 </script>
 
 <div class="detail">
-  {#if loading}
+  {#if loading && !detail}
     <div class="hint mono">loading full input…</div>
   {:else}
     {#if args}
