@@ -49,9 +49,21 @@
   function toggle() {
     manualExpand = !expanded;
   }
+
+  /** The whole card is a toggle target — not just the headline. Clicks on
+   * real controls (buttons, chips) and inside the expanded child list keep
+   * their own meaning; selecting text never collapses the card. */
+  function onCardClick(e: MouseEvent) {
+    const el = e.target as HTMLElement;
+    if (el.closest("button, a, pre, .children")) return;
+    if (window.getSelection()?.toString()) return;
+    toggle();
+  }
 </script>
 
-<div class="act" class:active={phase === "active"} class:expanded>
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+<!-- keyboard toggle lives on the headline button; the card click is a bonus hit area -->
+<div class="act" class:active={phase === "active"} class:expanded onclick={onCardClick}>
   <span class="rail" aria-hidden="true">
     <span class="node">
       <EventIcon kind="action" size={13} tone={phase === "active" ? "info" : "neutral"} muted={phase === "auto"} />
@@ -122,9 +134,9 @@
             <EventIcon kind="tool" size={10} tone={tool.isError ? "error" : "neutral"} muted={!tool.isError} />
             <span class="t-name mono">{tool.toolName}</span>
             {#if tool.target}
-              <span class="t-target mono trunc-head" title={tool.target}>{tool.target}</span>
+              <span class="t-target mono" class:trunc-head={!openTools.has(tool.toolCallId)} class:wrap={openTools.has(tool.toolCallId)} title={tool.target}>{tool.target}</span>
             {:else if tool.argsPreview}
-              <span class="t-target mono dim" title={tool.argsPreview}>{tool.argsPreview}</span>
+              <span class="t-target mono dim" class:wrap={openTools.has(tool.toolCallId)} title={tool.argsPreview}>{tool.argsPreview}</span>
             {/if}
             <span class="t-end mono">
               {#if tool.status === "running"}
@@ -152,7 +164,7 @@
         {#if action.filesTouched.length > 0}
           <div class="files-list">
             {#each action.filesTouched as f (f)}
-              <span class="f-path mono trunc-head" title={f}>{f}</span>
+              <span class="f-path mono">{f}</span>
             {/each}
           </div>
         {/if}
@@ -176,8 +188,11 @@
     padding: var(--s2) var(--s2) var(--s2) 0;
     border-radius: var(--r-md);
     position: relative;
+    cursor: pointer;
   }
   .act:hover { background: var(--bg-panel); }
+  /* The expanded child list has its own controls + selectable text. */
+  .act .children { cursor: auto; }
 
   .rail { width: 14px; flex: none; display: flex; justify-content: center; position: relative; }
   .rail::before {
@@ -254,6 +269,8 @@
   /* Head truncation: paths keep their TAIL visible (…/module.rs), never the
    * head — the "path truncation" backport fix. RTL-ellipsis trick. */
   .trunc-head { direction: rtl; text-align: left; unicode-bidi: isolate; }
+  /* An open tool row shows everything — wrap instead of clipping. */
+  .t-target.wrap { white-space: normal; overflow-wrap: anywhere; direction: ltr; }
   .t-end { flex: none; margin-left: auto; font-size: 9.5px; color: var(--text-muted); }
   .t-status.run { color: var(--status-info); }
   .t-status.err { color: var(--status-error); }
@@ -268,9 +285,10 @@
   .d-text { color: var(--text-secondary); line-height: 1.5; min-width: 0; }
 
   .files-list { display: flex; flex-direction: column; gap: 1px; padding-top: 2px; }
+  /* Only visible when the card is expanded — show full paths, wrapped. */
   .f-path {
     font-size: 10px; color: var(--text-muted);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    overflow-wrap: anywhere;
   }
 
   .ask {

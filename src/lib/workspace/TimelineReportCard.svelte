@@ -128,10 +128,10 @@
   .bt { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); }
   .block ul { margin: 0; padding-left: var(--s4); display: flex; flex-direction: column; gap: 1px; }
   .block li { font-size: 11px; color: var(--text-secondary); line-height: 1.5; }
+  /* Only visible in the expanded detail — show full paths, wrapped. */
   .path {
     font-size: 10px;
-    direction: rtl; text-align: left; unicode-bidi: isolate;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    overflow-wrap: anywhere;
     display: inline-block; max-width: 100%; vertical-align: bottom;
   }
   .reflection { margin: 0; font-size: 11px; color: var(--text-muted); font-style: italic; line-height: 1.55; }

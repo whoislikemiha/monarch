@@ -57,7 +57,15 @@
 </script>
 
 <div class="now">
-  <div class="now-line">
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <!-- keyboard toggle lives on the intent button; the line click is a bonus hit area -->
+  <div
+    class="now-line"
+    class:clickable={!!current}
+    onclick={(e) => {
+      if (current && !(e.target as HTMLElement).closest("button")) intentOpen = !intentOpen;
+    }}
+  >
     <span class="tag" class:live={streaming}>NOW</span>
     {#if current}
       <button
@@ -145,6 +153,7 @@
     border-radius: var(--r-md);
   }
   .now-line { display: flex; align-items: center; gap: var(--s2); }
+  .now-line.clickable { cursor: pointer; }
   .tag {
     font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
     color: var(--text-muted); flex: none;
@@ -205,7 +214,8 @@
   .plan-full { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
   .pf-item { display: flex; align-items: baseline; gap: var(--s2); font-size: 11px; color: var(--text-muted); min-width: 0; }
   .pf-mark { flex: none; width: 12px; text-align: center; font-size: 10px; }
-  .pf-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The expanded plan shows full step titles — wrap, don't clip. */
+  .pf-title { min-width: 0; overflow-wrap: anywhere; }
   .pf-item.active { color: var(--text-primary); }
   .pf-item.active .pf-mark { color: var(--accent); }
   .pf-item.done { opacity: 0.65; }

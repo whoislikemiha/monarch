@@ -36,9 +36,9 @@
     </span>
     <span class="name mono">{tool.toolName}</span>
     {#if tool.target}
-      <span class="target mono trunc-head" title={tool.target}>{tool.target}</span>
+      <span class="target mono" class:trunc-head={!expanded} class:wrap={expanded} title={tool.target}>{tool.target}</span>
     {:else if tool.argsPreview}
-      <span class="target mono dim" title={tool.argsPreview}>{tool.argsPreview}</span>
+      <span class="target mono dim" class:wrap={expanded} title={tool.argsPreview}>{tool.argsPreview}</span>
     {/if}
     <span class="end mono">
       {#if tool.status === "running"}
@@ -97,6 +97,8 @@
   }
   .target.dim { opacity: 0.7; }
   .trunc-head { direction: rtl; text-align: left; unicode-bidi: isolate; }
+  /* Expanded row shows everything — wrap instead of clipping. */
+  .target.wrap { white-space: normal; overflow-wrap: anywhere; direction: ltr; }
 
   .end { flex: none; margin-left: auto; font-size: 9.5px; color: var(--text-muted); display: inline-flex; gap: var(--s2); }
   .st.run { color: var(--status-info); }
