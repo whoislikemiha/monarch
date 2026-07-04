@@ -31,6 +31,14 @@
     return ord === undefined ? null : classifications.get(ord) ?? null;
   }
 
+  /** MON-130: a completed assistant turn with no visible text (thinking-only
+   * — the model went straight to tools) renders compactly, without the
+   * avatar/speaker header. A column of empty speaker shells between activity
+   * chips is what made the chat read hollow. */
+  function hasVisibleText(item: Extract<DisplayItem, { kind: "assistant" }>): boolean {
+    return item.content.some((b) => b.type === "text" && b.text.trim().length > 0);
+  }
+
   let scroller: HTMLDivElement | undefined = $state();
   let pinned = true;
 
@@ -70,12 +78,19 @@
         <div class="meta note error">
           The model returned an empty response — no output. Retry, or start a new session if it persists.
         </div>
-      {:else}
+      {:else if hasVisibleText(item)}
         <div class="turn assistant">
           <div class="speaker">
             <Avatar name={agent.name} size={24} avatarType={agent.avatarType} avatarPath={agent.avatarPath} />
             <span class="speaker-name">{agent.name}</span>
           </div>
+          <AssistantBlock content={item.content} />
+        </div>
+      {:else}
+        <!-- Thinking-only turn: the dialogue content is the work itself,
+             which the following activity chip links to. Keep the (collapsed)
+             thinking reachable, drop the speaker shell. -->
+        <div class="turn assistant compact">
           <AssistantBlock content={item.content} />
         </div>
       {/if}
@@ -131,6 +146,9 @@
   .turn.assistant, .turn.tools { flex-direction: column; }
   .turn.tools { align-items: center; }
   .turn.assistant { gap: var(--s2); }
+  /* Thinking-only turns are part of the work trace, not a full dialogue
+   * turn — align them with the centered activity chips they precede. */
+  .turn.assistant.compact { align-items: center; }
   .speaker { display: flex; align-items: center; gap: var(--s2); }
   .speaker-name { font-size: 11.5px; font-weight: 600; color: var(--text-primary); }
   .meta {
