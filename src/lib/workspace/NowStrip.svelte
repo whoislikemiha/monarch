@@ -38,6 +38,9 @@
     return active ? [active, ...next] : next;
   });
 
+  /** MON-130: the NOW headline clamps to 2 lines; click to see all of it. */
+  let intentOpen = $state(false);
+
   function mark(status: string, isActive: boolean): string {
     if (isActive || status === "active") return "●";
     switch (status) {
@@ -57,7 +60,12 @@
   <div class="now-line">
     <span class="tag" class:live={streaming}>NOW</span>
     {#if current}
-      <span class="intent" title={current.intent}>{current.intent}</span>
+      <button
+        class="intent"
+        class:clamped={!intentOpen}
+        title={intentOpen ? "Collapse" : current.intent}
+        onclick={() => (intentOpen = !intentOpen)}
+      >{current.intent}</button>
     {:else if streaming}
       <span class="intent idle">Working</span>
     {:else}
@@ -144,8 +152,15 @@
   .tag.live { color: var(--status-info); }
   .intent {
     font-size: 12.5px; color: var(--text-primary); font-weight: 500; min-width: 0;
+    background: none; border: none; padding: 0; margin: 0;
+    font-family: inherit; text-align: left;
+    overflow-wrap: anywhere;
+  }
+  button.intent { cursor: pointer; }
+  .intent.clamped {
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
+  .intent:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-sm); }
   .intent.idle { color: var(--text-muted); font-weight: 400; }
   .pulse {
     width: 7px; height: 7px; border-radius: var(--r-full);
