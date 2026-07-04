@@ -54,6 +54,17 @@ export function createSuggestMemoryTool(agentId: string, emit: EmitFn) {
 	});
 }
 
+/** MON-130: explicit delimiters around injected recall so the boundary is
+ * unambiguous — the model sees system-provided context (not user words), and
+ * the sidecar strips the block from the forwarded user `message_end` before
+ * it reaches persistence (`stripInjectedContext`). Same philosophy as MON-75
+ * attachments: the stored user message is what the user typed; injections
+ * are re-created at prompt time. */
+export const INJECTED_MEMORIES_OPEN = "<relevant-memories>";
+export const INJECTED_MEMORIES_CLOSE = "</relevant-memories>";
+
+const INJECTED_MEMORIES_RE = /<relevant-memories>[\s\S]*?<\/relevant-memories>\s*/g;
+
 export function formatRelevantMemories(results: MemorySearchResult[]): string {
 	const lines = results
 		.slice(0, 8)
@@ -68,5 +79,12 @@ export function formatRelevantMemories(results: MemorySearchResult[]): string {
 		})
 		.filter(Boolean);
 	if (lines.length === 0) return "";
-	return `## Relevant Memories\n${lines.join("\n")}`;
+	return `${INJECTED_MEMORIES_OPEN}\nRelevant memories recalled for this turn (system-provided context, not part of the user's message):\n${lines.join("\n")}\n${INJECTED_MEMORIES_CLOSE}`;
+}
+
+/** Remove injected recall blocks from a user message's text so persistence
+ * (and everything downstream: chat rendering, objective-title heuristics,
+ * the Curator's activity slice) only ever sees the user's own words. */
+export function stripInjectedContext(text: string): string {
+	return text.replace(INJECTED_MEMORIES_RE, "").replace(/^\s+/, "");
 }
