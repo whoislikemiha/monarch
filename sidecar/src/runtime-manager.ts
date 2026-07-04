@@ -16,6 +16,7 @@ import { type ImageContent } from "@mariozechner/pi-ai";
 import { buildSystemPrompt } from "./agent-persona.js";
 import { createUIBridge, type EmitFn, type UIResolvers } from "./ui-bridge.js";
 import { createNarrationTools } from "./narration-tools.js";
+import { installNarrationNudge } from "./narration-nudge.js";
 import { createPlanTools } from "./plan-tools.js";
 import { createReportTools } from "./report-tools.js";
 import type {
@@ -178,6 +179,11 @@ export class RuntimeManager {
 				error: `Model not found in registry: ${cmd.provider}/${cmd.model}`,
 			});
 		}
+
+		// MON-130: enforce narration cadence — append a system-reminder to
+		// tool results after a run of un-narrated tool calls. Composes onto
+		// the afterToolCall hook Pi installed in the AgentSession constructor.
+		installNarrationNudge(session);
 
 		const uiResolvers: UIResolvers = new Map();
 		const uiBridge = createUIBridge(cmd.agentId, this.emit, uiResolvers);
