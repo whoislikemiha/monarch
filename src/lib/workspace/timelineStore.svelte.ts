@@ -53,7 +53,7 @@ function isOlder(a: ObjectiveEventRow, b: ObjectiveEventRow): boolean {
 
 class TimelineStore {
   readonly byAgent = new SvelteMap<string, AgentTimelineState>();
-  /** One-shot "scroll to this card" request from the chat's activity chips. */
+  /** One-shot "scroll to this card" request from the chat's working row. */
   focusRequest = $state<{ agentId: string; actionId: string; nonce: number } | null>(null);
   private focusNonce = 0;
   private subs = new Map<string, Array<Promise<UnlistenFn>>>();
@@ -151,48 +151,6 @@ class TimelineStore {
   /** Ask the timeline pane to scroll to + flash an action card. */
   focusAction(agentId: string, actionId: string): void {
     this.focusRequest = { agentId, actionId, nonce: ++this.focusNonce };
-  }
-
-  /** Resolve a chat tool-group to the timeline row containing its tool
-   * calls: the parent action card when narrated, the top-level tool row
-   * itself when bare. Returns null when nothing is in the loaded feed (e.g.
-   * replayed history past the loaded pages). */
-  findActionForToolCalls(agentId: string, toolCallIds: Iterable<string>): string | null {
-    const entry = this.byAgent.get(agentId);
-    if (!entry) return null;
-    const wanted = new Set(toolCallIds);
-    if (wanted.size === 0) return null;
-    const matches = (row: ObjectiveEventRow): boolean => {
-      if (row.eventType !== "tool_call" || !row.payloadJson) return false;
-      try {
-        const p = JSON.parse(row.payloadJson) as { tool_call_id?: string };
-        return !!p.tool_call_id && wanted.has(p.tool_call_id);
-      } catch {
-        return false;
-      }
-    };
-    for (const [parentId, children] of entry.childrenByParent) {
-      if (children.some(matches)) return parentId;
-    }
-    for (const row of entry.entries) {
-      if (matches(row)) return row.id;
-    }
-    return null;
-  }
-
-  /** MON-130: narrated intent of a loaded action card, for chat activity
-   * chips — `null` for bare tool rows (`live:` ids, top-level tool_call). */
-  actionIntent(agentId: string, actionId: string): string | null {
-    const entry = this.byAgent.get(agentId);
-    if (!entry) return null;
-    const row = entry.entries.find((e) => e.id === actionId);
-    if (!row || row.eventType !== "coherent_action" || !row.payloadJson) return null;
-    try {
-      const p = JSON.parse(row.payloadJson) as { intent?: string };
-      return typeof p.intent === "string" && p.intent.trim() ? p.intent.trim() : null;
-    } catch {
-      return null;
-    }
   }
 
   /** Lazily load a closed objective's first-person report. */
