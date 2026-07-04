@@ -136,5 +136,5 @@
   .close:hover { background: var(--bg-raised); color: var(--status-error); }
   /* MON-124: the timeline owns its scrolling (bottom-anchored like the
    * chat); this wrapper just sizes it. */
-  .tl-scroll { flex: 1; min-height: 0; display: flex; padding: var(--s4); }
+  .tl-scroll { flex: 1; min-height: 0; min-width: 0; display: flex; padding: var(--s4); }
 </style>
