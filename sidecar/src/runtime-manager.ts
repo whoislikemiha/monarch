@@ -31,7 +31,11 @@ import { classify } from "./classifier.js";
 import { runKeeper } from "./keeper.js";
 import { ensureLmStudioProviderRegistered, isValidThinkingLevel, resolveModel } from "./model-resolver.js";
 import { extractPromptText, normalizeStoredAssistantContent, normalizeStoredUserContent } from "./stored-content.js";
-import { createSuggestMemoryTool, formatRelevantMemories } from "./memory-tools.js";
+import {
+	createSuggestMemoryTool,
+	formatRelevantMemories,
+	stripInjectedContext,
+} from "./memory-tools.js";
 
 interface MemorySearchResolver {
 	agentId: string;
@@ -239,6 +243,16 @@ export class RuntimeManager {
 				if (cid) {
 					forwarded = { ...forwarded, classificationId: cid };
 				}
+				// MON-130: the persisted user message is what the user typed —
+				// strip injected recall blocks from the FORWARDED COPY only
+				// (Pi's live context keeps them; deep-copy so we never mutate
+				// the session's own message object).
+				forwarded = {
+					...forwarded,
+					message: stripInjectedFromUserMessage(
+						forwarded.message as Record<string, unknown>,
+					),
+				};
 			}
 			emit({
 				type: "event",
@@ -778,4 +792,31 @@ export class RuntimeManager {
 		}
 		return managed;
 	}
+}
+
+/** MON-130: deep-copy a user message with injected recall blocks removed
+ * from its text content. Handles both content shapes (plain string, block
+ * array). Pi's in-memory message is never touched — this only cleans the
+ * copy forwarded to Rust for persistence. */
+function stripInjectedFromUserMessage(
+	message: Record<string, unknown>,
+): Record<string, unknown> {
+	const content = message.content;
+	if (typeof content === "string") {
+		return { ...message, content: stripInjectedContext(content) };
+	}
+	if (Array.isArray(content)) {
+		return {
+			...message,
+			content: content.map((block) =>
+				block &&
+				typeof block === "object" &&
+				(block as { type?: string }).type === "text" &&
+				typeof (block as { text?: unknown }).text === "string"
+					? { ...block, text: stripInjectedContext((block as { text: string }).text) }
+					: block,
+			),
+		};
+	}
+	return message;
 }
