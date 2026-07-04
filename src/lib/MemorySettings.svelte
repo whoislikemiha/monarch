@@ -39,10 +39,9 @@
 
   let dirty = $derived(
     !!resolved &&
-      (keeperEnabled !== !!resolved.keeper ||
-        (keeperEnabled &&
-          (provider !== resolved.keeper?.provider ||
-            model !== resolved.keeper?.model)) ||
+      (keeperEnabled !== resolved.enabled ||
+        provider !== resolved.keeper?.provider ||
+        model !== resolved.keeper?.model ||
         topK !== resolved.topK ||
         softThresholdTokens !== resolved.softThresholdTokens ||
         hardThresholdTokens !== resolved.hardThresholdTokens),
@@ -56,8 +55,9 @@
       configPath = await invoke<string>("memory_get_config_path");
       embedderReady = await invoke<boolean>("memory_index_status");
 
-      // Seed the form from the resolved view.
-      keeperEnabled = !!resolved.keeper;
+      // Seed the form from the resolved view. `enabled` is the master
+      // switch (MON-130) — `keeper` is always populated with the default.
+      keeperEnabled = resolved.enabled;
       if (resolved.keeper) {
         provider = resolved.keeper.provider;
         model = resolved.keeper.model;
@@ -91,7 +91,8 @@
     error = null;
     try {
       const payload: MemoryConfig = {
-        keeper: keeperEnabled ? { provider, model } : null,
+        enabled: keeperEnabled,
+        keeper: { provider, model },
         topK,
         softThresholdTokens,
         hardThresholdTokens,

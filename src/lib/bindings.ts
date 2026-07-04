@@ -60,9 +60,9 @@ export const commands = {
 	isStreaming: boolean,
 	/**
 	 *  MON-100: running sum of `usage.input + output + cache_read + cache_write`
-	 *  across assistant `message_end` events since the last successful Keeper
+	 *  across assistant `message_end` events since the last successful Curator
 	 *  tick. The event handler compares this against soft/hard thresholds in
-	 *  `memory.toml` to decide when to dispatch a Keeper run; on a successful
+	 *  `memory.toml` to decide when to dispatch a Curator run; on a successful
 	 *  `keeper_result`, the handler resets it to 0. Seeded on cold restart from
 	 *  the DB via `rebuild_state_from_session` so the counter survives Monarch
 	 *  restarts. Sum components instead of trusting `total_tokens` so we know
@@ -413,7 +413,7 @@ export type AgentRow = {
 	/**
 	 *  MON-66: ISO timestamp when the agent was archived, or None if active.
 	 *  Archive preserves the DB row (history, sessions, stats) but removes
-	 *  the shadow from the default active roster. See `archive_agent_internal`.
+	 *  the agent from the default active roster. See `archive_agent_internal`.
 	 */
 	archivedAt: string | null,
 	// MON-73: "image" | null (null = monogram fallback).
@@ -486,7 +486,7 @@ export type AgentUpdatePayload = {
 
 export type AuthMode = "none" | "subscription" | "apiKey" | "both";
 
-// MON-98: Current captain identity (L1a). Returned by `get_captain_identity`.
+// MON-98: Current supervisor identity (L1a). Returned by `get_captain_identity`.
 export type CaptainIdentityRow = {
 	name: string,
 	currentVersionId: number | null,
@@ -641,9 +641,9 @@ export type LiveAgentState = {
 	isStreaming: boolean,
 	/**
 	 *  MON-100: running sum of `usage.input + output + cache_read + cache_write`
-	 *  across assistant `message_end` events since the last successful Keeper
+	 *  across assistant `message_end` events since the last successful Curator
 	 *  tick. The event handler compares this against soft/hard thresholds in
-	 *  `memory.toml` to decide when to dispatch a Keeper run; on a successful
+	 *  `memory.toml` to decide when to dispatch a Curator run; on a successful
 	 *  `keeper_result`, the handler resets it to 0. Seeded on cold restart from
 	 *  the DB via `rebuild_state_from_session` so the counter survives Monarch
 	 *  restarts. Sum components instead of trusting `total_tokens` so we know
@@ -683,6 +683,11 @@ export type ManualObjectiveUpdatePayload = {
 };
 
 export type MemoryConfig = {
+	/**
+	 *  MON-130: master switch. `None` means enabled — the Curator is on by
+	 *  default; only an explicit `enabled = false` opts out.
+	 */
+	enabled?: boolean | null,
 	keeper?: KeeperModelConfig | null,
 	embedding?: EmbeddingConfig | null,
 	topK?: number | null,
@@ -942,7 +947,10 @@ export type ResolvedClassifierConfig = {
 
 // Resolved view — all fields filled in, ready to ship to the sidecar / memory index.
 export type ResolvedMemoryConfig = {
-	// If None, the Keeper is disabled.
+	/**
+	 *  Always populated after resolve (defaults to Haiku, MON-130); gate
+	 *  Curator work on `enabled`, not on this being `Some`.
+	 */
 	keeper: KeeperModelConfig | null,
 	embeddingModelId: string,
 	modelsDir: string,
@@ -955,8 +963,8 @@ export type ResolvedMemoryConfig = {
 	softThresholdTokens: number,
 	hardThresholdTokens: number,
 	/**
-	 *  MON-100: read-only Keeper system prompt. Surfaced in MemorySettings UI;
-	 *  captain-edited prompt is out of scope for Slice B (see plan §
+	 *  MON-100: read-only Curator system prompt. Surfaced in MemorySettings UI;
+	 *  supervisor-edited prompt is out of scope for Slice B (see plan §
 	 *  "Out of scope").
 	 */
 	keeperSystemPrompt: string,
@@ -1013,7 +1021,7 @@ export type SetPlanPayload = {
 	rationale?: string | null,
 };
 
-// MON-98: Current shadow identity version (L1b). Returned by `get_shadow_identity`.
+// MON-98: Current agent identity version (L1b). Returned by `get_shadow_identity`.
 export type ShadowIdentityRow = {
 	id: number,
 	agentId: string,
@@ -1024,7 +1032,7 @@ export type ShadowIdentityRow = {
 };
 
 /**
- *  Shadow identity block carried inside `SpawnAgentRequest`. Mirrors the
+ *  Agent identity block carried inside `SpawnAgentRequest`. Mirrors the
  *  frontend's nested `config.shadow` object (name/title/grade), which the
  *  backend then maps into the sidecar-facing `ShadowConfig` by injecting the
  *  synthesized agent id at command-build time.
