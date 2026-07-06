@@ -52,18 +52,11 @@ main reason curated lists go stale.
 
 ### Commits
 
-Conventional commits scoped to the Linear issue: `type(mon-N): description`
+Conventional commits scoped to the tracked issue: `type(mon-N): description`
 
 Types: `feat`, `fix`, `refactor`, `perf`, `chore`, `docs`
 
 Commit often — each commit should be a single logical change. Rebase onto `master` for clean history before merging.
-
-### Plans & implementation notes
-
-- Research plans go in `thoughts/plan/MON-{N}.md` before implementation.
-- Implementation notes go in `thoughts/impl/MON-{N}.md` after completion.
-- First commit on a task branch is typically `docs(mon-N): research plan`.
-- Last commit before PR is typically `docs(mon-N): implementation notes`.
 
 ### Keep docs alive
 
@@ -103,12 +96,21 @@ If you add a new table, command, event channel, or convention — it belongs in 
 | Sidecar  | `sidecar/src/model-resolver.ts`                       | Dynamic model registration + thinking-level resolution                      |
 | Sidecar  | `sidecar/src/stored-content.ts`                       | Stored message content parsing + normalization helpers                      |
 | Sidecar  | `sidecar/src/memory-tools.ts`                         | Pi tool definitions for memory search/inject                                |
+| Sidecar  | `sidecar/src/narration-tools.ts`                      | `set_current_action` / `complete_action` tool definitions (MON-124)         |
+| Sidecar  | `sidecar/src/narration-nudge.ts`                      | Harness-enforced narration cadence via `afterToolCall` (MON-130)            |
+| Sidecar  | `sidecar/src/plan-tools.ts`                           | Objective plan-item tools                                                   |
+| Sidecar  | `sidecar/src/report-tools.ts`                         | Objective report tools                                                      |
+| Sidecar  | `sidecar/src/keeper.ts`                               | Curator one-shot LLM round trip (config shipped per call from Rust)         |
 | Frontend | `src/App.svelte`                                      | App shell frame: TopBar + AgentRail + PanelHost, boot sequence, global keys |
 | Frontend | `src/lib/shell/AgentRail.svelte`                      | Left-rail roster (project groups, grade rings, context menu)                |
 | Frontend | `src/lib/shell/PanelHost.svelte`                      | Center view + right dock of pinnable inspector panels + icon rail           |
+| Frontend | `src/lib/shell/CommandPalette.svelte`                 | Ctrl/⌘-K palette: agents, panels, views, themes — pure frontend             |
 | Frontend | `src/lib/layout/panelRegistry.ts`                     | Dock panel registry — add an inspector panel here                           |
 | Frontend | `src/lib/workspace/SoloWorkspace.svelte`              | Live agent workspace: header + arrangeable timeline/chat tiles              |
 | Frontend | `src/lib/workspace/Composer.svelte`                   | Chat composer (Enter sends, auto-grow)                                      |
+| Frontend | `src/lib/workspace/chatStore.svelte.ts`               | Workspace tile stack: timeline + scoped chat panes, per-pane turn membership (MON-130) |
+| Frontend | `src/lib/workspace/ChatThread.svelte`                 | Dialogue-only chat pane: pane filtering + live working row (MON-130)        |
+| Frontend | `src/lib/workspace/message/MessageStream.svelte`      | Message-list renderer shared by live chat + session browser                 |
 | Frontend | `src/lib/api.ts`                                      | Unified IPC (Tauri webview or WebSocket fallback)                           |
 | Frontend | `src/lib/bindings.ts`                                 | Auto-generated Tauri command types (**do not edit**)                        |
 | Frontend | `src/lib/toolbox/liveAgentStore.svelte.ts`            | Per-agent reactive state (SvelteMap + `$state`)                             |
@@ -117,6 +119,9 @@ If you add a new table, command, event channel, or convention — it belongs in 
 | Frontend | `src/lib/workspace/TimelinePane.svelte`                   | Workspace timeline: NOW strip, segments, action cards, infinite scroll (MON-124)|
 | Frontend | `src/lib/workspace/timelineModel.ts`                      | Timeline view-model: payload parsing, action grouping, live tool merge (MON-124)|
 | Frontend | `src/lib/toolbox/tools/SessionHistoryTool.svelte`         | Session-history dock panel: list, read-only view, rename, continue, new session (MON-127) |
+| Frontend | `src/lib/toolbox/tools/ObjectiveTimelineTool.svelte`      | Objective-tree dock panel: plan items, refs, event log (MON-83)                 |
+| Frontend | `src/lib/toolbox/tools/MemoryInspectorTool.svelte`        | Memory dock panel: search + tree + inline detail                                |
+| Frontend | `src/lib/toolbox/tools/IdentityTool.svelte`               | Supervisor + agent identity editors with combined token-budget meter            |
 | Frontend | `src/lib/classifierStore.svelte.ts`                   | Per-agent user-turn complexity classifications (MON-82)                     |
 | Frontend | `src/lib/workspace/message/ClassificationPill.svelte` | Read-only complexity pill under each live user turn (MON-82)                |
 | Frontend | `src/lib/toolbox/tools/ClassifierSettingsTool.svelte` | Global classifier config dock panel: models, timeout, prompt (MON-82)       |
