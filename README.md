@@ -3,39 +3,59 @@
 ![Monarch](docs/screenshot.png)
 <!-- TODO(owner): add a real screenshot or GIF of the running app at docs/screenshot.png -->
 
-**A desktop command center for running a fleet of AI coding agents.**
+**A desktop command center for running a fleet of AI coding agents — not another terminal with tabs.**
 
-Monarch lets you run several AI coding agents side by side, each with its own identity, memory, and conversation history — instead of juggling a pile of terminal tabs with no shared visibility. It's built as a real multi-process desktop app: a Rust/Tauri core that owns all state, a Svelte 5 frontend that renders it, and a long-lived Node sidecar that hosts the actual agent runtime ([Pi SDK](https://github.com/badlogic/pi-mono)) and streams events back.
+Monarch runs several AI coding agents side by side and treats each one as something worth keeping: a clean dialogue-only chat, a separate execution timeline the agent narrates itself, a live view into its context window, long-term memory that's curated and stored locally, and session history with real ancestry. Agents can run on Claude, OpenAI Codex, OpenRouter, or fully-local models via LM Studio — mixed freely in one roster. Under the hood it's a real multi-process desktop app: a Rust/Tauri core that owns all state in SQLite, a Svelte 5 frontend that renders it, and a long-lived Node sidecar hosting the agent runtime ([Pi SDK](https://github.com/badlogic/pi-mono)).
 
 > **Status — parked.** Monarch is an experimental project exploring multi-agent orchestration: agent memory, persistent work structure, and session ancestry. A large amount was built here; rather than leave it hidden, it's published as a reference and showcase. It is **not actively maintained and is not accepting contributions** — fork and explore freely. See [VISION.md](./VISION.md) for the original direction, [ONBOARDING.md](./ONBOARDING.md) for the architecture and data-model walkthrough, and [`thoughts/`](./thoughts/) for the design log (research plans, implementation notes, and design docs written as it evolved).
 
-## Why
+## What's different
 
-Running multiple coding agents in separate terminals gives you no shared visibility: you can't see what each one is doing at a glance, interact with structured output, or give them awareness of each other or of the project. Monarch sits in the middle as a real session authority — SQLite is the source of truth, not whatever state happens to live in a terminal scrollback.
+Most agent UIs are a terminal emulator with extra steps: one scrollback per agent, tool spam interleaved with conversation, and no memory of anything once the process dies. Monarch makes a few opinionated bets instead:
 
-## Features
+### Chat and execution are separate surfaces
 
-- **Fleet of agents** — spin up multiple named agents in parallel, each with its own model, persona, and working memory.
-- **Durable session history** — every conversation is persisted with explicit ancestry (fork/continue/new-session are distinct, tracked moves), not just an in-memory scrollback that vanishes on restart.
-- **Live execution timeline** — a flat, chronological, tool-driven feed of what each agent actually did (narrated actions, grouped tool calls, decisions), not a raw log dump.
-- **Objectives** — lightweight goal tracking that spans sessions, so "what is this agent working on" is a queryable concept, not just chat history.
-- **Working memory + Curator** — agents accumulate and search long-term memory across sessions via an embedded vector index, with a periodic "Curator" pass that distills and prunes it.
-- **Per-turn complexity classification** — a cheap, advisory classifier tags each user turn to inform future routing/automation.
-- **Model-agnostic** — built on Pi SDK, with curated model catalogs for Anthropic and OpenAI Codex, per-model thinking-level configuration, and provider auth handled centrally.
-- **Toolbox** — an extensible dock of per-agent tools (session browser, context inspector, classifier settings, stats) with a typed frontend/backend contract for adding new ones.
+The chat pane is **dialogue-only**. Tool calls, thinking blocks, and grinding never render there — while an agent works, chat shows a single pulsing line with what it's currently doing, and the full mechanical record lives in the **timeline**: a chronological feed of narrated actions with their grouped tool calls, decisions, and spawned sub-chats. You read the conversation like a conversation and audit the work like a log — without either polluting the other.
+
+The timeline isn't a harvested log dump, either. Agents **narrate their own work** through a dedicated tool ("one line of intent before each chunk of work"), and the harness — not the prompt — enforces the cadence, nudging the agent when it goes too long without narrating. Un-narrated tool calls still show up as bare rows: the honest floor, never invented headlines. Previews are truncated at record time; clicking any tool row fetches the full args/result on demand.
+
+The timeline is interactive, too: you can open a **scoped chat on any specific action** — "why did you do it this way?" — and question the agent about that piece of work directly, without derailing the main conversation. The exchange is recorded under the action it's about.
+
+### You can see inside the context window
+
+A live **context inspector** breaks down exactly what's occupying an agent's context right now — system prompt, project instructions, user turns, assistant turns, thinking, tool calls, tool results — with per-category token counts and a health meter against the model's window. No more guessing why an agent got dumber at 150k tokens.
+
+### Memory is local and curated
+
+Agents accumulate long-term memory across sessions in a **local vector index** (embeddings run on-device via ONNX — nothing leaves your machine), searchable by the agent through its own memory tools. A periodic **Curator** pass distills, merges, and prunes what accumulates, so memory improves with use instead of silting up. All of it sits in the same SQLite file as everything else.
+
+### One roster, any provider
+
+Each agent picks its own model independently: **Claude** (via subscription login or API key), **OpenAI Codex**, anything on **OpenRouter**, or fully-local models through **LM Studio** — side by side in the same fleet. Per-model thinking-level defaults and curated catalogs are handled centrally; a Haiku-powered classifier can run next to a local Qwen next to an Opus workhorse.
+
+### Sessions have real ancestry
+
+Fork, continue-in-place, and fresh-start are **three distinct, tracked moves** — not one "new chat" button. Continuing a conversation creates a new session row that points at its parent, so "what does this agent remember" is an explicit chain you can inspect in the session browser, not an accident of what stayed in RAM.
+
+### And the rest
+
+- **Objectives orthogonal to sessions** — goal tracking that spans sessions (and sessions that span goals), so "what is this agent working on" is queryable, not archaeological.
+- **Per-turn complexity classification** — a cheap advisory classifier tags every user turn (visible as a pill in chat), groundwork for routing and automation.
+- **Extensible inspector dock** — session browser, context inspector, memory inspector, stats, classifier settings; adding a panel is one component + one registry entry.
+- **Everything on disk, everything yours** — SQLite as the single source of truth, prompts as editable markdown files, attachments and avatars as plain files under `~/.config/monarch/`.
 - **Token-driven design system** — flat, no-shadow visual language with light/dark theming, browsable live at `/?catalog`.
 
 ## Architecture
 
 ```
-┌─────────────┐   Tauri commands / events   ┌──────────────┐   JSONL over stdio   ┌───────────────┐
-│   Svelte 5   │ ◄────────────────────────► │  Rust (Tauri) │ ◄──────────────────► │  Node sidecar  │
-│   frontend   │                             │     core      │                      │  (Pi SDK host) │
-└─────────────┘                             └──────┬───────┘                      └───────────────┘
-                                                    │
-                                                SQLite (source of truth:
-                                                agents, sessions, messages,
-                                                objectives, memories, ...)
+┌──────────────┐   Tauri commands / events   ┌────────────────┐   JSONL over stdio   ┌─────────────────┐
+│   Svelte 5   │ ◄─────────────────────────► │  Rust (Tauri)  │ ◄──────────────────► │  Node sidecar   │
+│   frontend   │                             │      core      │                      │  (Pi SDK host)  │
+└──────────────┘                             └────────┬───────┘                      └─────────────────┘
+                                                      │
+                                              SQLite (source of truth:
+                                              agents, sessions, messages,
+                                              objectives, memories, ...)
 ```
 
 - **Rust owns state.** SQLite is canonical; the sidecar is a stateless-on-restart execution engine, not a session authority.
