@@ -8,7 +8,6 @@
   import { agentStore } from "./stores/agentStore.svelte";
   import ModelSelector, { type ModelsStatus } from "./ModelSelector.svelte";
   import TemplateSelector from "./TemplateSelector.svelte";
-  import { REFRESHABLE_PROVIDERS } from "./providers";
   import { commands } from "$lib/bindings";
   import { clampLevel } from "./thinking";
 
@@ -21,28 +20,20 @@
   } = $props();
 
   // ModelSelector-bound state
-  let provider = $state("openrouter");
+  let provider = $state("anthropic");
   let model = $state("");
   let thinkingLevel = $state("off");
   let contextWindow: number | undefined = $state(undefined);
   let modelsStatus = $state<ModelsStatus>({ loading: false, error: null, count: 0 });
 
-  // Creating an agent is gated on provider + model only. Loading/error states
+  // Creating an agent is gated on a picked model only. Loading/error states
   // drive the hint copy but do not themselves disable the button — see MON-79.
-  let canSpawn = $derived.by(() => {
-    if (!provider) return false;
-    if (provider === "openai-codex") return true;
-    return model.trim().length > 0;
-  });
+  let canSpawn = $derived(!!provider && model.trim().length > 0);
 
   let disabledHint = $derived.by(() => {
     if (canSpawn) return "";
-    if (REFRESHABLE_PROVIDERS.has(provider)) {
-      if (modelsStatus.error) return "Model list unavailable — see error above.";
-      if (modelsStatus.loading) {
-        return provider === "lmstudio" ? "Waiting for LM Studio…" : "Loading models…";
-      }
-    }
+    if (modelsStatus.error) return "Some model lists failed to load — see error above.";
+    if (modelsStatus.loading && modelsStatus.count === 0) return "Loading models…";
     return "Select a model.";
   });
   // On every distinct (provider, model) we apply the config default once.
@@ -77,17 +68,12 @@
 
   function applyTemplate(t: AgentTemplateRow) {
     if (t.provider) provider = t.provider;
-    // The provider $effect inside ModelSelector resets `model`, so defer
-    // the model assignment (and the rest) to the next microtask so the
-    // template's model survives.
-    queueMicrotask(() => {
-      if (t.model) model = t.model;
-      if (t.thinkingLevel) thinkingLevel = t.thinkingLevel;
-      if (t.cwd) cwd = t.cwd;
-      shadowName = t.shadowName ?? "";
-      shadowTitle = t.shadowTitle ?? "";
-      if (t.shadowGrade) shadowGrade = t.shadowGrade as ShadowGrade;
-    });
+    if (t.model) model = t.model;
+    if (t.thinkingLevel) thinkingLevel = t.thinkingLevel;
+    if (t.cwd) cwd = t.cwd;
+    shadowName = t.shadowName ?? "";
+    shadowTitle = t.shadowTitle ?? "";
+    if (t.shadowGrade) shadowGrade = t.shadowGrade as ShadowGrade;
   }
 
   async function persistCurrentAsTemplate() {
