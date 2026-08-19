@@ -34,10 +34,11 @@ pub use agents::{
 // sessions
 pub use sessions::{MessageAttachmentRow, MessageRow, SessionRow};
 #[allow(unused_imports)]
-pub use sessions::SessionSummary;
+pub use sessions::{ConversationOverview, SessionSummary};
 pub use sessions::{
     db_create_session, db_get_messages, db_get_messages_with_ancestry, db_get_sessions,
-    db_get_tool_call_detail, db_list_session_summaries, db_save_message, db_set_session_title,
+    db_get_tool_call_detail, db_list_conversations, db_list_session_summaries, db_save_message,
+    db_set_session_title,
 };
 #[allow(unused_imports)]
 pub use sessions::ToolCallDetail;
@@ -144,7 +145,8 @@ pub use reports::{
 #[allow(non_snake_case, unused_imports)]
 pub use sessions::{
     __cmd__db_create_session, __cmd__db_get_messages, __cmd__db_get_messages_with_ancestry,
-    __cmd__db_get_sessions, __cmd__db_get_tool_call_detail, __cmd__db_list_session_summaries,
+    __cmd__db_get_sessions, __cmd__db_get_tool_call_detail, __cmd__db_list_conversations,
+    __cmd__db_list_session_summaries,
     __cmd__db_save_message, __cmd__db_set_session_title,
 };
 
@@ -203,7 +205,8 @@ pub use reports::{
 pub use sessions::{
     __specta__fn__db_create_session, __specta__fn__db_get_messages,
     __specta__fn__db_get_messages_with_ancestry, __specta__fn__db_get_sessions,
-    __specta__fn__db_get_tool_call_detail, __specta__fn__db_list_session_summaries,
+    __specta__fn__db_get_tool_call_detail, __specta__fn__db_list_conversations,
+    __specta__fn__db_list_session_summaries,
     __specta__fn__db_save_message, __specta__fn__db_set_session_title,
 };
 

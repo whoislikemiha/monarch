@@ -27,6 +27,12 @@ pub(crate) async fn db_list_session_summaries(state: &WsState, args: Value) -> R
     serde_json::to_value(summaries).map_err(MonarchError::from)
 }
 
+/// Cross-agent conversation listing (Conversations panel, grouped by project).
+pub(crate) async fn db_list_conversations(state: &WsState, _args: Value) -> Result<Value, MonarchError> {
+    let rows = state.db.list_conversations_internal().await?;
+    serde_json::to_value(rows).map_err(MonarchError::from)
+}
+
 /// MON-127: rename a session (null title clears it).
 pub(crate) async fn db_set_session_title(state: &WsState, args: Value) -> Result<Value, MonarchError> {
     let session_id = str_field(&args, "sessionId")?;

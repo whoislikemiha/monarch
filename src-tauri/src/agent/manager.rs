@@ -650,10 +650,21 @@ impl AgentManager {
                 total_cost: 0.0,
                 parent_session_id: None,
                 title: None,
+                project_id: project_id.clone(),
+                cwd: Some(effective_cwd.clone()),
             })
             .await?;
             // MON-63: track session count
             db.increment_agent_sessions(&id).await?;
+        } else {
+            // Row was created ahead of spawn (frontend) or is being reused
+            // (wake) — stamp the scope the session actually runs in.
+            db.stamp_session_context_internal(
+                &session_id,
+                project_id.as_deref(),
+                Some(&effective_cwd),
+            )
+            .await?;
         }
 
         {
@@ -978,6 +989,11 @@ impl AgentManager {
             _ => None,
         };
 
+        // The new conversation runs wherever the live agent runs — inherit
+        // the project/cwd stamped on the agent row at spawn.
+        let (agent_project_id, agent_cwd) =
+            db.get_agent_project_and_cwd_internal(&agent_id).await?;
+
         db.create_session_internal(&crate::db::SessionRow {
             id: new_session_id.clone(),
             agent_id: agent_id.clone(),
@@ -991,6 +1007,8 @@ impl AgentManager {
             total_cost: 0.0,
             parent_session_id: valid_parent_session_id,
             title: None,
+            project_id: agent_project_id,
+            cwd: agent_cwd,
         })
         .await?;
         // MON-63: track session count

@@ -231,6 +231,29 @@ impl Database {
         Ok(())
     }
 
+    /// Spawn-default project + cwd for an agent. Used to stamp new session
+    /// rows created mid-flight (new_agent_session) with the scope the live
+    /// agent is actually running in.
+    pub async fn get_agent_project_and_cwd_internal(
+        &self,
+        agent_id: &str,
+    ) -> Result<(Option<String>, Option<String>), MonarchError> {
+        let agent_id = agent_id.to_string();
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let result = conn
+                    .query_row(
+                        "SELECT project_id, cwd FROM agents WHERE id = ?1",
+                        params![agent_id],
+                        |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+                    )
+                    .unwrap_or((None, None));
+                Ok(result)
+            })
+            .await?)
+    }
+
     pub async fn get_agent_context_window_internal(
         &self,
         agent_id: &str,

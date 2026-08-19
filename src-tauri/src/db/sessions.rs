@@ -28,6 +28,14 @@ pub struct SessionRow {
     /// back to a snippet of the first user message.
     #[serde(default)]
     pub title: Option<String>,
+    /// The project this conversation ran in. Sessions — not agents — carry
+    /// project scope: agents are persistent, a conversation happens somewhere.
+    /// NULL = project-less (no git root at the session's cwd).
+    #[serde(default)]
+    pub project_id: Option<String>,
+    /// Working directory the session actually ran in (snapshot at spawn).
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 /// MON-127: one row in the session-history list. `SessionRow` plus a derived
@@ -45,6 +53,29 @@ pub struct SessionSummary {
     pub total_tokens: i32,
     pub total_cost: f64,
     pub parent_session_id: Option<String>,
+    pub title: Option<String>,
+    pub preview: Option<String>,
+}
+
+/// One row in the cross-agent Conversations panel: a session plus its owning
+/// agent and project, denormalized for grouping. See
+/// `list_conversations_internal`.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationOverview {
+    pub id: String,
+    pub agent_id: String,
+    pub agent_name: String,
+    pub agent_archived: bool,
+    pub project_id: Option<String>,
+    pub project_name: Option<String>,
+    pub model: Option<String>,
+    pub provider: Option<String>,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub message_count: i32,
+    pub total_tokens: i32,
+    pub total_cost: f64,
     pub title: Option<String>,
     pub preview: Option<String>,
 }
@@ -119,6 +150,8 @@ pub(super) fn map_session(row: &Row<'_>) -> rusqlite::Result<SessionRow> {
         total_cost: row.get(9)?,
         parent_session_id: row.get(10)?,
         title: row.get(11)?,
+        project_id: row.get(12)?,
+        cwd: row.get(13)?,
     })
 }
 
@@ -337,8 +370,8 @@ impl Database {
         self.conn
             .call(move |conn| {
                 conn.execute(
-                    "INSERT INTO sessions (id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id, title)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                    "INSERT INTO sessions (id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id, title, project_id, cwd)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                      ON CONFLICT(id) DO UPDATE SET
                        agent_id=excluded.agent_id,
                        model=excluded.model,
@@ -348,12 +381,15 @@ impl Database {
                        total_tokens=excluded.total_tokens,
                        total_cost=excluded.total_cost,
                        parent_session_id=excluded.parent_session_id,
-                       title=COALESCE(excluded.title, sessions.title)",
+                       title=COALESCE(excluded.title, sessions.title),
+                       project_id=COALESCE(excluded.project_id, sessions.project_id),
+                       cwd=COALESCE(excluded.cwd, sessions.cwd)",
                     params![
                         session.id, session.agent_id, session.pi_session_file, session.model,
                         session.provider, session.started_at, session.ended_at,
                         session.message_count, session.total_tokens, session.total_cost,
                         session.parent_session_id, session.title,
+                        session.project_id, session.cwd,
                     ],
                 )?;
                 Ok(())
@@ -520,7 +556,7 @@ impl Database {
             .conn
             .call(move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id, title FROM sessions WHERE agent_id = ?1 ORDER BY started_at DESC",
+                    "SELECT id, agent_id, pi_session_file, model, provider, started_at, ended_at, message_count, total_tokens, total_cost, parent_session_id, title, project_id, cwd FROM sessions WHERE agent_id = ?1 ORDER BY started_at DESC",
                 )?;
                 let rows = stmt.query_map(params![agent_id], map_session)?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -612,6 +648,80 @@ impl Database {
             })
             .await?;
         Ok(())
+    }
+
+    /// Stamp the project/cwd a session actually runs in. Called on every
+    /// spawn after `resolve_project`, so a session created ahead of spawn by
+    /// the frontend (NULL project) gets its real scope once the agent is up.
+    pub async fn stamp_session_context_internal(
+        &self,
+        session_id: &str,
+        project_id: Option<&str>,
+        cwd: Option<&str>,
+    ) -> Result<(), MonarchError> {
+        let session_id = session_id.to_string();
+        let project_id = project_id.map(|s| s.to_string());
+        let cwd = cwd.map(|s| s.to_string());
+        self.conn
+            .call(move |conn| {
+                conn.execute(
+                    "UPDATE sessions SET project_id = ?1, cwd = ?2 WHERE id = ?3",
+                    params![project_id, cwd, session_id],
+                )?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Cross-agent conversation listing: every session with its owning agent
+    /// and project denormalized so the Conversations panel can group by
+    /// project in one query. Newest first.
+    pub async fn list_conversations_internal(
+        &self,
+    ) -> Result<Vec<ConversationOverview>, MonarchError> {
+        Ok(self
+            .conn
+            .call(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT s.id, s.agent_id,
+                            COALESCE(a.shadow_name, a.name) AS agent_name,
+                            a.archived_at,
+                            s.project_id, p.name,
+                            s.model, s.provider, s.started_at, s.ended_at,
+                            s.message_count, s.total_tokens, s.total_cost,
+                            s.title,
+                            (SELECT m.content FROM messages m
+                              WHERE m.session_id = s.id AND m.role = 'user'
+                              ORDER BY m.id ASC LIMIT 1)
+                     FROM sessions s
+                     JOIN agents a ON a.id = s.agent_id
+                     LEFT JOIN projects p ON p.id = s.project_id
+                     ORDER BY s.started_at DESC",
+                )?;
+                let rows = stmt.query_map([], |row| {
+                    let first_user: Option<String> = row.get(14)?;
+                    Ok(ConversationOverview {
+                        id: row.get(0)?,
+                        agent_id: row.get(1)?,
+                        agent_name: row.get(2)?,
+                        agent_archived: row.get::<_, Option<String>>(3)?.is_some(),
+                        project_id: row.get(4)?,
+                        project_name: row.get(5)?,
+                        model: row.get(6)?,
+                        provider: row.get(7)?,
+                        started_at: row.get(8)?,
+                        ended_at: row.get(9)?,
+                        message_count: row.get(10)?,
+                        total_tokens: row.get(11)?,
+                        total_cost: row.get(12)?,
+                        title: row.get(13)?,
+                        preview: first_user.as_deref().and_then(preview_from_stored_content),
+                    })
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .await?)
     }
 
     /// MON-100: Messages across all of an agent's sessions newer than the
@@ -706,6 +816,16 @@ pub async fn db_list_session_summaries(
     agent_id: String,
 ) -> Result<Vec<SessionSummary>, MonarchError> {
     db.list_session_summaries_internal(&agent_id).await
+}
+
+/// Cross-agent conversation listing for the Conversations panel (grouped by
+/// project client-side).
+#[tauri::command]
+#[specta::specta]
+pub async fn db_list_conversations(
+    db: tauri::State<'_, Arc<Database>>,
+) -> Result<Vec<ConversationOverview>, MonarchError> {
+    db.list_conversations_internal().await
 }
 
 /// MON-127: rename a session (None clears back to the derived preview title).

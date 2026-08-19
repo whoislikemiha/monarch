@@ -45,6 +45,7 @@ pub(crate) async fn dispatch_command(
         "db_create_session" => sessions::db_create_session(state, args).await,
         "db_get_sessions" => sessions::db_get_sessions(state, args).await,
         "db_list_session_summaries" => sessions::db_list_session_summaries(state, args).await,
+        "db_list_conversations" => sessions::db_list_conversations(state, args).await,
         "db_set_session_title" => sessions::db_set_session_title(state, args).await,
         "get_session_display_items" => sessions::get_session_display_items(state, args).await,
 

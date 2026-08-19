@@ -633,6 +633,49 @@ impl Database {
                 // UI derives a fallback from the first user message.
                 let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN title TEXT;");
 
+                // Persistent agents, project-scoped conversations: the project
+                // (and working directory) an agent operates in is a property of
+                // the *session*, not the agent. Agents keep `project_id`/`cwd`
+                // only as spawn defaults. Backfill copies the owning agent's
+                // snapshot onto historical rows; the WHERE guards make it a
+                // no-op on every later boot.
+                let _ = conn.execute_batch(
+                    "ALTER TABLE sessions ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL;",
+                );
+                let _ = conn.execute_batch("ALTER TABLE sessions ADD COLUMN cwd TEXT;");
+                // One-shot backfill (guarded by a ui_state marker, not the NULL
+                // check — a later boot must not re-stamp sessions that are
+                // legitimately project-less onto whatever project their agent
+                // moved to since).
+                let backfilled: bool = conn
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM ui_state WHERE key = 'sessions_project_backfill_v1')",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(false);
+                if !backfilled {
+                    let _ = conn.execute(
+                        "UPDATE sessions SET project_id =
+                            (SELECT a.project_id FROM agents a WHERE a.id = sessions.agent_id)
+                         WHERE project_id IS NULL",
+                        [],
+                    );
+                    let _ = conn.execute(
+                        "UPDATE sessions SET cwd =
+                            (SELECT a.cwd FROM agents a WHERE a.id = sessions.agent_id)
+                         WHERE cwd IS NULL",
+                        [],
+                    );
+                    let _ = conn.execute(
+                        "INSERT OR IGNORE INTO ui_state (key, value) VALUES ('sessions_project_backfill_v1', '1')",
+                        [],
+                    );
+                }
+                let _ = conn.execute_batch(
+                    "CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);",
+                );
+
                 // FTS5 virtual table — separate batch because some SQLite
                 // builds don't have FTS5; we log the failure and continue.
                 let _ = conn.execute_batch(

@@ -153,6 +153,11 @@ export const commands = {
 	dbGetToolCallDetail: (toolCallId: string) => typedError<ToolCallDetail, ErrorDto>(__TAURI_INVOKE("db_get_tool_call_detail", { toolCallId })),
 	// MON-127: per-agent session list with titles + first-user-message previews.
 	dbListSessionSummaries: (agentId: string) => typedError<SessionSummary[], ErrorDto>(__TAURI_INVOKE("db_list_session_summaries", { agentId })),
+	/**
+	 *  Cross-agent conversation listing for the Conversations panel (grouped by
+	 *  project client-side).
+	 */
+	dbListConversations: () => typedError<ConversationOverview[], ErrorDto>(__TAURI_INVOKE("db_list_conversations")),
 	// MON-127: rename a session (None clears back to the derived preview title).
 	dbSetSessionTitle: (sessionId: string, title: string | null) => typedError<null, ErrorDto>(__TAURI_INVOKE("db_set_session_title", { sessionId, title })),
 	// MON-99: List all non-archived memories for an agent (Memory Inspector v0).
@@ -523,6 +528,29 @@ export type ClassifierConfig = {
 export type ClassifierProvider = {
 	provider: string,
 	model: string,
+};
+
+/**
+ *  One row in the cross-agent Conversations panel: a session plus its owning
+ *  agent and project, denormalized for grouping. See
+ *  `list_conversations_internal`.
+ */
+export type ConversationOverview = {
+	id: string,
+	agentId: string,
+	agentName: string,
+	agentArchived: boolean,
+	projectId: string | null,
+	projectName: string | null,
+	model: string | null,
+	provider: string | null,
+	startedAt: string,
+	endedAt: string | null,
+	messageCount: number,
+	totalTokens: number,
+	totalCost: number,
+	title: string | null,
+	preview: string | null,
 };
 
 export type Cost = {
@@ -989,6 +1017,14 @@ export type SessionRow = {
 	 *  back to a snippet of the first user message.
 	 */
 	title?: string | null,
+	/**
+	 *  The project this conversation ran in. Sessions — not agents — carry
+	 *  project scope: agents are persistent, a conversation happens somewhere.
+	 *  NULL = project-less (no git root at the session's cwd).
+	 */
+	projectId?: string | null,
+	// Working directory the session actually ran in (snapshot at spawn).
+	cwd?: string | null,
 };
 
 /**
