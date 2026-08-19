@@ -24,8 +24,10 @@ export function buildDynamicModel(
 			api: "anthropic-messages",
 			provider,
 			baseUrl: "https://api.anthropic.com",
+			// pi's adaptive-thinking allowlist is frozen at the 4.6/4.7 ids, so
+			// dynamic models take the budget-thinking path — don't map xhigh
+			// (getSupportedThinkingLevels only offers it when mapped).
 			reasoning: true,
-			thinkingLevelMap: { xhigh: "xhigh" },
 			input: ["text", "image"],
 			cost: {
 				input: 0,

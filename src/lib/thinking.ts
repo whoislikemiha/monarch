@@ -94,10 +94,14 @@ function anthropicProfile(modelId: string): ModelThinkingProfile {
   // versions it falls back to budget thinking, but the picker shape
   // here reflects what Anthropic actually exposes for the model
   // (which is what users see in Claude.ai / Claude Code).
-  // Claude 5 family (Fable/Opus/Sonnet 5) keeps the adaptive effort scheme
-  // introduced with Opus 4.6.
-  if (id.includes("fable-5") || id.includes("opus-5")) return ANTHROPIC_OPUS_46;
-  if (id.includes("sonnet-5")) return ANTHROPIC_SONNET_46;
+  // Claude 5 family (Fable/Opus/Sonnet 5): the models themselves expose the
+  // adaptive effort scheme (low…max), but pi-ai's frozen
+  // `supportsAdaptiveThinking` allowlist (opus-4.6/4.7, sonnet-4.6) doesn't
+  // include them, so pi routes them down the budget-thinking path. Show the
+  // budget levels — anything else would be a lie about what gets sent.
+  if (id.includes("fable-5") || id.includes("opus-5") || id.includes("sonnet-5")) {
+    return ANTHROPIC_NON_ADAPTIVE;
+  }
   if (id.includes("opus-4-") || id.includes("opus-4.")) return ANTHROPIC_OPUS_46;
   if (id.includes("sonnet-4-") || id.includes("sonnet-4.")) return ANTHROPIC_SONNET_46;
   if (id.includes("sonnet") || id.includes("opus") || id.includes("claude-3-7")) {
