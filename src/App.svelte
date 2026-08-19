@@ -15,6 +15,7 @@
   import TopBar from "./lib/shell/TopBar.svelte";
   import CommandPalette from "./lib/shell/CommandPalette.svelte";
   import AgentRail from "./lib/shell/AgentRail.svelte";
+  import ProjectsRail from "./lib/shell/ProjectsRail.svelte";
   import PanelHost from "./lib/shell/PanelHost.svelte";
   import NotificationStack from "./lib/NotificationStack.svelte";
   import SpawnDialog from "./lib/SpawnDialog.svelte";
@@ -168,7 +169,11 @@
 <main class="shell">
   <TopBar {crumbs} onCommandPalette={() => (showPalette = true)} />
   <div class="body">
-    <AgentRail onextract={() => (showSpawnDialog = true)} />
+    {#if viewStore.activeView === "projects"}
+      <ProjectsRail />
+    {:else}
+      <AgentRail onextract={() => (showSpawnDialog = true)} />
+    {/if}
     <PanelHost onsettings={() => (showSettings = true)} />
   </div>
 </main>

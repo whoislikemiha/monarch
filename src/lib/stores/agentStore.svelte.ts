@@ -86,6 +86,9 @@ interface SessionDbRow {
   parentSessionId?: string | null;
   /** MON-127: user-facing title; omitted = untitled (backend defaults to NULL). */
   title?: string | null;
+  /** Project scope of the conversation — stamped by Rust at session creation. */
+  projectId?: string | null;
+  cwd?: string | null;
 }
 
 // --- Helpers ------------------------------------------------------------
@@ -527,16 +530,43 @@ class AgentStore {
     );
   }
 
-  async newConversation(agentId: string): Promise<void> {
+  /**
+   * Start a fresh conversation. `cwd` scopes it to a project other than the
+   * one the agent currently sits in: the Pi session is recreated in that
+   * directory (project instructions re-resolve at spawn), because a live
+   * sidecar session's cwd is fixed per spawn.
+   */
+  async newConversation(agentId: string, cwd?: string): Promise<void> {
     const agent = this.getAgent(agentId);
     if (!agent) return;
     // MON-127: stale turn→pane routing belongs to the old conversation.
     chatStore.resetTurns(agentId);
+    const targetCwd = cwd?.trim() || undefined;
+    const crossScope = !!targetCwd && targetCwd !== agent.cwd;
     if (agent.status === "stopped") {
       // MON-127: a stopped agent used to silently no-op here. Wake it fresh
-      // instead — clean parentless session, no history replay.
+      // instead — clean parentless session, no history replay. A target cwd
+      // just re-points the wake directory first (spawn re-resolves project).
+      if (crossScope) this.updateAgent(agentId, (a) => ({ ...a, cwd: targetCwd }));
       await this.spawnStoppedAgent(agentId, { fresh: true });
       this.openTab(agentId);
+      return;
+    }
+    if (crossScope) {
+      // Live agent, different project: the running Pi session can't move
+      // directories — recreate it there (same pattern as restartAgent).
+      this.killAgent(agentId);
+      await this.createAgent(
+        {
+          provider: agent.provider,
+          model: agent.model,
+          thinkingLevel: agent.thinkingLevel,
+          cwd: targetCwd,
+          shadow: agent.shadow,
+          contextWindow: agent.contextWindow,
+        },
+        { agentId },
+      );
       return;
     }
     this.counter++;
@@ -569,21 +599,73 @@ class AgentStore {
   }
 
   /**
-   * Switch the live agent to an existing persisted session (from history).
-   * Bumps viewKey so the workspace remounts and re-binds/seeds from that
-   * session, and replays its messages into the sidecar's LLM context.
+   * Switch the agent to an existing persisted session (from history).
+   *
+   * Three paths, keyed on the target conversation's scope:
+   *  - sleeping agent: no sidecar to touch — re-point sessionId (and cwd, so
+   *    waking spawns in the conversation's project) and let wake replay it.
+   *  - same scope, live: reset the sidecar's in-memory conversation and
+   *    replay context (`switch_agent_session` + `load_session_context`).
+   *  - different scope, live: a Pi session's cwd is fixed per spawn, so
+   *    recreate it in the conversation's cwd — spawn re-resolves the project
+   *    and its instructions, and `sourceSessionId` replays the chain after
+   *    `session_ready`. Without this, continuing a project-B conversation
+   *    would run tools in project A with A's instructions.
    */
   async switchSession(agentId: string, sessionId: string): Promise<void> {
     const agent = this.getAgent(agentId);
     if (!agent || agent.sessionId === sessionId) return;
+
+    let target: SessionDbRow | undefined;
+    try {
+      const sessions = await invoke<SessionDbRow[]>("db_get_sessions", { agentId });
+      target = sessions.find((s) => s.id === sessionId);
+    } catch (e) {
+      console.error("Failed to load target session:", e);
+    }
+    const targetCwd = target?.cwd || undefined;
+    const crossScope = !!targetCwd && targetCwd !== agent.cwd;
+
+    // MON-127: turn ordinals are positions in the previous conversation.
+    chatStore.resetTurns(agentId);
+
+    if (agent.status === "stopped") {
+      this.agents = this.agents.map((a) =>
+        a.id === agentId
+          ? {
+              ...a,
+              sessionId,
+              cwd: targetCwd ?? a.cwd,
+              sourceSessionId: undefined,
+              viewKey: createViewKey(agentId),
+            }
+          : a,
+      );
+      return;
+    }
+
+    if (crossScope) {
+      this.killAgent(agentId);
+      await this.createAgent(
+        {
+          provider: agent.provider,
+          model: agent.model,
+          thinkingLevel: agent.thinkingLevel,
+          cwd: targetCwd,
+          shadow: agent.shadow,
+          contextWindow: agent.contextWindow,
+        },
+        { agentId, sessionId, sourceSessionId: sessionId, reuseExistingSession: true },
+      );
+      return;
+    }
+
     try {
       await invoke("switch_agent_session", { agentId, sessionId });
     } catch (e) {
       console.error("Failed to switch session:", e);
       return;
     }
-    // MON-127: turn ordinals are positions in the previous conversation.
-    chatStore.resetTurns(agentId);
     this.agents = this.agents.map((a) =>
       a.id === agentId
         ? {

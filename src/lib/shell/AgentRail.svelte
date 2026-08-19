@@ -1,10 +1,11 @@
 <script lang="ts">
   /**
-   * Left rail — the agent roster. Slice 1 ships the collapsible frame (header,
-   * Active/All filter, New agent, collapse toggle) with a placeholder body;
-   * slice 2 fills it with the project-grouped roster.
+   * Left rail — the agent roster. Agents are persistent and project-agnostic
+   * (a conversation happens in a project; the agent doesn't live in one), so
+   * the roster is a flat list. Project-grouped browsing lives in the
+   * Conversations dock panel.
    */
-  import type { Agent, Project } from "$lib/types";
+  import type { Agent } from "$lib/types";
   import { invoke } from "$lib/api";
   import { agentStore } from "$lib/stores/agentStore.svelte";
   import AgentRow from "./AgentRow.svelte";
@@ -59,35 +60,6 @@
     else agentStore.deleteAgent(c.agent.id);
   }
 
-  interface Group {
-    project?: Project;
-    agents: Agent[];
-  }
-
-  let groups = $derived.by<Group[]>(() => {
-    const projectMap = new Map<string, Project>();
-    for (const p of agentStore.projects) projectMap.set(p.id, p);
-
-    const byProject = new Map<string, Group>();
-    const ungrouped: Group = { project: undefined, agents: [] };
-
-    for (const agent of agentStore.agents) {
-      if (agent.projectId && projectMap.has(agent.projectId)) {
-        let g = byProject.get(agent.projectId);
-        if (!g) {
-          g = { project: projectMap.get(agent.projectId), agents: [] };
-          byProject.set(agent.projectId, g);
-        }
-        g.agents.push(agent);
-      } else {
-        ungrouped.agents.push(agent);
-      }
-    }
-
-    const result = [...byProject.values()];
-    if (ungrouped.agents.length > 0) result.push(ungrouped);
-    return result;
-  });
 </script>
 
 {#if collapsed}
@@ -139,24 +111,16 @@
       {#if agentStore.agents.length === 0}
         <div class="rail-empty">No agents yet. Create one to begin.</div>
       {:else}
-        {#each groups as group (group.project?.id ?? "ungrouped")}
-          <div class="group">
-            <div class="group-label">
-              <span class="slash">/</span>{group.project?.name ?? "Agents"}
-              <span class="group-count mono">{group.agents.length}</span>
-            </div>
-            <div class="group-rows">
-              {#each group.agents as agent (agent.id)}
-                <AgentRow
-                  {agent}
-                  oncontextmenu={openMenu}
-                  onarchive={(a) => (confirm = { kind: "archive", agent: a })}
-                  onresume={(a) => agentStore.summonAgent(a.id)}
-                />
-              {/each}
-            </div>
-          </div>
-        {/each}
+        <div class="rows">
+          {#each agentStore.agents as agent (agent.id)}
+            <AgentRow
+              {agent}
+              oncontextmenu={openMenu}
+              onarchive={(a) => (confirm = { kind: "archive", agent: a })}
+              onresume={(a) => agentStore.summonAgent(a.id)}
+            />
+          {/each}
+        </div>
       {/if}
     </div>
   </aside>
@@ -285,13 +249,5 @@
   .rail-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--s2) var(--s3); }
   .rail-empty { font-size: 11px; color: var(--text-muted); padding: var(--s3); line-height: 1.5; }
 
-  .group { display: flex; flex-direction: column; gap: 2px; margin-top: var(--s2); }
-  .group-label {
-    display: flex; align-items: center; gap: var(--s2);
-    font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
-    color: var(--text-muted); padding: var(--s2) var(--s2) var(--s1);
-  }
-  .group-label .slash { color: var(--accent); font-weight: 700; }
-  .group-label .group-count { margin-left: auto; text-transform: none; letter-spacing: 0; }
-  .group-rows { display: flex; flex-direction: column; gap: 1px; }
+  .rows { display: flex; flex-direction: column; gap: 1px; margin-top: var(--s2); }
 </style>
