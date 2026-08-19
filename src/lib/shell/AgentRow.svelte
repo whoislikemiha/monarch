@@ -48,6 +48,7 @@
     working={streaming}
     avatarType={agent.avatarType}
     avatarPath={agent.avatarPath}
+    provider={agent.provider}
   />
   <div class="id">
     <div class="top">

@@ -93,6 +93,7 @@
         {grade}
         avatarType={agentContext.agent.avatarType}
         avatarPath={agentContext.agent.avatarPath}
+        provider={agentContext.agent.provider}
       />
       <div class="who-id">
         <div class="who-top">

@@ -2,25 +2,25 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { invoke } from "$lib/api";
   import Avatar from "$lib/ui/Avatar.svelte";
+  import { PROVIDER_LOGO_PRESETS } from "./providerLogos";
 
   interface AvatarPreset {
     label: string;
     path: string;
   }
 
-  const BUILT_IN_PRESETS: AvatarPreset[] = [
-    { label: "Silhouette", path: "/avatars/agent_silhouette.svg" },
-  ];
-
   let {
     agentId,
     name = "",
+    provider = undefined,
     avatarType = $bindable(undefined),
     avatarPath = $bindable(undefined),
   }: {
     agentId: string;
     /** Agent display name — drives the monogram preview. */
     name?: string;
+    /** Agent's provider id — drives the "Auto" (provider logo) preview. */
+    provider?: string;
     avatarType?: "image";
     avatarPath?: string;
   } = $props();
@@ -48,7 +48,7 @@
       .catch(() => { uploadedDataUrl = undefined; });
   });
 
-  const isMonogramSelected = $derived(avatarType !== "image" || !avatarPath);
+  const isAutoSelected = $derived(avatarType !== "image" || !avatarPath);
 
   function isSelected(preset: AvatarPreset): boolean {
     return avatarType === "image" && avatarPath === preset.path;
@@ -58,7 +58,7 @@
     avatarType === "image" && !!avatarPath && !avatarPath.startsWith("/avatars/")
   );
 
-  function selectMonogram(): void {
+  function selectAuto(): void {
     avatarType = undefined;
     avatarPath = undefined;
   }
@@ -102,18 +102,19 @@
 
 <div class="avatar-picker">
   <div class="presets">
+    <!-- Auto: follows the agent's provider logo (monogram if provider unknown) -->
     <button
       class="preset-card"
-      class:selected={isMonogramSelected}
-      onclick={selectMonogram}
+      class:selected={isAutoSelected}
+      onclick={selectAuto}
       type="button"
-      title="Monogram"
+      title="Auto — provider logo"
     >
-      <Avatar {name} size={44} />
-      <span class="preset-label">Monogram</span>
+      <Avatar {name} {provider} size={44} />
+      <span class="preset-label">Auto</span>
     </button>
 
-    {#each BUILT_IN_PRESETS as preset (preset.path)}
+    {#each PROVIDER_LOGO_PRESETS as preset (preset.path)}
       <button
         class="preset-card"
         class:selected={isSelected(preset)}

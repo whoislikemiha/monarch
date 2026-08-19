@@ -1003,6 +1003,7 @@
                         size={18}
                         avatarType={assignee?.avatarType}
                         avatarPath={assignee?.avatarPath}
+                        provider={assignee?.provider}
                       />
                     </span>
                   {/if}

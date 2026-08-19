@@ -41,7 +41,7 @@
 </script>
 
 <header class="head">
-  <Avatar name={agent.name} size={28} {grade} {presence} working={streaming} avatarType={agent.avatarType} avatarPath={agent.avatarPath} />
+  <Avatar name={agent.name} size={28} {grade} {presence} working={streaming} avatarType={agent.avatarType} avatarPath={agent.avatarPath} provider={agent.provider} />
   <div class="who">
     <div class="line1">
       <span class="nm">{agent.name}</span>

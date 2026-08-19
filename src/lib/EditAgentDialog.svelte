@@ -325,7 +325,7 @@
     <!-- Avatar -->
     <div class="section">
       <span class="label">Avatar</span>
-      <AvatarPicker agentId={agent.id} name={shadowName || agent.name} bind:avatarType bind:avatarPath />
+      <AvatarPicker agentId={agent.id} name={shadowName || agent.name} provider={selectedProvider} bind:avatarType bind:avatarPath />
     </div>
 
     {#if saveError}

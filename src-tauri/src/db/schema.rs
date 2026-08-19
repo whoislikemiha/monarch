@@ -254,6 +254,12 @@ impl Database {
                     "UPDATE agents SET avatar_type = NULL, avatar_path = NULL WHERE avatar_type = 'rive';",
                 );
 
+                // The bundled silhouette preset was removed — remap stale rows
+                // to NULL so they fall back to the automatic provider-logo avatar.
+                let _ = conn.execute_batch(
+                    "UPDATE agents SET avatar_type = NULL, avatar_path = NULL WHERE avatar_path = '/avatars/agent_silhouette.svg';",
+                );
+
                 // MON-75: per-message image attachments. Bytes live under
                 // ~/.config/monarch/attachments/{uuid}.{ext}; this table
                 // just keeps an ordered reference so rebuilt snapshots and

@@ -1,10 +1,13 @@
 <script lang="ts">
   /**
-   * Static agent avatar — monogram or uploaded image, with an optional grade
-   * ring and presence pip. Deliberately NOT animated (no Rive): the avatar's
-   * job is visual tracking at a glance, not motion. Wraps the `.avatar` atom.
+   * Static agent avatar — provider logo, uploaded image, or monogram, with an
+   * optional grade ring and presence pip. Deliberately NOT animated (no Rive):
+   * the avatar's job is visual tracking at a glance, not motion. Wraps the
+   * `.avatar` atom. With no explicit avatar set, the agent's provider logo is
+   * the automatic default; the monogram is the last-resort fallback.
    */
   import { invoke } from "$lib/api";
+  import { providerLogoPath } from "$lib/avatar/providerLogos";
   import { gradeColor, type GradeLetter } from "./grade";
 
   interface Props {
@@ -17,26 +20,31 @@
     working?: boolean;
     avatarType?: "image";
     avatarPath?: string;
+    /** Agent's provider id — drives the automatic logo avatar when no explicit avatar is set. */
+    provider?: string | null;
   }
-  let { name, size = 32, grade, presence = null, working = false, avatarType, avatarPath }: Props = $props();
+  let { name, size = 32, grade, presence = null, working = false, avatarType, avatarPath, provider }: Props = $props();
 
   let monogram = $derived((name?.trim()?.[0] ?? "?").toUpperCase());
-  let isImage = $derived(avatarType === "image" && !!avatarPath);
+  let explicitImage = $derived(avatarType === "image" && !!avatarPath);
+  let effectivePath = $derived(explicitImage ? avatarPath : providerLogoPath(provider));
+  let isImage = $derived(!!effectivePath);
 
   // Resolve the image src. Bundled (/avatars/…) and data: URLs render directly;
   // absolute upload paths go through Rust (the asset protocol isn't scoped).
   let imgSrc = $state("");
   $effect(() => {
-    if (!isImage || !avatarPath) {
+    const path = effectivePath;
+    if (!path) {
       imgSrc = "";
       return;
     }
-    if (avatarPath.startsWith("/avatars/") || avatarPath.startsWith("data:")) {
-      imgSrc = avatarPath;
+    if (path.startsWith("/avatars/") || path.startsWith("data:")) {
+      imgSrc = path;
       return;
     }
     let cancelled = false;
-    invoke<string>("read_avatar_data_url", { path: avatarPath })
+    invoke<string>("read_avatar_data_url", { path })
       .then((url) => { if (!cancelled) imgSrc = url; })
       .catch(() => { if (!cancelled) imgSrc = ""; });
     return () => { cancelled = true; };

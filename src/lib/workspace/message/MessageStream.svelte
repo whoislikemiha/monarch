@@ -97,7 +97,7 @@
       {:else if hasVisibleText(item.content)}
         <div class="turn assistant">
           <div class="speaker">
-            <Avatar name={agent.name} size={24} avatarType={agent.avatarType} avatarPath={agent.avatarPath} />
+            <Avatar name={agent.name} size={24} avatarType={agent.avatarType} avatarPath={agent.avatarPath} provider={agent.provider} />
             <span class="speaker-name">{agent.name}</span>
           </div>
           <AssistantBlock content={item.content} />
@@ -114,7 +114,7 @@
   {#if streamingMessage && hasVisibleText(streamingMessage.content)}
     <div class="turn assistant">
       <div class="speaker">
-        <Avatar name={agent.name} size={24} avatarType={agent.avatarType} avatarPath={agent.avatarPath} />
+        <Avatar name={agent.name} size={24} avatarType={agent.avatarType} avatarPath={agent.avatarPath} provider={agent.provider} />
         <span class="speaker-name">{agent.name}</span>
       </div>
       <AssistantBlock content={streamingMessage.content} streaming />
