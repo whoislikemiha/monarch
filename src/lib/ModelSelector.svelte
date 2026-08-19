@@ -272,7 +272,7 @@
     onclick={toggleDropdown}
   >
     {#if model}
-      <span class="trigger-model">{selectedInfo?.name ?? model}</span>
+      <span class="trigger-model">{model}</span>
       <span class="trigger-provider">{providerLabel(provider)}</span>
     {:else if anyLoading && totalCount === 0}
       <span class="trigger-empty">Loading models…</span>
@@ -314,7 +314,7 @@
               onmousedown={(e: MouseEvent) => { e.preventDefault(); selectRow({ g, m }); }}
               onmouseenter={() => (highlightedIndex = flatIdx)}
             >
-              <span class="option-name" class:mono={m.name === m.id} title={m.id}>{m.name}</span>
+              <span class="option-name">{m.id}</span>
               {#if provider === g.provider && model === m.id}
                 <span class="option-check" aria-hidden="true">✓</span>
               {/if}
@@ -427,7 +427,8 @@
   }
 
   .trigger-model {
-    font-weight: 500;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11.5px;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -555,17 +556,14 @@
   }
 
   .option-name {
-    font-size: 12px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11.5px;
     color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     flex: 1;
     min-width: 0;
-  }
-
-  .option-name.mono {
-    font-family: "JetBrains Mono", monospace;
   }
 
   .option-check {
