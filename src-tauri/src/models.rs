@@ -101,16 +101,22 @@ fn anthropic_subscription_supports(id: &str) -> bool {
 }
 
 /// Whether a model ID is reachable via Pi's OpenAI Codex subscription auth.
-/// Authoritative list pulled directly from `codex` CLI's "Select Model
-/// and Effort" picker. Bump in lockstep with that screen — the live API
-/// list is much broader (gpt-4*, embeddings, audio, image, …) but only
-/// these IDs are reachable via the ChatGPT subscription.
+/// Authoritative list: everything pi-ai registers under its `openai-codex`
+/// provider — that provider only exists via the ChatGPT OAuth credential, so
+/// its registry IS the subscription set. Bound by the installed pi-ai
+/// version (check `models.generated.js` after `npm run pi:upgrade`); the
+/// codex CLI picker may show newer IDs (e.g. gpt-5.6-*) before pi ships
+/// them — don't list those, pi-ai silently falls back to its default model
+/// for IDs it can't resolve. Newest first — this is the dropdown order.
 const OPENAI_CODEX_SUBSCRIPTION_IDS: &[&str] = &[
+    "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
     "gpt-5.2",
     "gpt-5.2-codex",
+    "gpt-5.1",
     "gpt-5.1-codex-max",
     "gpt-5.1-codex-mini",
 ];
@@ -129,7 +135,10 @@ fn openai_codex_subscription_supports(id: &str) -> bool {
 fn anthropic_curated() -> Vec<ModelInfo> {
     [
         ("claude-opus-4-7", "Claude Opus 4.7"),
+        ("claude-opus-4-6", "Claude Opus 4.6"),
+        ("claude-opus-4-5", "Claude Opus 4.5"),
         ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+        ("claude-sonnet-4-5", "Claude Sonnet 4.5"),
         ("claude-haiku-4-5", "Claude Haiku 4.5"),
     ]
     .into_iter()
@@ -152,7 +161,7 @@ fn openai_codex_curated() -> Vec<ModelInfo> {
         .iter()
         .map(|id| ModelInfo {
             id: id.to_string(),
-            name: id.to_string(),
+            name: id.replacen("gpt-", "GPT-", 1),
             provider: "openai-codex".to_string(),
             context_window: None,
             subscription: Some(true),
