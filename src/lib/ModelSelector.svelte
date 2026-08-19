@@ -314,10 +314,7 @@
               onmousedown={(e: MouseEvent) => { e.preventDefault(); selectRow({ g, m }); }}
               onmouseenter={() => (highlightedIndex = flatIdx)}
             >
-              <span class="option-name" class:mono={m.name === m.id}>{m.name}</span>
-              {#if m.name !== m.id}
-                <span class="option-id">{m.id}</span>
-              {/if}
+              <span class="option-name" class:mono={m.name === m.id} title={m.id}>{m.name}</span>
               {#if provider === g.provider && model === m.id}
                 <span class="option-check" aria-hidden="true">✓</span>
               {/if}
@@ -563,20 +560,12 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  .option-name.mono,
-  .option-id {
-    font-family: "JetBrains Mono", monospace;
-  }
-
-  .option-id {
-    font-size: 10px;
-    color: var(--text-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    flex: 1;
     min-width: 0;
+  }
+
+  .option-name.mono {
+    font-family: "JetBrains Mono", monospace;
   }
 
   .option-check {
