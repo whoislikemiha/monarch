@@ -11,6 +11,54 @@ export function buildDynamicModel(
 	modelId: string,
 	contextWindowOverride?: number | null,
 ): Model<Api> | undefined {
+	// Pi's bundled registry stopped updating (last release 2026-05-07), so
+	// models newer than that — the Claude 5 family, gpt-5.6-* — are unknown
+	// to it. Build their definitions dynamically, mirroring the shape of the
+	// newest generated entries for each provider, so the subscription OAuth
+	// path can still spawn them. Cost is zeroed (unknown); context/output
+	// limits are conservative copies of the latest known family member.
+	if (provider === "anthropic") {
+		return {
+			id: modelId,
+			name: modelId,
+			api: "anthropic-messages",
+			provider,
+			baseUrl: "https://api.anthropic.com",
+			reasoning: true,
+			thinkingLevelMap: { xhigh: "xhigh" },
+			input: ["text", "image"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 200000,
+			maxTokens: 64000,
+		} as Model<Api>;
+	}
+
+	if (provider === "openai-codex") {
+		return {
+			id: modelId,
+			name: modelId,
+			api: "openai-codex-responses",
+			provider,
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			thinkingLevelMap: { xhigh: "xhigh", minimal: "low" },
+			input: ["text", "image"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 272000,
+			maxTokens: 128000,
+		} as Model<Api>;
+	}
+
 	if (provider === "openrouter") {
 		return {
 			id: modelId,

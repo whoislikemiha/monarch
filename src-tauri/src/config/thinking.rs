@@ -54,9 +54,9 @@ fn builtin_default(provider: &str, model: &str) -> &'static str {
     let m = model.to_lowercase();
     match provider {
         "anthropic" => {
-            if m.contains("opus-4-6") || m.contains("opus-4.6") {
+            if m.contains("fable-5") || m.contains("opus-5") || m.contains("opus-4-6") || m.contains("opus-4.6") || m.contains("opus-4-7") || m.contains("opus-4.7") {
                 "high"
-            } else if m.contains("sonnet-4-6") || m.contains("sonnet-4.6") {
+            } else if m.contains("sonnet-5") || m.contains("sonnet-4-6") || m.contains("sonnet-4.6") {
                 "medium"
             } else {
                 "off"

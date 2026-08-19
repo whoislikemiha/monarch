@@ -95,30 +95,32 @@ fn env_var_nonempty(key: &str) -> Option<String> {
 /// is in subscription; older Claude 3.x variants in the live API list are
 /// API-only.
 fn anthropic_subscription_supports(id: &str) -> bool {
-    id.starts_with("claude-opus-4")
+    id.starts_with("claude-fable-5")
+        || id.starts_with("claude-opus-5")
+        || id.starts_with("claude-sonnet-5")
+        || id.starts_with("claude-haiku-5")
+        || id.starts_with("claude-opus-4")
         || id.starts_with("claude-sonnet-4")
         || id.starts_with("claude-haiku-4")
 }
 
 /// Whether a model ID is reachable via Pi's OpenAI Codex subscription auth.
-/// Authoritative list: everything pi-ai registers under its `openai-codex`
-/// provider — that provider only exists via the ChatGPT OAuth credential, so
-/// its registry IS the subscription set. Bound by the installed pi-ai
-/// version (check `models.generated.js` after `npm run pi:upgrade`); the
-/// codex CLI picker may show newer IDs (e.g. gpt-5.6-*) before pi ships
-/// them — don't list those, pi-ai silently falls back to its default model
-/// for IDs it can't resolve. Newest first — this is the dropdown order.
+/// Authoritative list pulled directly from `codex` CLI's "Select Model"
+/// picker — bump in lockstep with that screen. IDs missing from pi-ai's
+/// bundled registry (it stopped updating at 0.73.1) are fine: the sidecar's
+/// `buildDynamicModel` constructs their definitions at spawn time.
+/// Order here is the dropdown order.
 const OPENAI_CODEX_SUBSCRIPTION_IDS: &[&str] = &[
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
-    "gpt-5.3-codex",
     "gpt-5.3-codex-spark",
-    "gpt-5.2",
-    "gpt-5.2-codex",
-    "gpt-5.1",
-    "gpt-5.1-codex-max",
-    "gpt-5.1-codex-mini",
+    "gpt-5.6-sol-pro",
+    "gpt-5.6-terra-pro",
+    "gpt-5.6-luna-pro",
 ];
 
 fn openai_codex_subscription_supports(id: &str) -> bool {
@@ -128,17 +130,16 @@ fn openai_codex_subscription_supports(id: &str) -> bool {
 /// Curated fallback for Anthropic. Used when no `ANTHROPIC_API_KEY` env var
 /// is set — Pi's subscription OAuth tokens cannot call `/v1/models`
 /// (Anthropic returns "OAuth authentication is currently not supported"),
-/// so OAuth-only users see this list. Bound by what pi-ai's bundled
-/// model registry actually knows — listing models pi-ai can't spawn
-/// makes them silently fall back to pi's default model. Bump alongside
-/// pi-ai version bumps.
+/// so OAuth-only users see this list. IDs missing from pi-ai's bundled
+/// registry (frozen at 0.73.1) spawn via the sidecar's `buildDynamicModel`.
 fn anthropic_curated() -> Vec<ModelInfo> {
     [
+        ("claude-fable-5", "Claude Fable 5"),
+        ("claude-opus-5", "Claude Opus 5"),
+        ("claude-sonnet-5", "Claude Sonnet 5"),
         ("claude-opus-4-7", "Claude Opus 4.7"),
         ("claude-opus-4-6", "Claude Opus 4.6"),
-        ("claude-opus-4-5", "Claude Opus 4.5"),
         ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
-        ("claude-sonnet-4-5", "Claude Sonnet 4.5"),
         ("claude-haiku-4-5", "Claude Haiku 4.5"),
     ]
     .into_iter()

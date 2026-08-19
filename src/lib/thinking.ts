@@ -72,7 +72,7 @@ const GOOGLE_GEMINI: ModelThinkingProfile = {
 // `gpt-5.2`, `gpt-5.3`, or `gpt-5.4`. This covers `-codex`, `-mini`,
 // and any other suffix without an explicit allowlist. Bump in lockstep
 // with pi-ai's check.
-const OPENAI_XHIGH_FAMILIES: readonly string[] = ["gpt-5.2", "gpt-5.3", "gpt-5.4"];
+const OPENAI_XHIGH_FAMILIES: readonly string[] = ["gpt-5.2", "gpt-5.3", "gpt-5.4", "gpt-5.5", "gpt-5.6"];
 // gpt-5.2/5.3/5.4 dropped `minimal` from their reasoning_effort set
 // (replaced by `xhigh` on the high end). Matches the effort picker in
 // the codex CLI.
@@ -94,6 +94,10 @@ function anthropicProfile(modelId: string): ModelThinkingProfile {
   // versions it falls back to budget thinking, but the picker shape
   // here reflects what Anthropic actually exposes for the model
   // (which is what users see in Claude.ai / Claude Code).
+  // Claude 5 family (Fable/Opus/Sonnet 5) keeps the adaptive effort scheme
+  // introduced with Opus 4.6.
+  if (id.includes("fable-5") || id.includes("opus-5")) return ANTHROPIC_OPUS_46;
+  if (id.includes("sonnet-5")) return ANTHROPIC_SONNET_46;
   if (id.includes("opus-4-") || id.includes("opus-4.")) return ANTHROPIC_OPUS_46;
   if (id.includes("sonnet-4-") || id.includes("sonnet-4.")) return ANTHROPIC_SONNET_46;
   if (id.includes("sonnet") || id.includes("opus") || id.includes("claude-3-7")) {
