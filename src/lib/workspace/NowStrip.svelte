@@ -41,6 +41,16 @@
   /** MON-130: the NOW headline clamps to 2 lines; click to see all of it. */
   let intentOpen = $state(false);
 
+  /** Objective line: head-truncate real paths (keep the leaf visible), but
+   * tail-truncate title fallbacks — head-truncated prose is unreadable.
+   * Click toggles the full, wrapped text. */
+  let objText = $derived(path.length ? path.join(" / ") : currentObjective?.title ?? "objective");
+  let objIsPath = $derived(path.length > 0);
+  let objOpen = $state(false);
+
+  /** No narrated action and nothing streaming — the objective isn't live. */
+  let idle = $derived(!current && !streaming);
+
   function mark(status: string, isActive: boolean): string {
     if (isActive || status === "active") return "●";
     switch (status) {
@@ -83,8 +93,16 @@
   </div>
 
   {#if hasObjective}
-    <div class="obj">
-      <span class="path mono">{path.length ? path.join(" / ") : currentObjective?.title ?? "objective"}</span>
+    <div class="obj" class:stale={idle}>
+      {#if idle}<span class="obj-label mono">LAST</span>{/if}
+      <button
+        class="path mono"
+        class:head-clip={objIsPath && !objOpen}
+        class:tail-clip={!objIsPath && !objOpen}
+        class:open={objOpen}
+        title={objOpen ? "Collapse" : objText}
+        onclick={() => (objOpen = !objOpen)}
+      >{objText}</button>
       {#if currentObjective}
         <span class="status mono">{currentObjective.status.replace(/_/g, " ")}</span>
       {/if}
@@ -182,12 +200,22 @@
     display: flex; align-items: baseline; gap: var(--s3);
     padding-left: calc(9px + var(--s2)); min-width: 0;
   }
+  .obj.stale { opacity: 0.6; }
+  .obj-label { font-size: 9px; letter-spacing: 0.14em; color: var(--text-muted); flex: none; }
   .path {
     font-size: 10px; color: var(--text-muted);
-    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    /* Head truncation — keep the leaf objective visible, clip the ancestry. */
-    direction: rtl; text-align: left; unicode-bidi: isolate;
+    min-width: 0; text-align: left;
+    background: none; border: none; padding: 0; margin: 0; cursor: pointer;
   }
+  .path:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-sm); }
+  /* Head truncation for paths — keep the leaf objective visible, clip the ancestry. */
+  .path.head-clip {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    direction: rtl; unicode-bidi: isolate;
+  }
+  /* Tail truncation for title fallbacks — prose reads from the start. */
+  .path.tail-clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .path.open { white-space: normal; overflow-wrap: anywhere; }
   .status { font-size: 9.5px; color: var(--text-muted); flex: none; margin-left: auto; }
   .no-obj { font-size: 10px; color: var(--text-muted); font-style: italic; }
 
