@@ -4,7 +4,7 @@
 Monarch is an experimental project created in order to explore topics like:
 - Spec driven development and agent loops.
 - Modern LLMs using a compiled type safe language like Rust to reduce code errors and bugs.
-- Having a conversation with the agent currently building by separating execution and conversation.
+- Separating execution and conversation.
 - Execution narration for better overview of what the agent is doing at all times.
 - Deeper active context insights and manipulation.
 - Persistent agent memory via local index where everything is local.
@@ -107,9 +107,3 @@ cargo check              # backend types (from src-tauri/)
 npm test                 # frontend unit tests (Vitest)
 cargo test                # backend tests (from src-tauri/)
 ```
-
-## Docs
-
-- [ONBOARDING.md](./ONBOARDING.md) — architecture, data model, lifecycle, and protocol reference.
-- [CLAUDE.md](./CLAUDE.md) — conventions and code patterns used throughout the codebase.
-- [`thoughts/`](./thoughts/) — research plans and implementation notes, written per feature as it's built.
