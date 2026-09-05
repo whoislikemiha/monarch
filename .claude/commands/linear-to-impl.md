@@ -1,4 +1,4 @@
----
+# ---
 description: Create a Linear issue, a Git branch, and jump straight to implementation (skip planning for straightforward changes)
 ---
 

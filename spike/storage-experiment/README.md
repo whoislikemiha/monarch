@@ -1,7 +1,6 @@
 # MON-91 — Storage stack viability spike
 
-Throwaway Rust crate validating the shadow-memory storage direction from
-[`thoughts/design/shadow-cognition/substrate.md`](../../thoughts/design/shadow-cognition/substrate.md) § L4 and working assumption #12:
+Throwaway Rust crate validating the memory storage:
 
 - **SQLite BLOBs** for raw vectors, via `rusqlite` (bundled build, matches `src-tauri`).
 - **HNSW index** via `instant-distance` (pure-Rust, rebuildable from BLOBs).
