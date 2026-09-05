@@ -1,7 +1,8 @@
 # Monarch
 
+Monarch is a desktop app for running and supervising multiple AI coding agents.
 
-Monarch is an experimental project created in order to explore topics like:
+This is an experimental project created in order to explore topics like:
 - Spec driven development and agent loops.
 - Modern LLMs using a compiled type safe language like Rust to reduce code errors and bugs.
 - Separating execution and conversation.
@@ -29,7 +30,6 @@ Monarch is an experimental project created in order to explore topics like:
 - **The frontend only displays state**, reconciled via versioned snapshots pushed over Tauri events (with a WebSocket fallback for browser-mode dev).
 - **The sidecar is a singleton** — one Node process hosts every agent's in-memory Pi SDK session, keyed by agent ID.
 
-See [ONBOARDING.md](./ONBOARDING.md) for the full data model, lifecycle walkthroughs, and protocol reference.
 
 ## Tech stack
 
