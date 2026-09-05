@@ -1,3 +1,4 @@
+! DEPRICATED APPROACH, NO LONGER USING LINEAR OR WRITING IMPL AND PLAN DOCUMENTS PER TASK !
 # Design log
 
 This directory is the working design log for Monarch — a per-feature paper trail kept alongside the code. Each feature is tracked from research through to landing, so the *why* behind a change lives next to the *what*.
